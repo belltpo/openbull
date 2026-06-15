@@ -187,12 +187,16 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                 return
             ok, oid, msg = _place_exit(t, qty, "sl") if qty > 0 else (True, None, "ok")
             if ok:
+                exit_px = fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
+                pnl_inc = fr_service._leg_exit_pnl(t.side, t.entry_option_price, exit_px, qty)
                 t.remaining_qty = 0
+                t.realized_pnl = round((t.realized_pnl or 0.0) + pnl_inc, 2)
                 t.status = "stopped"
+                t.closed_at = datetime.now(tz=timezone.utc)
                 log_event(
                     db, trade_id=t.id, user_id=user_id, kind="sl_hit", severity="warning",
-                    message=f"Stop-loss hit at futures {fut} (SL {t.sl_price}, basis {t.sl_basis}); exited {qty}",
-                    payload={"futures_price": fut, "exit_order_id": oid, "qty": qty},
+                    message=f"Stop-loss hit at futures {fut} (SL {t.sl_price}, basis {t.sl_basis}); exited {qty} @ ~{exit_px} (P&L {pnl_inc:+.2f})",
+                    payload={"futures_price": fut, "exit_order_id": oid, "qty": qty, "exit_option_price": exit_px, "pnl": pnl_inc},
                 )
             else:
                 log_event(
@@ -219,16 +223,19 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                     payload={"futures_price": fut, "seq": tgt.seq},
                 )
                 continue
+            exit_px = fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
+            pnl_inc = fr_service._leg_exit_pnl(t.side, t.entry_option_price, exit_px, qty)
             tgt.status = "hit"
             tgt.hit_futures_price = fut
             tgt.exit_order_id = oid
             tgt.hit_at = datetime.now(tz=timezone.utc)
             t.remaining_qty = max(0, t.remaining_qty - qty)
+            t.realized_pnl = round((t.realized_pnl or 0.0) + pnl_inc, 2)
             fired_any = True
             log_event(
                 db, trade_id=t.id, user_id=user_id, kind="target_hit",
-                message=f"Target {tgt.seq} hit at futures {fut} (trigger {tgt.trigger_price}); exited {qty}",
-                payload={"futures_price": fut, "seq": tgt.seq, "exit_order_id": oid, "qty": qty},
+                message=f"Target {tgt.seq} hit at futures {fut} (trigger {tgt.trigger_price}); exited {qty} @ ~{exit_px} (P&L {pnl_inc:+.2f})",
+                payload={"futures_price": fut, "seq": tgt.seq, "exit_order_id": oid, "qty": qty, "exit_option_price": exit_px, "pnl": pnl_inc},
             )
             prev_sl = t.sl_price
             _apply_trailing(t, all_targets, tgt.seq)
@@ -241,9 +248,11 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
 
         if t.remaining_qty <= 0 and t.status == "active":
             t.status = "completed"
+            t.closed_at = datetime.now(tz=timezone.utc)
             log_event(
                 db, trade_id=t.id, user_id=user_id, kind="completed",
-                message="All quantity exited via targets", payload={"futures_price": fut},
+                message=f"All quantity exited via targets (total P&L {t.realized_pnl:+.2f})",
+                payload={"futures_price": fut, "realized_pnl": t.realized_pnl},
             )
         elif fired_any and all(x.status != "pending" for x in all_targets) and t.remaining_qty > 0:
             # All targets done but a remainder is still open — it now rides the

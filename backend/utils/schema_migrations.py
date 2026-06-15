@@ -115,6 +115,14 @@ def run_startup_migrations() -> None:
         # modified). Nullable — historical rows keep NULL.
         _add_column_if_missing(engine, "fr_trade", "created_by", "INTEGER")
         _add_column_if_missing(engine, "fr_trade", "modified_by", "INTEGER")
+
+        # Futures-Risk Phase B: phase tracking + close timestamp.
+        _add_column_if_missing(engine, "fr_trade", "phase_group", "VARCHAR(120)")
+        _add_column_if_missing(engine, "fr_trade", "phase_no", "INTEGER NOT NULL DEFAULT 0")
+        _add_column_if_missing(engine, "fr_trade", "closed_at", "TIMESTAMPTZ")
+        _add_index_if_missing(
+            engine, "fr_trade", "idx_fr_trade_phase_group", ["phase_group", "phase_no"]
+        )
     except Exception:
         logger.exception("Startup schema migration failed")
     finally:

@@ -137,6 +137,13 @@ class FrTrade(Base):
     created_by = Column(Integer, nullable=True)
     modified_by = Column(Integer, nullable=True)
 
+    # --- phase tracking (sequential positions on the same underlying+session) ---
+    # phase_group = "{user_id}:{underlying}:{session_date}"; phase_no increments
+    # 1,2,3… as each position closes and a new one opens within that group.
+    phase_group = Column(String(120), nullable=True, index=True)
+    phase_no = Column(Integer, nullable=False, default=0)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -145,6 +152,7 @@ class FrTrade(Base):
     __table_args__ = (
         Index("idx_fr_trade_user_status", "user_id", "status"),
         Index("idx_fr_trade_fut_status", "futures_symbol", "futures_exchange", "status"),
+        Index("idx_fr_trade_phase_group", "phase_group", "phase_no"),
     )
 
 

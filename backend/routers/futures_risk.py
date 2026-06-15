@@ -278,6 +278,13 @@ async def list_trades(status: str = "all", user: User = Depends(get_current_user
     return {"status": "success", "data": fr.list_trades(user.id, status)}
 
 
+@router.get("/phases")
+async def list_phases(underlying: str | None = None, user: User = Depends(get_current_user)):
+    """Phase history grouped by (underlying, session) with per-phase lifecycle
+    summary (entry/exit, P&L, duration, achieved targets, exit kind)."""
+    return {"status": "success", "data": fr.list_phases(user.id, underlying)}
+
+
 @router.get("/trades/{trade_id}")
 async def get_trade(trade_id: int, user: User = Depends(get_current_user)):
     trade = fr.get_trade(user.id, trade_id)

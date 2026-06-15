@@ -10,7 +10,7 @@ the rest of OpenBull's symbology.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select, text
@@ -26,6 +26,7 @@ from backend.models.futures_risk import (
     FrTradeTarget,
 )
 from backend.sandbox._db import session_scope
+from backend.services.market_data_cache import get_ltp_value
 from backend.services.option_symbol_service import (
     _fetch_available_strikes,
     _find_atm,
@@ -549,6 +550,44 @@ def _resolve_trade_plan(
     }
 
 
+def _session_date_ist() -> str:
+    """IST trading date (YYYY-MM-DD) used as the phase-group session key."""
+    ist = datetime.now(tz=timezone.utc) + timedelta(hours=5, minutes=30)
+    return ist.date().isoformat()
+
+
+def _assign_phase(db, user_id: int, underlying: str) -> tuple[str, int]:
+    """Return (phase_group, next_phase_no) for a (user, underlying, session).
+
+    The phase number increments 1,2,3… as positions close and reopen on the
+    same underlying within the same IST session.
+    """
+    group = f"{user_id}:{underlying}:{_session_date_ist()}"
+    max_no = db.execute(
+        select(func.max(FrTrade.phase_no)).where(FrTrade.phase_group == group)
+    ).scalar() or 0
+    return group, int(max_no) + 1
+
+
+def _leg_exit_pnl(side: str, entry_opt: float, exit_opt: float, qty: int) -> float:
+    """Realized P&L for exiting ``qty`` of the option leg at ``exit_opt``."""
+    if exit_opt <= 0 or entry_opt <= 0 or qty <= 0:
+        return 0.0
+    delta = (exit_opt - entry_opt) if side == "BUY" else (entry_opt - exit_opt)
+    return round(delta * qty, 2)
+
+
+def _option_exit_price(symbol: str, exchange: str, fallback: float = 0.0) -> float:
+    """Best-effort current option premium (MarketDataCache → fallback)."""
+    try:
+        val = get_ltp_value(symbol, exchange)
+        if val and float(val) > 0:
+            return float(val)
+    except Exception:
+        pass
+    return float(fallback)
+
+
 def _persist_targets(db, trade_id: int, target_rows: list[dict[str, Any]]) -> None:
     for tr in target_rows:
         db.add(
@@ -598,6 +637,7 @@ def place_trade(
     entry_order_id = resp.get("orderid")
 
     with session_scope() as db:
+        group, phase_no = _assign_phase(db, user_id, p["underlying"])
         trade = FrTrade(
             user_id=user_id,
             mode=mode,
@@ -624,6 +664,8 @@ def place_trade(
             sl_basis="initial",
             status="active",
             created_by=user_id,
+            phase_group=group,
+            phase_no=phase_no,
             meta={"offset": p["offset"] if p["strike"] is None else None, "params": p},
         )
         db.add(trade)
@@ -634,9 +676,15 @@ def place_trade(
             trade_id=trade.id,
             user_id=user_id,
             kind="entry",
-            message=f"{p['side']} {p['lots']} lot(s) {plan['option_symbol']} @ MKT | entry futures {plan['entry_fut']} | SL {plan['sl_price']}",
-            payload={"entry_order_id": entry_order_id, "futures": plan["fut_symbol"], "entry_futures_price": plan["entry_fut"]},
+            message=f"{p['side']} {p['lots']} lot(s) {plan['option_symbol']} @ MKT | entry futures {plan['entry_fut']} | SL {plan['sl_price']} | Phase {phase_no}",
+            payload={"entry_order_id": entry_order_id, "futures": plan["fut_symbol"], "entry_futures_price": plan["entry_fut"], "phase_no": phase_no},
         )
+        if phase_no > 1:
+            log_event(
+                db, trade_id=trade.id, user_id=user_id, kind="phase_change",
+                message=f"Phase {phase_no} started on {p['underlying']}",
+                payload={"phase_no": phase_no, "phase_group": group},
+            )
         trade_id = trade.id
 
     try:
@@ -751,6 +799,7 @@ def place_draft(
 
     with session_scope() as db:
         t = db.get(FrTrade, trade_id)
+        group, phase_no = _assign_phase(db, user_id, p["underlying"])
         t.mode = mode
         t.option_symbol = plan["option_symbol"]
         t.option_exchange = plan["option_exchange"]
@@ -769,6 +818,8 @@ def place_draft(
         t.sl_basis = "initial"
         t.status = "active"
         t.modified_by = user_id
+        t.phase_group = group
+        t.phase_no = phase_no
         # Rebuild target snapshot off the real entry price.
         db.execute(
             text("DELETE FROM fr_trade_target WHERE trade_id = :tid"), {"tid": trade_id}
@@ -776,9 +827,15 @@ def place_draft(
         _persist_targets(db, trade_id, plan["target_rows"])
         log_event(
             db, trade_id=trade_id, user_id=user_id, kind="entry",
-            message=f"Draft placed: {p['side']} {p['lots']} lot(s) {plan['option_symbol']} @ MKT | entry futures {plan['entry_fut']} | SL {plan['sl_price']}",
-            payload={"entry_order_id": entry_order_id, "entry_futures_price": plan["entry_fut"]},
+            message=f"Draft placed: {p['side']} {p['lots']} lot(s) {plan['option_symbol']} @ MKT | entry futures {plan['entry_fut']} | SL {plan['sl_price']} | Phase {phase_no}",
+            payload={"entry_order_id": entry_order_id, "entry_futures_price": plan["entry_fut"], "phase_no": phase_no},
         )
+        if phase_no > 1:
+            log_event(
+                db, trade_id=trade_id, user_id=user_id, kind="phase_change",
+                message=f"Phase {phase_no} started on {p['underlying']}",
+                payload={"phase_no": phase_no, "phase_group": group},
+            )
 
     try:
         from backend.futures_risk import engine as fr_engine
@@ -825,6 +882,14 @@ def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
         "modified_by": t.modified_by,
         "params": (t.meta or {}).get("params"),
         "trailing_mode": (t.meta or {}).get("trailing_mode"),
+        "phase_group": t.phase_group,
+        "phase_no": t.phase_no,
+        "closed_at": t.closed_at.isoformat() if t.closed_at else None,
+        "duration_sec": (
+            int(((t.closed_at or t.updated_at) - t.created_at).total_seconds())
+            if t.created_at and (t.closed_at or t.updated_at)
+            else None
+        ),
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }
@@ -891,6 +956,63 @@ def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
         return d
 
 
+def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, Any]]:
+    """Phase history grouped by (underlying, session). Each entry is one
+    position (phase) with its lifecycle summary: entry/exit, P&L, duration,
+    achieved targets, and how it closed."""
+    with session_scope() as db:
+        q = select(FrTrade).where(FrTrade.user_id == user_id, FrTrade.phase_no > 0)
+        if underlying:
+            q = q.where(FrTrade.underlying == underlying.strip().upper())
+        q = q.order_by(FrTrade.phase_group, FrTrade.phase_no)
+        trades = db.execute(q).scalars().all()
+        out: list[dict[str, Any]] = []
+        for t in trades:
+            tgts = db.execute(
+                select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
+            ).scalars().all()
+            achieved = [r.seq for r in tgts if r.status == "hit"]
+            # How it closed: read the terminal event kind.
+            terminal = db.execute(
+                select(FrTradeEvent.kind).where(
+                    FrTradeEvent.trade_id == t.id,
+                    FrTradeEvent.kind.in_(("sl_hit", "completed", "emergency_exit")),
+                ).order_by(FrTradeEvent.ts.desc()).limit(1)
+            ).scalar()
+            exit_kind = (
+                "auto" if terminal in ("sl_hit",) else
+                "manual" if terminal in ("completed", "emergency_exit") else
+                ("open" if t.status in ("active", "draft") else "auto")
+            )
+            out.append({
+                "trade_id": t.id,
+                "underlying": t.underlying,
+                "phase_group": t.phase_group,
+                "phase_no": t.phase_no,
+                "status": t.status,
+                "option_symbol": t.option_symbol,
+                "side": t.side,
+                "option_type": t.option_type,
+                "lots": t.lots,
+                "entry_time": t.created_at.isoformat() if t.created_at else None,
+                "exit_time": t.closed_at.isoformat() if t.closed_at else None,
+                "entry_futures_price": t.entry_futures_price,
+                "entry_option_price": t.entry_option_price,
+                "sl_price": t.sl_price,
+                "sl_basis": t.sl_basis,
+                "targets_total": len(tgts),
+                "targets_achieved": achieved,
+                "realized_pnl": t.realized_pnl,
+                "remaining_qty": t.remaining_qty,
+                "duration_sec": (
+                    int(((t.closed_at or t.updated_at) - t.created_at).total_seconds())
+                    if t.created_at and (t.closed_at or t.updated_at) else None
+                ),
+                "exit_kind": exit_kind,
+            })
+        return out
+
+
 def manual_exit(
     user_id: int,
     trade_id: int,
@@ -914,6 +1036,7 @@ def manual_exit(
         remaining = t.remaining_qty
         mode, side = t.mode, t.side
         option_symbol, option_exchange, product = t.option_symbol, t.option_exchange, t.product
+        entry_opt = t.entry_option_price
 
     if emergency or qty is None:
         exit_qty = remaining
@@ -941,23 +1064,29 @@ def manual_exit(
             raise FrError(resp.get("message", "Exit order failed"), status)
         exit_order_id = resp.get("orderid")
 
+    exit_px = _option_exit_price(option_symbol, option_exchange, fallback=entry_opt)
+    pnl_inc = _leg_exit_pnl(side, entry_opt, exit_px, exit_qty)
+
     with session_scope() as db:
         t = db.get(FrTrade, trade_id)
         t.remaining_qty = max(0, t.remaining_qty - exit_qty)
+        t.realized_pnl = round((t.realized_pnl or 0.0) + pnl_inc, 2)
         t.modified_by = user_id
         closed = t.remaining_qty <= 0
         if closed:
             t.status = "completed"
+            t.closed_at = datetime.now(tz=timezone.utc)
         if emergency:
-            kind, msg = "emergency_exit", f"EMERGENCY exit of {exit_qty} qty {option_symbol}"
+            kind, msg = "emergency_exit", f"EMERGENCY exit of {exit_qty} qty {option_symbol} @ ~{exit_px} (P&L {pnl_inc:+.2f})"
             sev = "warning"
         elif closed:
-            kind, msg, sev = "completed", f"Manual full exit of {exit_qty} qty {option_symbol}", "info"
+            kind, msg, sev = "completed", f"Manual full exit of {exit_qty} qty {option_symbol} @ ~{exit_px} (P&L {pnl_inc:+.2f})", "info"
         else:
-            kind, msg, sev = "partial_exit", f"Manual partial exit of {exit_qty} qty {option_symbol} ({t.remaining_qty} left)", "info"
+            kind, msg, sev = "partial_exit", f"Manual partial exit of {exit_qty} qty {option_symbol} @ ~{exit_px} (P&L {pnl_inc:+.2f}; {t.remaining_qty} left)", "info"
         log_event(
             db, trade_id=t.id, user_id=user_id, kind=kind, severity=sev,
-            message=msg, payload={"exit_order_id": exit_order_id, "qty": exit_qty, "remaining": t.remaining_qty},
+            message=msg,
+            payload={"exit_order_id": exit_order_id, "qty": exit_qty, "remaining": t.remaining_qty, "exit_option_price": exit_px, "pnl": pnl_inc},
         )
     return get_trade(user_id, trade_id) or {}
 

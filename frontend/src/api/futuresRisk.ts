@@ -9,6 +9,7 @@ import type {
   FrExpiry,
   FrFutures,
   FrStrikes,
+  FrPhase,
   FrSymbolMap,
   FrTemplateTarget,
   FrTrade,
@@ -133,4 +134,12 @@ export async function emergencyExit(id: number): Promise<FrTrade> {
 }
 export async function deleteTrade(id: number): Promise<void> {
   await api.delete(`/web/fr/trades/${id}`);
+}
+
+// ---- Phase history ----
+export async function listPhases(underlying?: string): Promise<FrPhase[]> {
+  const r = await api.get<Wrapped<FrPhase[]>>("/web/fr/phases", {
+    params: underlying ? { underlying } : {},
+  });
+  return r.data.data;
 }

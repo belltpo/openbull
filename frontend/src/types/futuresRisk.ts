@@ -58,10 +58,38 @@ export interface FrTrade {
   modified_by: number | null;
   params: PlaceTradePayload | null;
   trailing_mode: TrailingMode | null;
+  phase_group: string | null;
+  phase_no: number;
+  closed_at: string | null;
+  duration_sec: number | null;
   created_at: string | null;
   updated_at: string | null;
   targets: FrTradeTarget[];
   events?: FrEvent[];
+}
+
+export interface FrPhase {
+  trade_id: number;
+  underlying: string;
+  phase_group: string | null;
+  phase_no: number;
+  status: TradeStatus;
+  option_symbol: string;
+  side: Side;
+  option_type: OptionType;
+  lots: number;
+  entry_time: string | null;
+  exit_time: string | null;
+  entry_futures_price: number;
+  entry_option_price: number;
+  sl_price: number;
+  sl_basis: string;
+  targets_total: number;
+  targets_achieved: number[];
+  realized_pnl: number;
+  remaining_qty: number;
+  duration_sec: number | null;
+  exit_kind: "auto" | "manual" | "open";
 }
 
 export interface ModifyTradePayload {
