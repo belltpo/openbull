@@ -212,6 +212,27 @@ class PlaceTrade(BaseModel):
     targets: list[TargetOverride] | None = None
 
 
+class ModifyTrade(BaseModel):
+    # draft-only fields
+    underlying: str | None = None
+    underlying_exchange: str | None = None
+    expiry: str | None = None
+    option_type: str | None = Field(None, pattern="^(CE|PE)$")
+    side: str | None = Field(None, pattern="^(BUY|SELL)$")
+    product: str | None = None
+    lots: int | None = Field(None, ge=1)
+    strike: float | None = None
+    offset: str | None = None
+    # editable any time (incl. after placement)
+    sl_points: float | None = Field(None, gt=0)
+    targets: list[TargetOverride] | None = None
+    trailing_mode: str | None = Field(None, pattern="^(entry_after_t1|prev_target|off)$")
+
+
+class PartialExit(BaseModel):
+    qty: int = Field(..., ge=1)
+
+
 @router.post("/trade")
 async def place_trade(
     payload: PlaceTrade,
@@ -223,6 +244,25 @@ async def place_trade(
         trade = fr.place_trade(
             user_id=ctx.user.id,
             mode=mode,
+            auth_token=ctx.auth_token,
+            broker=ctx.broker_name,
+            config=ctx.broker_config,
+            params=payload.model_dump(),
+        )
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"status": "success", "data": trade}
+
+
+@router.post("/trade/draft")
+async def create_draft(
+    payload: PlaceTrade,
+    ctx: BrokerContext = Depends(get_broker_context),
+):
+    """Create an editable draft position WITHOUT placing an order."""
+    try:
+        trade = fr.create_draft(
+            user_id=ctx.user.id,
             auth_token=ctx.auth_token,
             broker=ctx.broker_name,
             config=ctx.broker_config,
@@ -246,10 +286,81 @@ async def get_trade(trade_id: int, user: User = Depends(get_current_user)):
     return {"status": "success", "data": trade}
 
 
+@router.put("/trades/{trade_id}")
+async def modify_trade(
+    trade_id: int,
+    payload: ModifyTrade,
+    ctx: BrokerContext = Depends(get_broker_context),
+):
+    """Modify a position before (draft: any field) or after (active: SL /
+    targets / trailing) placement."""
+    fields = payload.model_dump(exclude_none=True)
+    if "targets" in fields:
+        fields["targets"] = [t for t in fields["targets"]]
+    try:
+        trade = fr.modify_trade(
+            ctx.user.id, trade_id, fields,
+            auth_token=ctx.auth_token, broker=ctx.broker_name, config=ctx.broker_config,
+        )
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"status": "success", "data": trade}
+
+
+@router.post("/trades/{trade_id}/place")
+async def place_draft(
+    trade_id: int,
+    ctx: BrokerContext = Depends(get_broker_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """Place a draft position (sends the entry order, flips it to active)."""
+    mode = await get_trading_mode(db)
+    try:
+        trade = fr.place_draft(
+            user_id=ctx.user.id, mode=mode,
+            auth_token=ctx.auth_token, broker=ctx.broker_name, config=ctx.broker_config,
+            trade_id=trade_id,
+        )
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"status": "success", "data": trade}
+
+
+@router.delete("/trades/{trade_id}")
+async def delete_trade(trade_id: int, user: User = Depends(get_current_user)):
+    """Delete a draft (or already-closed) trade."""
+    try:
+        fr.delete_trade(user.id, trade_id)
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"status": "success"}
+
+
 @router.post("/trades/{trade_id}/exit")
 async def exit_trade(trade_id: int, user: User = Depends(get_current_user)):
+    """Full manual close of an active trade."""
     try:
         trade = fr.manual_exit(user.id, trade_id)
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"status": "success", "data": trade}
+
+
+@router.post("/trades/{trade_id}/partial-exit")
+async def partial_exit(trade_id: int, payload: PartialExit, user: User = Depends(get_current_user)):
+    """Exit a specific quantity; the trade stays active if a remainder is left."""
+    try:
+        trade = fr.manual_exit(user.id, trade_id, qty=payload.qty)
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"status": "success", "data": trade}
+
+
+@router.post("/trades/{trade_id}/emergency-exit")
+async def emergency_exit(trade_id: int, user: User = Depends(get_current_user)):
+    """Forced full close (emergency)."""
+    try:
+        trade = fr.manual_exit(user.id, trade_id, emergency=True)
     except FrError as e:
         raise HTTPException(status_code=e.status, detail=e.message)
     return {"status": "success", "data": trade}

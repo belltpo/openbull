@@ -12,6 +12,7 @@ import type {
   FrSymbolMap,
   FrTemplateTarget,
   FrTrade,
+  ModifyTradePayload,
   PlaceTradePayload,
 } from "@/types/futuresRisk";
 
@@ -103,4 +104,33 @@ export async function getTrade(id: number): Promise<FrTrade> {
 export async function exitTrade(id: number): Promise<FrTrade> {
   const r = await api.post<Wrapped<FrTrade>>(`/web/fr/trades/${id}/exit`);
   return r.data.data;
+}
+
+// ---- Draft positions ----
+export async function createDraft(payload: PlaceTradePayload): Promise<FrTrade> {
+  const r = await api.post<Wrapped<FrTrade>>("/web/fr/trade/draft", payload);
+  return r.data.data;
+}
+export async function placeDraft(id: number): Promise<FrTrade> {
+  const r = await api.post<Wrapped<FrTrade>>(`/web/fr/trades/${id}/place`);
+  return r.data.data;
+}
+
+// ---- Modify (draft or active) ----
+export async function modifyTrade(id: number, fields: ModifyTradePayload): Promise<FrTrade> {
+  const r = await api.put<Wrapped<FrTrade>>(`/web/fr/trades/${id}`, fields);
+  return r.data.data;
+}
+
+// ---- Exits ----
+export async function partialExit(id: number, qty: number): Promise<FrTrade> {
+  const r = await api.post<Wrapped<FrTrade>>(`/web/fr/trades/${id}/partial-exit`, { qty });
+  return r.data.data;
+}
+export async function emergencyExit(id: number): Promise<FrTrade> {
+  const r = await api.post<Wrapped<FrTrade>>(`/web/fr/trades/${id}/emergency-exit`);
+  return r.data.data;
+}
+export async function deleteTrade(id: number): Promise<void> {
+  await api.delete(`/web/fr/trades/${id}`);
 }

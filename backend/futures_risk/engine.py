@@ -107,7 +107,8 @@ def _apply_trailing(trade: FrTrade, all_targets: list[FrTradeTarget], hit_seq: i
     """Move the SL after a target is hit, per the configured trailing mode."""
     if not fr_service._bool_cfg("trailing_enabled", True):
         return
-    mode = fr_service.get_config_value("trailing_mode", "entry_after_t1")
+    # Per-trade override (set via modify); falls back to the global config.
+    mode = (trade.meta or {}).get("trailing_mode") or fr_service.get_config_value("trailing_mode", "entry_after_t1")
     if mode == "off":
         return
 

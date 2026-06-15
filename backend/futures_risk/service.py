@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import func, select, text
 
 from backend.futures_risk import defaults as fr_defaults
-from backend.futures_risk.execution import dispatch_order, log_event
+from backend.futures_risk.execution import dispatch_order, load_broker_context_sync, log_event
 from backend.models.futures_risk import (
     FrConfig,
     FrSymbolMap,
@@ -429,19 +429,8 @@ def _build_targets(
     return out
 
 
-def place_trade(
-    user_id: int,
-    mode: str,
-    auth_token: str,
-    broker: str,
-    config: dict | None,
-    params: dict[str, Any],
-) -> dict[str, Any]:
-    """Resolve symbols, read the entry futures price, place the entry option
-    order, and persist the trade + target snapshot. Returns the trade dict.
-
-    Raises ``FrError`` on validation / resolution / placement failure.
-    """
+def _normalise_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Validate + normalise the raw place/draft params into a clean dict."""
     underlying = str(params.get("underlying", "")).strip().upper()
     if not underlying:
         raise FrError("underlying is required")
@@ -458,71 +447,147 @@ def place_trade(
     if lots < 1:
         raise FrError("lots must be >= 1")
 
-    underlying_exchange = str(params.get("underlying_exchange") or "NSE_INDEX").upper()
-    product = str(params.get("product") or get_config_value("default_product", "MIS")).upper()
     strike = params.get("strike")
     strike = float(strike) if strike not in (None, "", 0, "0") else None
-    offset = params.get("offset") or "ATM"
+    sl_points = params.get("sl_points")
+    sl_points = float(sl_points) if sl_points not in (None, "") else None
 
-    # 1) Resolve the option leg
+    return {
+        "underlying": underlying,
+        "underlying_exchange": str(params.get("underlying_exchange") or "NSE_INDEX").upper(),
+        "option_type": option_type,
+        "side": side,
+        "expiry": expiry,
+        "lots": lots,
+        "product": str(params.get("product") or get_config_value("default_product", "MIS")).upper(),
+        "strike": strike,
+        "offset": params.get("offset") or "ATM",
+        "sl_points": sl_points,
+        "targets": params.get("targets") or None,
+    }
+
+
+def _resolve_trade_plan(
+    auth_token: str,
+    broker: str,
+    config: dict | None,
+    p: dict[str, Any],
+    *,
+    require_price: bool = True,
+) -> dict[str, Any]:
+    """Resolve option leg, futures contract, entry futures price, direction,
+    SL and target snapshot for a (normalised) params dict.
+
+    ``require_price=False`` (drafts) tolerates a missing live futures price by
+    falling back to 0.0 so a draft can still be saved pre-market; the real
+    price is re-read when the draft is placed.
+    """
+    # 1) Option leg
     opt = _resolve_option(
-        underlying, underlying_exchange, expiry, option_type, side, strike, offset, auth_token, broker, config
+        p["underlying"], p["underlying_exchange"], p["expiry"], p["option_type"],
+        p["side"], p["strike"], p["offset"], auth_token, broker, config,
     )
-    option_symbol = opt["symbol"]
-    option_exchange = opt["exchange"]
-    lot_size = int(opt["lotsize"] or 1)
-    strike_val = opt["strike"]
 
-    # 2) Resolve the futures contract + entry futures price
-    fut = resolve_futures(underlying)
+    # 2) Futures contract + entry futures price
+    fut = resolve_futures(p["underlying"])
     if fut is None:
-        raise FrError(f"No futures mapping configured for {underlying}. Add one in the admin panel.", 400)
+        raise FrError(
+            f"No futures mapping configured for {p['underlying']}. Add one in the admin panel.", 400
+        )
+    entry_fut = 0.0
     ok, q, status = get_quotes_with_auth(fut["symbol"], fut["exchange"], auth_token, broker, config)
-    if not ok:
-        raise FrError(f"Could not read futures price for {fut['symbol']}: {q.get('message', '')}", status)
-    entry_fut = q.get("data", {}).get("ltp")
-    if not entry_fut or float(entry_fut) <= 0:
-        raise FrError(f"Futures price unavailable for {fut['symbol']}", 502)
-    entry_fut = float(entry_fut)
+    if ok:
+        ltp = q.get("data", {}).get("ltp")
+        entry_fut = float(ltp) if ltp and float(ltp) > 0 else 0.0
+    if entry_fut <= 0:
+        if require_price:
+            raise FrError(f"Futures price unavailable for {fut['symbol']}", 502)
 
     # Best-effort entry option price (for P&L display)
     entry_opt = 0.0
     try:
-        ok2, oq, _ = get_quotes_with_auth(option_symbol, option_exchange, auth_token, broker, config)
+        ok2, oq, _ = get_quotes_with_auth(opt["symbol"], opt["exchange"], auth_token, broker, config)
         if ok2:
             entry_opt = float(oq.get("data", {}).get("ltp") or 0.0)
     except Exception:
         pass
 
     # 3) Direction + SL + targets
-    direction = 1 if (option_type == "CE") == (side == "BUY") else -1
-    sl_points = params.get("sl_points")
-    sl_points = float(sl_points) if sl_points not in (None, "") else float(get_config_value("default_sl_points", "30"))
-    sl_price = round(entry_fut - direction * sl_points, 2)
+    direction = 1 if (p["option_type"] == "CE") == (p["side"] == "BUY") else -1
+    sl_points = p["sl_points"]
+    if sl_points is None:
+        sl_points = float(get_config_value("default_sl_points", "30"))
+    sl_price = round(entry_fut - direction * sl_points, 2) if entry_fut > 0 else 0.0
 
-    override_targets = params.get("targets")
-    if override_targets:
+    if p["targets"]:
         template = [
             {"seq": i + 1, "points": float(t["points"]), "exit_pct": float(t.get("exit_pct", 0))}
-            for i, t in enumerate(override_targets)
+            for i, t in enumerate(p["targets"])
             if float(t.get("points", 0)) > 0
         ]
     else:
         template = list_targets(enabled_only=True)
     if not template:
         raise FrError("No targets configured. Add target levels in the admin panel.", 400)
-    target_rows = _build_targets(entry_fut, direction, lots, lot_size, template)
+    lot_size = int(opt["lotsize"] or 1)
+    target_rows = _build_targets(entry_fut, direction, p["lots"], lot_size, template)
 
-    total_qty = lots * lot_size
+    return {
+        "option_symbol": opt["symbol"],
+        "option_exchange": opt["exchange"],
+        "strike_val": opt["strike"],
+        "lot_size": lot_size,
+        "total_qty": p["lots"] * lot_size,
+        "fut_symbol": fut["symbol"],
+        "fut_exchange": fut["exchange"],
+        "entry_fut": entry_fut,
+        "entry_opt": entry_opt,
+        "direction": direction,
+        "sl_points": sl_points,
+        "sl_price": sl_price,
+        "target_rows": target_rows,
+    }
 
-    # 4) Place the entry order
+
+def _persist_targets(db, trade_id: int, target_rows: list[dict[str, Any]]) -> None:
+    for tr in target_rows:
+        db.add(
+            FrTradeTarget(
+                trade_id=trade_id,
+                seq=tr["seq"],
+                points=tr["points"],
+                exit_pct=tr["exit_pct"],
+                trigger_price=tr["trigger_price"],
+                exit_qty=tr["exit_qty"],
+                status="pending",
+            )
+        )
+
+
+def place_trade(
+    user_id: int,
+    mode: str,
+    auth_token: str,
+    broker: str,
+    config: dict | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve symbols, read the entry futures price, place the entry option
+    order, and persist the trade + target snapshot. Returns the trade dict.
+
+    Raises ``FrError`` on validation / resolution / placement failure.
+    """
+    p = _normalise_params(params)
+    plan = _resolve_trade_plan(auth_token, broker, config, p, require_price=True)
+
+    # Place the entry order
     order_data = {
-        "symbol": option_symbol,
-        "exchange": option_exchange,
-        "action": side,
-        "quantity": str(total_qty),
+        "symbol": plan["option_symbol"],
+        "exchange": plan["option_exchange"],
+        "action": p["side"],
+        "quantity": str(plan["total_qty"]),
         "pricetype": "MARKET",
-        "product": product,
+        "product": p["product"],
         "price": "0",
         "trigger_price": "0",
         "strategy": "FuturesRisk",
@@ -532,64 +597,193 @@ def place_trade(
         raise FrError(resp.get("message", "Entry order failed"), status)
     entry_order_id = resp.get("orderid")
 
-    # 5) Persist
     with session_scope() as db:
         trade = FrTrade(
             user_id=user_id,
             mode=mode,
-            underlying=underlying,
-            option_symbol=option_symbol,
-            option_exchange=option_exchange,
-            option_type=option_type,
-            side=side,
-            product=product,
-            expiry=expiry,
-            strike=strike_val,
-            lots=lots,
-            lot_size=lot_size,
-            total_qty=total_qty,
-            remaining_qty=total_qty,
-            entry_option_price=entry_opt,
+            underlying=p["underlying"],
+            option_symbol=plan["option_symbol"],
+            option_exchange=plan["option_exchange"],
+            option_type=p["option_type"],
+            side=p["side"],
+            product=p["product"],
+            expiry=p["expiry"],
+            strike=plan["strike_val"],
+            lots=p["lots"],
+            lot_size=plan["lot_size"],
+            total_qty=plan["total_qty"],
+            remaining_qty=plan["total_qty"],
+            entry_option_price=plan["entry_opt"],
             entry_order_id=str(entry_order_id) if entry_order_id else None,
-            futures_symbol=fut["symbol"],
-            futures_exchange=fut["exchange"],
-            entry_futures_price=entry_fut,
-            direction=direction,
-            sl_points=sl_points,
-            sl_price=sl_price,
+            futures_symbol=plan["fut_symbol"],
+            futures_exchange=plan["fut_exchange"],
+            entry_futures_price=plan["entry_fut"],
+            direction=plan["direction"],
+            sl_points=plan["sl_points"],
+            sl_price=plan["sl_price"],
             sl_basis="initial",
             status="active",
-            meta={"offset": offset if strike is None else None},
+            created_by=user_id,
+            meta={"offset": p["offset"] if p["strike"] is None else None, "params": p},
         )
         db.add(trade)
         db.flush()
-        for tr in target_rows:
-            db.add(
-                FrTradeTarget(
-                    trade_id=trade.id,
-                    seq=tr["seq"],
-                    points=tr["points"],
-                    exit_pct=tr["exit_pct"],
-                    trigger_price=tr["trigger_price"],
-                    exit_qty=tr["exit_qty"],
-                    status="pending",
-                )
-            )
+        _persist_targets(db, trade.id, plan["target_rows"])
         log_event(
             db,
             trade_id=trade.id,
             user_id=user_id,
             kind="entry",
-            message=f"{side} {lots} lot(s) {option_symbol} @ MKT | entry futures {entry_fut} | SL {sl_price}",
-            payload={"entry_order_id": entry_order_id, "futures": fut["symbol"], "entry_futures_price": entry_fut},
+            message=f"{p['side']} {p['lots']} lot(s) {plan['option_symbol']} @ MKT | entry futures {plan['entry_fut']} | SL {plan['sl_price']}",
+            payload={"entry_order_id": entry_order_id, "futures": plan["fut_symbol"], "entry_futures_price": plan["entry_fut"]},
         )
         trade_id = trade.id
 
-    # 6) Best-effort: make sure the futures price keeps streaming server-side
     try:
         from backend.futures_risk import engine as fr_engine
 
-        fr_engine.ensure_streaming(fut["symbol"], fut["exchange"])
+        fr_engine.ensure_streaming(plan["fut_symbol"], plan["fut_exchange"])
+    except Exception:
+        logger.debug("ensure_streaming skipped", exc_info=True)
+
+    return get_trade(user_id, trade_id) or {}
+
+
+# ---------------------------------------------------------------------------
+# Draft positions (created/edited before order placement)
+# ---------------------------------------------------------------------------
+
+def create_draft(
+    user_id: int,
+    auth_token: str,
+    broker: str,
+    config: dict | None,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Create an editable draft position WITHOUT placing any order.
+
+    Resolves the option/futures symbols and a preview SL/target snapshot off
+    the current futures price (best-effort). Nothing is sent to the broker; the
+    auto-exit engine ignores ``draft`` rows. Place it later with ``place_draft``.
+    """
+    p = _normalise_params(params)
+    plan = _resolve_trade_plan(auth_token, broker, config, p, require_price=False)
+
+    with session_scope() as db:
+        trade = FrTrade(
+            user_id=user_id,
+            mode="live",  # set for real at placement time
+            underlying=p["underlying"],
+            option_symbol=plan["option_symbol"],
+            option_exchange=plan["option_exchange"],
+            option_type=p["option_type"],
+            side=p["side"],
+            product=p["product"],
+            expiry=p["expiry"],
+            strike=plan["strike_val"],
+            lots=p["lots"],
+            lot_size=plan["lot_size"],
+            total_qty=plan["total_qty"],
+            remaining_qty=plan["total_qty"],
+            entry_option_price=plan["entry_opt"],
+            entry_order_id=None,
+            futures_symbol=plan["fut_symbol"],
+            futures_exchange=plan["fut_exchange"],
+            entry_futures_price=plan["entry_fut"],
+            direction=plan["direction"],
+            sl_points=plan["sl_points"],
+            sl_price=plan["sl_price"],
+            sl_basis="initial",
+            status="draft",
+            created_by=user_id,
+            meta={"offset": p["offset"] if p["strike"] is None else None, "params": p},
+        )
+        db.add(trade)
+        db.flush()
+        _persist_targets(db, trade.id, plan["target_rows"])
+        log_event(
+            db, trade_id=trade.id, user_id=user_id, kind="draft_created",
+            message=f"Draft {p['side']} {p['lots']} lot(s) {plan['option_symbol']} (preview SL {plan['sl_price']})",
+            payload={"params": p},
+        )
+        trade_id = trade.id
+    return get_trade(user_id, trade_id) or {}
+
+
+def place_draft(
+    user_id: int,
+    mode: str,
+    auth_token: str,
+    broker: str,
+    config: dict | None,
+    trade_id: int,
+) -> dict[str, Any]:
+    """Promote a draft to a live/sandbox trade: re-resolve against the current
+    futures price, place the entry order, and flip the row to ``active``."""
+    with session_scope() as db:
+        t = db.get(FrTrade, trade_id)
+        if t is None or t.user_id != user_id:
+            raise FrError("Draft not found", 404)
+        if t.status != "draft":
+            raise FrError(f"Trade is {t.status}, not a draft", 409)
+        p = dict((t.meta or {}).get("params") or {})
+    if not p:
+        raise FrError("Draft is missing its parameters; recreate it", 422)
+
+    p = _normalise_params(p)
+    plan = _resolve_trade_plan(auth_token, broker, config, p, require_price=True)
+
+    order_data = {
+        "symbol": plan["option_symbol"],
+        "exchange": plan["option_exchange"],
+        "action": p["side"],
+        "quantity": str(plan["total_qty"]),
+        "pricetype": "MARKET",
+        "product": p["product"],
+        "price": "0",
+        "trigger_price": "0",
+        "strategy": "FuturesRisk",
+    }
+    ok, resp, status = dispatch_order(mode, user_id, order_data, auth_token=auth_token, broker=broker, config=config)
+    if not ok:
+        raise FrError(resp.get("message", "Entry order failed"), status)
+    entry_order_id = resp.get("orderid")
+
+    with session_scope() as db:
+        t = db.get(FrTrade, trade_id)
+        t.mode = mode
+        t.option_symbol = plan["option_symbol"]
+        t.option_exchange = plan["option_exchange"]
+        t.strike = plan["strike_val"]
+        t.lot_size = plan["lot_size"]
+        t.total_qty = plan["total_qty"]
+        t.remaining_qty = plan["total_qty"]
+        t.entry_option_price = plan["entry_opt"]
+        t.entry_order_id = str(entry_order_id) if entry_order_id else None
+        t.futures_symbol = plan["fut_symbol"]
+        t.futures_exchange = plan["fut_exchange"]
+        t.entry_futures_price = plan["entry_fut"]
+        t.direction = plan["direction"]
+        t.sl_points = plan["sl_points"]
+        t.sl_price = plan["sl_price"]
+        t.sl_basis = "initial"
+        t.status = "active"
+        t.modified_by = user_id
+        # Rebuild target snapshot off the real entry price.
+        db.execute(
+            text("DELETE FROM fr_trade_target WHERE trade_id = :tid"), {"tid": trade_id}
+        )
+        _persist_targets(db, trade_id, plan["target_rows"])
+        log_event(
+            db, trade_id=trade_id, user_id=user_id, kind="entry",
+            message=f"Draft placed: {p['side']} {p['lots']} lot(s) {plan['option_symbol']} @ MKT | entry futures {plan['entry_fut']} | SL {plan['sl_price']}",
+            payload={"entry_order_id": entry_order_id, "entry_futures_price": plan["entry_fut"]},
+        )
+
+    try:
+        from backend.futures_risk import engine as fr_engine
+
+        fr_engine.ensure_streaming(plan["fut_symbol"], plan["fut_exchange"])
     except Exception:
         logger.debug("ensure_streaming skipped", exc_info=True)
 
@@ -627,6 +821,10 @@ def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
         "sl_basis": t.sl_basis,
         "status": t.status,
         "realized_pnl": t.realized_pnl,
+        "created_by": t.created_by,
+        "modified_by": t.modified_by,
+        "params": (t.meta or {}).get("params"),
+        "trailing_mode": (t.meta or {}).get("trailing_mode"),
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }
@@ -693,28 +891,45 @@ def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
         return d
 
 
-def manual_exit(user_id: int, trade_id: int) -> dict[str, Any]:
-    """Exit all remaining quantity of an active trade immediately."""
+def manual_exit(
+    user_id: int,
+    trade_id: int,
+    qty: int | None = None,
+    *,
+    emergency: bool = False,
+) -> dict[str, Any]:
+    """Exit quantity of an active trade immediately.
+
+    * ``qty=None`` → exit ALL remaining (full close).
+    * ``qty=N``    → partial exit of N (capped at remaining). Trade stays
+      ``active`` if a remainder is left.
+    * ``emergency=True`` → forced full close, logged distinctly.
+    """
     with session_scope() as db:
         t = db.get(FrTrade, trade_id)
         if t is None or t.user_id != user_id:
             raise FrError("Trade not found", 404)
         if t.status != "active":
             raise FrError(f"Trade is {t.status}, not active", 409)
-        qty = t.remaining_qty
-        mode = t.mode
-        side = t.side
-        option_symbol = t.option_symbol
-        option_exchange = t.option_exchange
-        product = t.product
+        remaining = t.remaining_qty
+        mode, side = t.mode, t.side
+        option_symbol, option_exchange, product = t.option_symbol, t.option_exchange, t.product
 
-    if qty > 0:
+    if emergency or qty is None:
+        exit_qty = remaining
+    else:
+        exit_qty = max(0, min(int(qty), remaining))
+        if exit_qty == 0:
+            raise FrError("qty must be between 1 and the remaining quantity", 400)
+
+    exit_order_id = None
+    if exit_qty > 0:
         exit_action = "SELL" if side == "BUY" else "BUY"
         order_data = {
             "symbol": option_symbol,
             "exchange": option_exchange,
             "action": exit_action,
-            "quantity": str(qty),
+            "quantity": str(exit_qty),
             "pricetype": "MARKET",
             "product": product,
             "price": "0",
@@ -725,19 +940,178 @@ def manual_exit(user_id: int, trade_id: int) -> dict[str, Any]:
         if not ok:
             raise FrError(resp.get("message", "Exit order failed"), status)
         exit_order_id = resp.get("orderid")
-    else:
-        exit_order_id = None
 
     with session_scope() as db:
         t = db.get(FrTrade, trade_id)
-        t.remaining_qty = 0
-        t.status = "completed"
+        t.remaining_qty = max(0, t.remaining_qty - exit_qty)
+        t.modified_by = user_id
+        closed = t.remaining_qty <= 0
+        if closed:
+            t.status = "completed"
+        if emergency:
+            kind, msg = "emergency_exit", f"EMERGENCY exit of {exit_qty} qty {option_symbol}"
+            sev = "warning"
+        elif closed:
+            kind, msg, sev = "completed", f"Manual full exit of {exit_qty} qty {option_symbol}", "info"
+        else:
+            kind, msg, sev = "partial_exit", f"Manual partial exit of {exit_qty} qty {option_symbol} ({t.remaining_qty} left)", "info"
         log_event(
-            db,
-            trade_id=t.id,
-            user_id=user_id,
-            kind="completed",
-            message=f"Manual exit of {qty} qty {option_symbol}",
-            payload={"exit_order_id": exit_order_id},
+            db, trade_id=t.id, user_id=user_id, kind=kind, severity=sev,
+            message=msg, payload={"exit_order_id": exit_order_id, "qty": exit_qty, "remaining": t.remaining_qty},
         )
     return get_trade(user_id, trade_id) or {}
+
+
+# ---------------------------------------------------------------------------
+# Modify (draft or active) + delete
+# ---------------------------------------------------------------------------
+
+# Fields that may only be changed while a position is a draft (pre-placement).
+_DRAFT_ONLY_FIELDS = {"underlying", "underlying_exchange", "option_type", "side", "expiry", "strike", "offset", "lots", "product"}
+# Fields editable at any time, including after placement.
+_LIVE_EDITABLE_FIELDS = {"sl_points", "targets", "trailing_mode"}
+
+
+def modify_trade(
+    user_id: int,
+    trade_id: int,
+    fields: dict[str, Any],
+    auth_token: str | None = None,
+    broker: str | None = None,
+    config: dict | None = None,
+) -> dict[str, Any]:
+    """Modify a position before or after placement.
+
+    * DRAFT  → any field (re-resolves option/futures and rebuilds the preview).
+    * ACTIVE → only SL (``sl_points``), ``targets`` (pending ones), and
+      ``trailing_mode`` (per-trade override). Strike/lots/side are locked once
+      the order is live.
+    """
+    with session_scope() as db:
+        t = db.get(FrTrade, trade_id)
+        if t is None or t.user_id != user_id:
+            raise FrError("Trade not found", 404)
+        status = t.status
+        is_draft = status == "draft"
+        if status not in ("draft", "active"):
+            raise FrError(f"Cannot modify a {status} trade", 409)
+
+    # ---- Active trade: limited, in-place edits ----
+    if not is_draft:
+        illegal = (set(fields) & _DRAFT_ONLY_FIELDS)
+        if illegal:
+            raise FrError(f"Cannot change {', '.join(sorted(illegal))} after the order is placed", 409)
+        with session_scope() as db:
+            t = db.get(FrTrade, trade_id)
+            changes: list[str] = []
+
+            if "sl_points" in fields and fields["sl_points"] is not None:
+                sl_points = float(fields["sl_points"])
+                t.sl_points = sl_points
+                t.sl_price = round(t.entry_futures_price - t.direction * sl_points, 2)
+                t.sl_basis = "manual"
+                changes.append(f"SL→{t.sl_price} ({sl_points} pts)")
+
+            if "trailing_mode" in fields and fields["trailing_mode"]:
+                meta = dict(t.meta or {})
+                meta["trailing_mode"] = str(fields["trailing_mode"])
+                t.meta = meta
+                changes.append(f"trailing→{fields['trailing_mode']}")
+
+            if "targets" in fields and fields["targets"] is not None:
+                # Replace only the PENDING targets; keep already-hit ones intact.
+                hit = db.execute(
+                    select(FrTradeTarget).where(
+                        FrTradeTarget.trade_id == trade_id, FrTradeTarget.status == "hit"
+                    ).order_by(FrTradeTarget.seq)
+                ).scalars().all()
+                hit_lots = sum(int(r.exit_qty) for r in hit) // max(1, t.lot_size)
+                remaining_lots = max(0, t.lots - hit_lots)
+                base_seq = len(hit)
+                template = [
+                    {"seq": base_seq + i + 1, "points": float(x["points"]), "exit_pct": float(x.get("exit_pct", 0))}
+                    for i, x in enumerate(fields["targets"])
+                    if float(x.get("points", 0)) > 0
+                ]
+                new_rows = _build_targets(t.entry_futures_price, t.direction, remaining_lots, t.lot_size, template)
+                db.execute(
+                    text("DELETE FROM fr_trade_target WHERE trade_id = :tid AND status = 'pending'"),
+                    {"tid": trade_id},
+                )
+                for tr in new_rows:
+                    db.add(FrTradeTarget(
+                        trade_id=trade_id, seq=tr["seq"], points=tr["points"], exit_pct=tr["exit_pct"],
+                        trigger_price=tr["trigger_price"], exit_qty=tr["exit_qty"], status="pending",
+                    ))
+                changes.append(f"targets×{len(new_rows)}")
+
+            if not changes:
+                raise FrError("No editable fields provided", 400)
+            t.modified_by = user_id
+            log_event(
+                db, trade_id=trade_id, user_id=user_id, kind="modified",
+                message="Modified active trade: " + "; ".join(changes), payload={"fields": list(fields)},
+            )
+        return get_trade(user_id, trade_id) or {}
+
+    # ---- Draft: merge params and fully re-resolve the preview ----
+    with session_scope() as db:
+        t = db.get(FrTrade, trade_id)
+        p = dict((t.meta or {}).get("params") or {})
+    p.update({k: v for k, v in fields.items() if v is not None})
+    p = _normalise_params(p)
+    if auth_token and broker:
+        plan = _resolve_trade_plan(auth_token, broker, config, p, require_price=False)
+    else:
+        ctx = load_broker_context_sync(user_id)
+        if ctx is None:
+            raise FrError("No active broker session to re-resolve the draft", 403)
+        plan = _resolve_trade_plan(ctx["auth_token"], ctx["broker"], ctx["config"], p, require_price=False)
+
+    with session_scope() as db:
+        t = db.get(FrTrade, trade_id)
+        t.underlying = p["underlying"]
+        t.option_symbol = plan["option_symbol"]
+        t.option_exchange = plan["option_exchange"]
+        t.option_type = p["option_type"]
+        t.side = p["side"]
+        t.product = p["product"]
+        t.expiry = p["expiry"]
+        t.strike = plan["strike_val"]
+        t.lots = p["lots"]
+        t.lot_size = plan["lot_size"]
+        t.total_qty = plan["total_qty"]
+        t.remaining_qty = plan["total_qty"]
+        t.entry_option_price = plan["entry_opt"]
+        t.futures_symbol = plan["fut_symbol"]
+        t.futures_exchange = plan["fut_exchange"]
+        t.entry_futures_price = plan["entry_fut"]
+        t.direction = plan["direction"]
+        t.sl_points = plan["sl_points"]
+        t.sl_price = plan["sl_price"]
+        t.modified_by = user_id
+        meta = dict(t.meta or {})
+        meta["params"] = p
+        meta["offset"] = p["offset"] if p["strike"] is None else None
+        t.meta = meta
+        db.execute(text("DELETE FROM fr_trade_target WHERE trade_id = :tid"), {"tid": trade_id})
+        _persist_targets(db, trade_id, plan["target_rows"])
+        log_event(
+            db, trade_id=trade_id, user_id=user_id, kind="modified",
+            message=f"Draft updated: {p['side']} {p['lots']} lot(s) {plan['option_symbol']}",
+            payload={"fields": list(fields)},
+        )
+    return get_trade(user_id, trade_id) or {}
+
+
+def delete_trade(user_id: int, trade_id: int) -> bool:
+    """Delete a draft (or an already-closed) trade. Active trades must be
+    exited first — we never silently drop a live position."""
+    with session_scope() as db:
+        t = db.get(FrTrade, trade_id)
+        if t is None or t.user_id != user_id:
+            raise FrError("Trade not found", 404)
+        if t.status == "active":
+            raise FrError("Close the position before deleting it", 409)
+        db.delete(t)  # FK cascade removes targets + events
+    return True

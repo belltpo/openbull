@@ -110,6 +110,11 @@ def run_startup_migrations() -> None:
             engine, "sm_strategy", "webhook_locked",
             "BOOLEAN NOT NULL DEFAULT FALSE",
         )
+
+        # Futures-Risk Phase A: audit actors on fr_trade (who created / last
+        # modified). Nullable — historical rows keep NULL.
+        _add_column_if_missing(engine, "fr_trade", "created_by", "INTEGER")
+        _add_column_if_missing(engine, "fr_trade", "modified_by", "INTEGER")
     except Exception:
         logger.exception("Startup schema migration failed")
     finally:

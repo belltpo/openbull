@@ -2,7 +2,8 @@
 
 export type OptionType = "CE" | "PE";
 export type Side = "BUY" | "SELL";
-export type TradeStatus = "active" | "completed" | "stopped" | "cancelled" | "error";
+export type TradeStatus = "draft" | "active" | "completed" | "stopped" | "cancelled" | "error";
+export type TrailingMode = "entry_after_t1" | "prev_target" | "off";
 export type TargetStatus = "pending" | "hit" | "skipped";
 
 export interface FrTradeTarget {
@@ -53,10 +54,31 @@ export interface FrTrade {
   sl_basis: string;
   status: TradeStatus;
   realized_pnl: number;
+  created_by: number | null;
+  modified_by: number | null;
+  params: PlaceTradePayload | null;
+  trailing_mode: TrailingMode | null;
   created_at: string | null;
   updated_at: string | null;
   targets: FrTradeTarget[];
   events?: FrEvent[];
+}
+
+export interface ModifyTradePayload {
+  // draft-only
+  underlying?: string;
+  underlying_exchange?: string;
+  expiry?: string;
+  option_type?: OptionType;
+  side?: Side;
+  product?: string;
+  lots?: number;
+  strike?: number | null;
+  offset?: string;
+  // editable any time
+  sl_points?: number;
+  targets?: { points: number; exit_pct: number }[];
+  trailing_mode?: TrailingMode;
 }
 
 export interface FrTemplateTarget {

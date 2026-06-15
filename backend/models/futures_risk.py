@@ -128,9 +128,14 @@ class FrTrade(Base):
     sl_price = Column(Float, nullable=False, default=0.0)  # current SL trigger (futures price)
     sl_basis = Column(String(20), nullable=False, default="initial")  # initial | entry | target<n>
 
-    status = Column(String(12), nullable=False, default="active", index=True)  # active | completed | stopped | cancelled | error
+    # draft = created but not placed (fully editable, ignored by the engine)
+    status = Column(String(12), nullable=False, default="active", index=True)  # draft | active | completed | stopped | cancelled | error
     realized_pnl = Column(Float, nullable=False, default=0.0)
     meta = Column(JSONB, nullable=True)
+
+    # --- audit actors (who created / last modified this trade) ---
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
