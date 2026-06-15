@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useTradingMode } from "@/contexts/TradingModeContext";
 import {
+  createDraft,
   getFrConfig,
   listExpiries,
   listStrikes,
@@ -56,6 +57,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [slPoints, setSlPoints] = useState<string>("");
   const [overrideTargets, setOverrideTargets] = useState(false);
   const [targetRows, setTargetRows] = useState<{ points: number; exit_pct: number }[]>([]);
+  const [asDraft, setAsDraft] = useState(false);
 
   // Pre-fill defaults from admin config once loaded.
   useEffect(() => {
@@ -110,10 +112,12 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   }, [strikesQuery.data, strike]);
 
   const mutation = useMutation({
-    mutationFn: (payload: PlaceTradePayload) => placeTrade(payload),
+    mutationFn: (payload: PlaceTradePayload) => (asDraft ? createDraft(payload) : placeTrade(payload)),
     onSuccess: (trade) => {
       toast.success(
-        `${trade.side} ${trade.lots} lot ${trade.option_symbol} placed — entry futures ${trade.entry_futures_price}`,
+        asDraft
+          ? `Draft saved — ${trade.side} ${trade.lots} lot ${trade.option_symbol}`
+          : `${trade.side} ${trade.lots} lot ${trade.option_symbol} placed — entry futures ${trade.entry_futures_price}`,
       );
       qc.invalidateQueries({ queryKey: ["fr-trades"] });
       onPlaced?.();
@@ -294,6 +298,14 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               )}
             </div>
           </div>
+          {/* Save-as-draft toggle */}
+          <label className="flex items-center gap-2 rounded-lg border border-dashed p-2 text-xs">
+            <input type="checkbox" checked={asDraft} onChange={(e) => setAsDraft(e.target.checked)} className="h-3.5 w-3.5" />
+            <span>
+              <span className="font-medium">Save as draft</span>{" "}
+              <span className="text-muted-foreground">— create it editable, place later (no order sent now)</span>
+            </span>
+          </label>
         </div>
 
         <DialogFooter className="grid grid-cols-2 gap-2 sm:grid-cols-2">

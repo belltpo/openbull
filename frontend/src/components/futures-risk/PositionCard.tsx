@@ -1,0 +1,282 @@
+/**
+ * Glassmorphism position card — the heart of the Futures-Risk dashboard.
+ * Shows real-time futures-vs-option comparison, live P&L, a target progress
+ * track, the stop-loss, a lifecycle timeline, and lifecycle actions.
+ */
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Activity,
+  ChevronDown,
+  Layers,
+  Pencil,
+  Play,
+  Target as TargetIcon,
+  Trash2,
+  TrendingDown,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { getTrade } from "@/api/futuresRisk";
+import type { FrTrade } from "@/types/futuresRisk";
+import { PositionTimeline } from "./PositionTimeline";
+import { durationFmt, fmt, livePnl, signed, statusMeta, timeFmt, totalPnl } from "./frFormat";
+
+interface Props {
+  trade: FrTrade;
+  liveFut: number | undefined;
+  liveOpt: number | undefined;
+  onModify: (t: FrTrade) => void;
+  onExit: (t: FrTrade) => void;
+  onEmergency: (t: FrTrade) => void;
+  onPlaceDraft: (id: number) => void;
+  onDelete: (id: number) => void;
+  busy?: boolean;
+}
+
+function Metric({ label, value, tone, sub }: { label: string; value: React.ReactNode; tone?: "good" | "bad"; sub?: React.ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p
+        className={cn(
+          "truncate text-sm font-semibold tabular-nums",
+          tone === "good" && "text-emerald-600 dark:text-emerald-400",
+          tone === "bad" && "text-red-600 dark:text-red-400",
+        )}
+      >
+        {value}
+      </p>
+      {sub && <p className="truncate text-[10px] tabular-nums text-muted-foreground">{sub}</p>}
+    </div>
+  );
+}
+
+function TargetTrack({ trade, liveFut }: { trade: FrTrade; liveFut: number | undefined }) {
+  const entry = trade.entry_futures_price;
+  const last = trade.targets[trade.targets.length - 1]?.trigger_price ?? entry;
+  const range = last - entry;
+  const cur = (liveFut ?? entry) - entry;
+  const pct = range !== 0 ? Math.max(0, Math.min(1, cur / range)) * 100 : 0;
+  const hitCount = trade.targets.filter((t) => t.status === "hit").length;
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <TargetIcon className="h-3 w-3" /> {hitCount}/{trade.targets.length} targets
+        </span>
+        <span className="tabular-nums">{pct.toFixed(0)}%</span>
+      </div>
+      <div className="relative h-2 overflow-hidden rounded-full bg-muted">
+        <div
+          className={cn(
+            "relative h-full rounded-full bg-gradient-to-r from-emerald-500/70 to-emerald-400",
+            trade.status === "active" && "fr-sheen",
+          )}
+          style={{ width: `${pct}%` }}
+        />
+        {/* target tick markers */}
+        {trade.targets.map((t) => {
+          const tp = range !== 0 ? Math.max(0, Math.min(1, (t.trigger_price - entry) / range)) * 100 : 0;
+          return (
+            <span
+              key={t.seq}
+              className={cn(
+                "absolute top-1/2 h-2.5 w-0.5 -translate-y-1/2 rounded-full",
+                t.status === "hit" ? "bg-emerald-700" : "bg-foreground/30",
+              )}
+              style={{ left: `${tp}%` }}
+              title={`T${t.seq} @ ${t.trigger_price}`}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function PositionCard({
+  trade,
+  liveFut,
+  liveOpt,
+  onModify,
+  onExit,
+  onEmergency,
+  onPlaceDraft,
+  onDelete,
+  busy,
+}: Props) {
+  const [showLog, setShowLog] = useState(false);
+  const detail = useQuery({
+    queryKey: ["fr-trade-detail", trade.id],
+    queryFn: () => getTrade(trade.id),
+    enabled: showLog,
+    refetchInterval: showLog && trade.status === "active" ? 4000 : false,
+  });
+
+  const sm = statusMeta(trade.status);
+  const isDraft = trade.status === "draft";
+  const isActive = trade.status === "active";
+  const isClosed = ["completed", "stopped", "cancelled"].includes(trade.status);
+
+  const futDelta = liveFut !== undefined ? liveFut - trade.entry_futures_price : null;
+  const optDelta = liveOpt !== undefined ? liveOpt - trade.entry_option_price : null;
+  const pnl = isActive ? totalPnl(trade, liveOpt) : trade.realized_pnl;
+  const openPnl = isActive ? livePnl(trade, liveOpt) : null;
+  const buy = trade.side === "BUY";
+
+  return (
+    <div className="fr-edge-glow fr-glass relative overflow-hidden rounded-2xl p-4">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-base font-bold tracking-tight">{trade.underlying}</span>
+            <span
+              className={cn(
+                "rounded-md px-1.5 py-0.5 text-[10px] font-semibold",
+                buy ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300" : "bg-red-500/15 text-red-600 dark:text-red-300",
+              )}
+            >
+              {trade.side} {trade.option_type}
+            </span>
+            {trade.phase_no > 0 && (
+              <span className="flex items-center gap-0.5 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                <Layers className="h-3 w-3" /> Phase {trade.phase_no}
+              </span>
+            )}
+            {trade.mode === "sandbox" && (
+              <span className="rounded-md bg-foreground/10 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Sandbox</span>
+            )}
+          </div>
+          <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{trade.option_symbol}</p>
+        </div>
+        <span className={cn("flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium", sm.pill)}>
+          <span className={cn("h-1.5 w-1.5 rounded-full", sm.dot, sm.live && "fr-dot-live")} />
+          {sm.label}
+        </span>
+      </div>
+
+      {/* Futures vs Option live comparison */}
+      <div className="mt-3 grid grid-cols-2 gap-3 rounded-xl bg-foreground/[0.03] p-3">
+        <div className="space-y-2">
+          <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            {buy ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />} Futures
+          </p>
+          <Metric
+            label="Live"
+            value={fmt(liveFut)}
+            sub={futDelta !== null ? <span className={futDelta >= 0 ? "text-emerald-600" : "text-red-600"}>{signed(futDelta)} vs entry</span> : `entry ${fmt(trade.entry_futures_price)}`}
+          />
+        </div>
+        <div className="space-y-2">
+          <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            <Activity className="h-3 w-3" /> Option premium
+          </p>
+          <Metric
+            label="Live"
+            value={fmt(liveOpt)}
+            sub={optDelta !== null ? <span className={optDelta >= 0 ? "text-emerald-600" : "text-red-600"}>{signed(optDelta)} vs entry</span> : `entry ${fmt(trade.entry_option_price)}`}
+          />
+        </div>
+      </div>
+
+      {/* P&L + SL + qty */}
+      <div className="mt-3 grid grid-cols-3 gap-3">
+        <Metric
+          label={isActive ? "Total P&L" : "Realized P&L"}
+          value={`₹${fmt(pnl)}`}
+          tone={pnl >= 0 ? "good" : "bad"}
+          sub={openPnl !== null ? `open ${signed(openPnl)}` : undefined}
+        />
+        <Metric label="Stop-Loss" value={fmt(trade.sl_price)} sub={trade.sl_basis} />
+        <Metric label="Remaining" value={`${trade.remaining_qty}/${trade.total_qty}`} sub={`${trade.lots} lot${trade.lots > 1 ? "s" : ""}`} />
+      </div>
+
+      {/* Target progress */}
+      <div className="mt-3">
+        <TargetTrack trade={trade} liveFut={liveFut} />
+      </div>
+
+      {/* Timeline */}
+      <div className="mt-3 border-t border-border/60 pt-3">
+        <PositionTimeline trade={trade} />
+      </div>
+
+      {/* Actions */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {isDraft && (
+          <>
+            <Button size="sm" onClick={() => onPlaceDraft(trade.id)} disabled={busy} className="bg-emerald-600 text-white hover:bg-emerald-700">
+              <Play className="mr-1 h-3.5 w-3.5" /> Place
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => onModify(trade)}>
+              <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onDelete(trade.id)} className="text-red-600 hover:text-red-700">
+              <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+            </Button>
+          </>
+        )}
+        {isActive && (
+          <>
+            <Button size="sm" variant="outline" onClick={() => onModify(trade)}>
+              <Pencil className="mr-1 h-3.5 w-3.5" /> Modify
+            </Button>
+            <Button size="sm" onClick={() => onExit(trade)}>
+              <TargetIcon className="mr-1 h-3.5 w-3.5" /> Close / Partial
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onEmergency(trade)} className="text-red-600 hover:bg-red-500/10 hover:text-red-700">
+              <Zap className="mr-1 h-3.5 w-3.5" /> Emergency
+            </Button>
+          </>
+        )}
+        {isClosed && (
+          <Button size="sm" variant="ghost" onClick={() => onDelete(trade.id)} className="text-muted-foreground">
+            <Trash2 className="mr-1 h-3.5 w-3.5" /> Remove
+          </Button>
+        )}
+        <button
+          className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          onClick={() => setShowLog((s) => !s)}
+        >
+          History <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showLog && "rotate-180")} />
+        </button>
+      </div>
+
+      {/* Audit log */}
+      {showLog && (
+        <div className="mt-2 max-h-48 space-y-1 overflow-auto rounded-xl bg-foreground/[0.03] p-2.5 text-[11px]">
+          {isClosed && (
+            <p className="mb-1 text-muted-foreground">
+              Duration {durationFmt(trade.duration_sec)} · closed {timeFmt(trade.closed_at)}
+            </p>
+          )}
+          {(detail.data?.events ?? trade.events ?? []).map((e) => (
+            <div key={e.id} className="flex gap-2">
+              <span className="shrink-0 tabular-nums text-muted-foreground">{timeFmt(e.ts)}</span>
+              <span
+                className={cn(
+                  e.severity === "error" && "text-red-600",
+                  e.severity === "warning" && "text-amber-600",
+                  e.kind === "target_hit" && "text-emerald-600",
+                  e.kind === "phase_change" && "text-primary",
+                )}
+              >
+                {e.message}
+              </span>
+            </div>
+          ))}
+          {detail.isLoading && <p className="text-muted-foreground">Loading…</p>}
+          {!detail.isLoading && (detail.data?.events ?? trade.events ?? []).length === 0 && (
+            <p className="text-muted-foreground">No events yet.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
