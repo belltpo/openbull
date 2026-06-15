@@ -1,0 +1,117 @@
+// Types for the Futures-Risk Options module (mirrors backend/routers/futures_risk.py).
+
+export type OptionType = "CE" | "PE";
+export type Side = "BUY" | "SELL";
+export type TradeStatus = "active" | "completed" | "stopped" | "cancelled" | "error";
+export type TargetStatus = "pending" | "hit" | "skipped";
+
+export interface FrTradeTarget {
+  seq: number;
+  points: number;
+  exit_pct: number;
+  trigger_price: number;
+  exit_qty: number;
+  status: TargetStatus;
+  hit_futures_price: number | null;
+  exit_order_id: string | null;
+  hit_at: string | null;
+}
+
+export interface FrEvent {
+  id: number;
+  trade_id: number | null;
+  ts: string | null;
+  kind: string;
+  severity: string;
+  message: string;
+  payload: Record<string, unknown> | null;
+}
+
+export interface FrTrade {
+  id: number;
+  mode: "live" | "sandbox";
+  underlying: string;
+  option_symbol: string;
+  option_exchange: string;
+  option_type: OptionType;
+  side: Side;
+  product: string;
+  expiry: string | null;
+  strike: number | null;
+  lots: number;
+  lot_size: number;
+  total_qty: number;
+  remaining_qty: number;
+  entry_option_price: number;
+  entry_order_id: string | null;
+  futures_symbol: string;
+  futures_exchange: string;
+  entry_futures_price: number;
+  direction: number; // +1 bullish, -1 bearish
+  sl_points: number;
+  sl_price: number;
+  sl_basis: string;
+  status: TradeStatus;
+  realized_pnl: number;
+  created_at: string | null;
+  updated_at: string | null;
+  targets: FrTradeTarget[];
+  events?: FrEvent[];
+}
+
+export interface FrTemplateTarget {
+  id: number;
+  seq: number;
+  points: number;
+  exit_pct: number;
+  enabled: boolean;
+}
+
+export interface FrSymbolMap {
+  id: number;
+  underlying: string;
+  underlying_exchange: string;
+  futures_symbol: string | null;
+  futures_exchange: string;
+  lot_size: number;
+  auto_resolve: boolean;
+  enabled: boolean;
+}
+
+export interface FrConfigEntry {
+  value: string;
+  description: string;
+  is_editable: boolean;
+}
+export type FrConfigMap = Record<string, FrConfigEntry>;
+
+export interface FrExpiry {
+  display: string;
+  value: string;
+}
+
+export interface FrStrikes {
+  strikes: number[];
+  atm: number | null;
+  options_exchange: string;
+}
+
+export interface FrFutures {
+  symbol: string;
+  exchange: string;
+  lot_size: number;
+}
+
+export interface PlaceTradePayload {
+  underlying: string;
+  underlying_exchange?: string;
+  expiry: string;
+  option_type: OptionType;
+  side: Side;
+  product?: string;
+  lots: number;
+  strike?: number | null;
+  offset?: string;
+  sl_points?: number | null;
+  targets?: { points: number; exit_pct: number }[] | null;
+}
