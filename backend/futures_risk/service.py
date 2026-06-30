@@ -107,6 +107,10 @@ def get_config_value(key: str, default: str = "") -> str:
         return row.value if row else default
 
 
+def _config_default(key: str, fallback: str = "") -> str:
+    return fr_defaults.CONFIG_DEFAULTS.get(key, (fallback, "", True))[0]
+
+
 def set_config(key: str, value: str) -> bool:
     with session_scope() as db:
         row = db.execute(select(FrConfig).where(FrConfig.key == key)).scalar_one_or_none()
@@ -465,7 +469,7 @@ def _normalise_params(params: dict[str, Any]) -> dict[str, Any]:
         "side": side,
         "expiry": expiry,
         "lots": lots,
-        "product": str(params.get("product") or get_config_value("default_product", "MIS")).upper(),
+        "product": str(params.get("product") or get_config_value("default_product", _config_default("default_product"))).upper(),
         "strike": strike,
         "offset": params.get("offset") or "ATM",
         "sl_points": sl_points,
@@ -522,7 +526,7 @@ def _resolve_trade_plan(
     direction = 1 if (p["option_type"] == "CE") == (p["side"] == "BUY") else -1
     sl_points = p["sl_points"]
     if sl_points is None:
-        sl_points = float(get_config_value("default_sl_points", "30"))
+        sl_points = float(get_config_value("default_sl_points", _config_default("default_sl_points")))
     sl_price = round(entry_fut - direction * sl_points, 2) if entry_fut > 0 else 0.0
 
     if p["targets"]:

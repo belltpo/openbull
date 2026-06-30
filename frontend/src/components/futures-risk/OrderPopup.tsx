@@ -76,10 +76,16 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   // Pre-fill defaults from admin config once loaded.
   useEffect(() => {
     if (configQuery.data) {
-      setLots((prev) => (prev === 1 ? Number(configQuery.data.default_lots?.value ?? 1) || 1 : prev));
-      setSlPoints((prev) => (prev === "" ? String(configQuery.data.default_sl_points?.value ?? "30") : prev));
+      const configuredLots = Number(configQuery.data.default_lots?.value);
+      if (Number.isFinite(configuredLots) && configuredLots > 0) {
+        setLots((prev) => (prev === 1 ? configuredLots : prev));
+      }
+      const configuredSl = configQuery.data.default_sl_points?.value;
+      if (slPoints === "" && configuredSl != null) {
+        setSlPoints(String(configuredSl));
+      }
     }
-  }, [configQuery.data]);
+  }, [configQuery.data, slPoints]);
 
   useEffect(() => {
     if (targetsQuery.data) {

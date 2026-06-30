@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -38,6 +38,12 @@ const SETTINGS: { key: string; label: string; type: SettingType; options?: strin
 ];
 
 const DEFAULT_ORDER_KEYS = ["default_underlying", "default_lots", "default_sl_points", "default_product"] as const;
+const emptyDefaultOrder = {
+  default_underlying: "",
+  default_lots: "",
+  default_sl_points: "",
+  default_product: "",
+} satisfies Record<(typeof DEFAULT_ORDER_KEYS)[number], string>;
 
 function AdminPanel({
   title,
@@ -76,24 +82,29 @@ function DefaultOrderSetup() {
   const qc = useQueryClient();
   const cfgQuery = useQuery({ queryKey: ["fr-config"], queryFn: getFrConfig });
   const mapsQuery = useQuery({ queryKey: ["fr-symbol-maps"], queryFn: listSymbolMaps });
-  const enabledMaps = (mapsQuery.data ?? []).filter((m) => m.enabled);
-  const [local, setLocal] = useState<Record<(typeof DEFAULT_ORDER_KEYS)[number], string>>({
-    default_underlying: "",
-    default_lots: "1",
-    default_sl_points: "30",
-    default_product: "MIS",
-  });
+  const enabledMaps = useMemo(
+    () => (mapsQuery.data ?? []).filter((m) => m.enabled),
+    [mapsQuery.data],
+  );
+  const [local, setLocal] = useState<Record<(typeof DEFAULT_ORDER_KEYS)[number], string>>(emptyDefaultOrder);
 
   useEffect(() => {
     if (!cfgQuery.data) return;
-    const fallbackUnderlying = enabledMaps[0]?.underlying ?? "NIFTY";
     setLocal({
-      default_underlying: String(cfgQuery.data.default_underlying?.value || fallbackUnderlying).toUpperCase(),
-      default_lots: cfgQuery.data.default_lots?.value ?? "1",
-      default_sl_points: cfgQuery.data.default_sl_points?.value ?? "30",
-      default_product: cfgQuery.data.default_product?.value ?? "MIS",
+      default_underlying: String(cfgQuery.data.default_underlying?.value || "").toUpperCase(),
+      default_lots: cfgQuery.data.default_lots?.value ?? "",
+      default_sl_points: cfgQuery.data.default_sl_points?.value ?? "",
+      default_product: cfgQuery.data.default_product?.value ?? "",
     });
-  }, [cfgQuery.data, enabledMaps]);
+  }, [cfgQuery.data]);
+
+  useEffect(() => {
+    setLocal((prev) =>
+      prev.default_underlying || enabledMaps.length === 0
+        ? prev
+        : { ...prev, default_underlying: enabledMaps[0].underlying },
+    );
+  }, [enabledMaps]);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -164,14 +175,11 @@ function DefaultOrderSetup() {
 
         <div className={cn(rowCls, "space-y-1.5")}>
           <Label className="text-xs font-medium text-muted-foreground">Default Product</Label>
-          <select
-            className={inputCls}
+          <input
+            className={cn(inputCls, "uppercase")}
             value={local.default_product}
-            onChange={(e) => setLocal((p) => ({ ...p, default_product: e.target.value }))}
-          >
-            <option value="MIS">MIS</option>
-            <option value="NRML">NRML</option>
-          </select>
+            onChange={(e) => setLocal((p) => ({ ...p, default_product: e.target.value.toUpperCase() }))}
+          />
         </div>
       </div>
       <div className={cn(rowCls, "flex flex-wrap items-center gap-2 text-xs text-muted-foreground")}>
@@ -472,7 +480,7 @@ function SymbolMaps() {
             <input className={inputCls} value={r.underlying_exchange} onChange={(e) => setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, underlying_exchange: e.target.value.toUpperCase() } : x)))} />
             <input
               className={cn(inputCls, r.auto_resolve && "opacity-50")}
-              placeholder={r.auto_resolve ? "(auto)" : "e.g. NIFTY28AUG25FUT"}
+              placeholder={r.auto_resolve ? "(auto)" : "FUT symbol"}
               disabled={r.auto_resolve}
               value={r.futures_symbol ?? ""}
               onChange={(e) => setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, futures_symbol: e.target.value.toUpperCase() } : x)))}
