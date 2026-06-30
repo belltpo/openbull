@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ChevronDown, Minus, Plus, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
+import { Minus, Plus, Settings, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
 
 import {
   Dialog,
@@ -13,7 +13,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -23,7 +22,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { useTradingMode } from "@/contexts/TradingModeContext";
 import {
   createDraft,
   getFrConfig,
@@ -42,9 +40,7 @@ interface Props {
 }
 
 export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
-  const { mode } = useTradingMode();
   const qc = useQueryClient();
-  const isSandbox = mode === "sandbox";
 
   const mapsQuery = useQuery({ queryKey: ["fr-symbol-maps"], queryFn: listSymbolMaps, enabled: open });
   const configQuery = useQuery({ queryKey: ["fr-config"], queryFn: getFrConfig, enabled: open });
@@ -63,15 +59,9 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [overrideTargets, setOverrideTargets] = useState(false);
   const [targetRows, setTargetRows] = useState<{ points: number; exit_pct: number }[]>([]);
   const [asDraft, setAsDraft] = useState(false);
-  const [contractOpen, setContractOpen] = useState(false);
-  const [riskOpen, setRiskOpen] = useState(false);
-
-  useEffect(() => {
-    if (open) {
-      setContractOpen(false);
-      setRiskOpen(false);
-    }
-  }, [open]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [ceStrike, setCeStrike] = useState<number | "">("");
+  const [peStrike, setPeStrike] = useState<number | "">("");
 
   // Pre-fill defaults from admin config once loaded.
   useEffect(() => {
@@ -121,6 +111,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     queryKey: ["fr-strikes", underlying, expiry, underlyingExchange],
     queryFn: () => listStrikes(underlying, expiry, "CE", underlyingExchange),
     enabled: open && !!underlying && !!expiry,
+    refetchInterval: open && !!underlying && !!expiry ? 5000 : false,
   });
 
   // Default the strike to ATM when the strike list (re)loads.
@@ -136,10 +127,17 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
     if (atmStrike) {
       setStrike(atmStrike);
+      setCeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? atmStrike : prev));
+      setPeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? atmStrike : prev));
     } else if (validStrikes.length) {
-      setStrike(validStrikes[Math.floor(validStrikes.length / 2)]);
+      const fallbackStrike = validStrikes[Math.floor(validStrikes.length / 2)];
+      setStrike(fallbackStrike);
+      setCeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? fallbackStrike : prev));
+      setPeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? fallbackStrike : prev));
     } else {
       setStrike("");
+      setCeStrike("");
+      setPeStrike("");
     }
   }, [strikesQuery.data, strike]);
 
@@ -164,9 +162,9 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   });
 
   const submit = (side: Side, optionType: OptionType) => {
-    const selectedStrike = Number(strike);
-    if (!underlying || !expiry || strike === "" || !Number.isFinite(selectedStrike) || selectedStrike <= 0) {
-      toast.error("Pick instrument, expiry and a valid strike first");
+    const selectedStrike = Number(optionType === "CE" ? ceStrike : peStrike);
+    if (!underlying || !expiry || !Number.isFinite(selectedStrike) || selectedStrike <= 0) {
+      toast.error("Configure instrument, expiry and strike first");
       return;
     }
     const payload: PlaceTradePayload = {
@@ -188,150 +186,186 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const expiryList = expiriesQuery.data ?? [];
   const strikeList = strikesQuery.data?.strikes ?? [];
   const atm = strikesQuery.data?.atm;
-  const activeTargets = targetRows.filter((t) => t.points > 0);
+  const ceStrikeLabel = ceStrike === "" ? "--" : String(ceStrike);
+  const peStrikeLabel = peStrike === "" ? "--" : String(peStrike);
   const targetSummary =
-    activeTargets.length > 0
-      ? activeTargets.map((t) => `${t.points} / ${t.exit_pct}%`).join(" | ")
-      : "No targets";
-  const strikeValue = Number(strike);
-  const hasValidStrike = strike !== "" && Number.isFinite(strikeValue) && strikeValue > 0;
-  const canSubmit = !!underlying && !!expiry && hasValidStrike && !busy;
-  const contractSummary = (
-    <SummaryChips
-      items={[
-        { label: "Instr", value: underlying || "-" },
-        { label: "Exp", value: expiry || "-" },
-        { label: "Strike", value: hasValidStrike ? String(strike) : "Select" },
-        { label: "Lots", value: String(lots) },
-      ]}
-    />
-  );
-  const riskSummary = (
-    <SummaryChips
-      items={[
-        { label: "SL", value: slPoints || "-" },
-        { label: "Mode", value: asDraft ? "Draft" : isSandbox ? "Sandbox" : "Live" },
-        ...(activeTargets.length > 0
-          ? activeTargets.map((t, i) => ({ label: `T${i + 1}`, value: `${t.points} / ${t.exit_pct}%` }))
-          : [{ label: "Targets", value: "None" }]),
-      ]}
-    />
-  );
+    targetRows.length > 0
+      ? targetRows.map((t, i) => `T${i + 1} ${t.points} / ${t.exit_pct}%`).join(" | ")
+      : "No targets configured";
+  const canSubmitCe = !!underlying && !!expiry && Number(ceStrike) > 0 && !busy;
+  const canSubmitPe = !!underlying && !!expiry && Number(peStrike) > 0 && !busy;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] gap-0 overflow-hidden p-0 sm:max-w-[600px]">
-        <div className="scrollbar-hidden max-h-[92vh] space-y-4 overflow-y-auto overscroll-contain p-4 sm:p-5">
-          {/* Header */}
-          <DialogHeader className="space-y-1">
-            <DialogTitle className="flex items-center justify-between gap-2 text-base">
-              <span className="font-semibold tracking-tight">Quick Options Order</span>
-              <Badge
-                className={cn(
-                  "border-transparent px-2 py-0.5 text-[11px] font-medium",
-                  isSandbox
-                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-                    : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-                )}
-              >
-                {isSandbox ? "Sandbox" : "Live"}
-              </Badge>
-            </DialogTitle>
-            <DialogDescription className="text-[11px] leading-tight">
-              Stop-loss &amp; targets track the underlying futures price.
-            </DialogDescription>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="gap-2.5 overflow-hidden p-3.5 sm:max-w-[360px]">
+          <DialogHeader className="pr-16">
+            <DialogTitle className="text-base font-semibold tracking-tight">Quick Order</DialogTitle>
           </DialogHeader>
-
-          {/* Contract */}
-          <DisclosureSection
-            title="Contract"
-            summary={contractSummary}
-            open={contractOpen}
-            onOpenChange={setContractOpen}
+          <button
+            type="button"
+            className="absolute right-11 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Quick order settings"
+            title="Settings"
           >
-            <div className="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2 min-[600px]:grid-cols-4">
-              <Field label="Instrument">
-                <Select value={underlying} onValueChange={setUnderlying}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={underlyings.length === 0 ? "No mappings" : "Select"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {underlyings.map((m) => (
-                      <SelectItem key={m.underlying} value={m.underlying}>
-                        {m.underlying}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Expiry">
-                <Select value={expiry} onValueChange={setExpiry} disabled={expiryList.length === 0}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={expiriesQuery.isLoading ? "Loading..." : "Select"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {expiryList.map((e) => (
-                      <SelectItem key={e.value} value={e.value}>
-                        {e.display}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label={atm ? `Strike (ATM ${atm})` : "Strike"}>
-                <Select
-                  value={strike === "" ? "" : String(strike)}
-                  onValueChange={(v) => setStrike(v === "" ? "" : Number(v))}
-                  disabled={strikeList.length === 0}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={strikesQuery.isLoading ? "Loading..." : "Select"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {strikeList.map((s) => (
-                      <SelectItem key={s} value={String(s)}>
-                        {s}
-                        {atm === s ? " - ATM" : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </Field>
-              <Field label="Lots">
-                <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-input">
-                  <button
-                    type="button"
-                    className="flex w-9 shrink-0 items-center justify-center border-r border-input bg-background text-muted-foreground hover:bg-accent"
-                    onClick={() => setLots((l) => Math.max(1, l - 1))}
+            <Settings className="h-4 w-4" />
+          </button>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <QuickActionButton
+              disabled={!canSubmitCe}
+              busy={busy}
+              pendingLabel={pendingLabel}
+              tone="buy"
+              label="Buy CE"
+              strike={`${ceStrikeLabel} CE`}
+              Icon={TrendingUp}
+              onClick={() => submit("BUY", "CE")}
+            />
+            <QuickActionButton
+              disabled={!canSubmitCe}
+              busy={busy}
+              pendingLabel={pendingLabel}
+              tone="sell"
+              label="Sell CE"
+              strike={`${ceStrikeLabel} CE`}
+              Icon={TrendingDown}
+              onClick={() => submit("SELL", "CE")}
+            />
+            <QuickActionButton
+              disabled={!canSubmitPe}
+              busy={busy}
+              pendingLabel={pendingLabel}
+              tone="buy"
+              label="Buy PE"
+              strike={`${peStrikeLabel} PE`}
+              Icon={TrendingUp}
+              onClick={() => submit("BUY", "PE")}
+            />
+            <QuickActionButton
+              disabled={!canSubmitPe}
+              busy={busy}
+              pendingLabel={pendingLabel}
+              tone="sell"
+              label="Sell PE"
+              strike={`${peStrikeLabel} PE`}
+              Icon={TrendingDown}
+              onClick={() => submit("SELL", "PE")}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
+        <DialogContent className="max-h-[92vh] gap-0 overflow-hidden p-0 sm:max-w-[600px]">
+          <div className="scrollbar-hidden max-h-[92vh] space-y-4 overflow-y-auto overscroll-contain p-4 sm:p-5">
+            <DialogHeader className="space-y-1">
+              <DialogTitle className="text-base font-semibold tracking-tight">Quick Order Settings</DialogTitle>
+              <DialogDescription className="text-[11px] leading-tight">
+                Configure the values used by the compact quick order buttons.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-2.5">
+              <SectionLabel>Contract</SectionLabel>
+              <div className="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2 min-[600px]:grid-cols-4">
+                <Field label="Instrument">
+                  <Select value={underlying} onValueChange={setUnderlying}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={underlyings.length === 0 ? "No mappings" : "Select"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {underlyings.map((m) => (
+                        <SelectItem key={m.underlying} value={m.underlying}>
+                          {m.underlying}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Expiry">
+                  <Select value={expiry} onValueChange={setExpiry} disabled={expiryList.length === 0}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={expiriesQuery.isLoading ? "Loading..." : "Select"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {expiryList.map((e) => (
+                        <SelectItem key={e.value} value={e.value}>
+                          {e.display}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label={atm ? `CE Strike (ATM ${atm})` : "CE Strike"}>
+                  <Select
+                    value={ceStrike === "" ? "" : String(ceStrike)}
+                    onValueChange={(v) => setCeStrike(v === "" ? "" : Number(v))}
+                    disabled={strikeList.length === 0}
                   >
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-                  <input
-                    type="number"
-                    min={1}
-                    value={lots}
-                    onChange={(e) => setLots(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                    className="min-w-0 flex-1 bg-background px-1 text-center text-sm outline-none [appearance:textfield] dark:[color-scheme:dark] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                  />
-                  <button
-                    type="button"
-                    className="flex w-9 shrink-0 items-center justify-center border-l border-input bg-background text-muted-foreground hover:bg-accent"
-                    onClick={() => setLots((l) => l + 1)}
+                    <SelectTrigger>
+                      <SelectValue placeholder={strikesQuery.isLoading ? "Loading..." : "Select"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {strikeList.map((s) => (
+                        <SelectItem key={s} value={String(s)}>
+                          {s}
+                          {atm === s ? " - ATM" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label={atm ? `PE Strike (ATM ${atm})` : "PE Strike"}>
+                  <Select
+                    value={peStrike === "" ? "" : String(peStrike)}
+                    onValueChange={(v) => setPeStrike(v === "" ? "" : Number(v))}
+                    disabled={strikeList.length === 0}
                   >
-                    <Plus className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              </Field>
+                    <SelectTrigger>
+                      <SelectValue placeholder={strikesQuery.isLoading ? "Loading..." : "Select"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {strikeList.map((s) => (
+                        <SelectItem key={s} value={String(s)}>
+                          {s}
+                          {atm === s ? " - ATM" : ""}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Lots">
+                  <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-input">
+                    <button
+                      type="button"
+                      className="flex w-9 shrink-0 items-center justify-center border-r border-input bg-background text-muted-foreground hover:bg-accent"
+                      onClick={() => setLots((l) => Math.max(1, l - 1))}
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </button>
+                    <input
+                      type="number"
+                      min={1}
+                      value={lots}
+                      onChange={(e) => setLots(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                      className="min-w-0 flex-1 bg-background px-1 text-center text-sm outline-none [appearance:textfield] dark:[color-scheme:dark] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    />
+                    <button
+                      type="button"
+                      className="flex w-9 shrink-0 items-center justify-center border-l border-input bg-background text-muted-foreground hover:bg-accent"
+                      onClick={() => setLots((l) => l + 1)}
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </Field>
+              </div>
             </div>
-          </DisclosureSection>
 
-          {/* Risk */}
-          <DisclosureSection
-            title="Risk Controls"
-            summary={riskSummary}
-            open={riskOpen}
-            onOpenChange={setRiskOpen}
-          >
+          <div className="space-y-2.5">
+            <SectionLabel>Risk Controls</SectionLabel>
             <div className="grid grid-cols-1 gap-2.5 min-[440px]:grid-cols-2">
               <Field label="Stop-loss (pts)">
                 <Input
@@ -406,201 +440,54 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
             ) : targetRows.length === 0 ? (
               <p className="text-[11px] text-muted-foreground">No targets configured - add them in the admin panel.</p>
             ) : null}
-          </DisclosureSection>
-
-          {/* Preview */}
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 rounded-lg border border-border/70 bg-muted/35 px-3 py-2 text-[11px] min-[520px]:grid-cols-6">
-            <SummaryItem label="Instr" value={underlying || "-"} />
-            <SummaryItem label="Exp" value={expiry || "-"} />
-            <SummaryItem label="Strike" value={strike === "" ? "-" : String(strike)} />
-            <SummaryItem label="Lots" value={String(lots)} />
-            <SummaryItem label="SL" value={slPoints === "" ? "-" : slPoints} />
-            <SummaryItem label="Mode" value={isSandbox ? "Sandbox" : "Live"} />
           </div>
-
-          {/* Actions */}
-          <div className="grid grid-cols-1 gap-3 min-[540px]:grid-cols-2">
-            <DirectionGroup title="Bullish" subtitle="Targets above futures" tone="bullish">
-              <OrderButton
-                disabled={!canSubmit}
-                busy={busy}
-                pendingLabel={pendingLabel}
-                onClick={() => submit("BUY", "CE")}
-                className="bg-emerald-600 text-white hover:bg-emerald-700"
-                Icon={TrendingUp}
-                label="Buy CE"
-              />
-              <OrderButton
-                disabled={!canSubmit}
-                busy={busy}
-                pendingLabel={pendingLabel}
-                onClick={() => submit("SELL", "PE")}
-                className="bg-emerald-700 text-white hover:bg-emerald-800"
-                Icon={TrendingUp}
-                label="Sell PE"
-              />
-            </DirectionGroup>
-
-            <DirectionGroup title="Bearish" subtitle="Targets below futures" tone="bearish">
-              <OrderButton
-                disabled={!canSubmit}
-                busy={busy}
-                pendingLabel={pendingLabel}
-                onClick={() => submit("BUY", "PE")}
-                className="bg-rose-600 text-white hover:bg-rose-700"
-                Icon={TrendingDown}
-                label="Buy PE"
-              />
-              <OrderButton
-                disabled={!canSubmit}
-                busy={busy}
-                pendingLabel={pendingLabel}
-                onClick={() => submit("SELL", "CE")}
-                className="bg-rose-700 text-white hover:bg-rose-800"
-                Icon={TrendingDown}
-                label="Sell CE"
-              />
-            </DirectionGroup>
-          </div>
-
-          {!canSubmit && !busy ? (
-            <p className="text-center text-[11px] text-muted-foreground">
-              Select instrument, expiry, and strike to enable order actions.
-            </p>
-          ) : null}
         </div>
       </DialogContent>
     </Dialog>
+    </>
   );
 }
 
-function OrderButton({
+function QuickActionButton({
   disabled,
   busy,
   pendingLabel,
+  tone,
   onClick,
-  className,
   Icon,
   label,
+  strike,
 }: {
   disabled: boolean;
   busy: boolean;
   pendingLabel: string;
+  tone: "buy" | "sell";
   onClick: () => void;
-  className: string;
   Icon: typeof TrendingUp;
   label: string;
+  strike: string;
 }) {
   return (
     <Button
       disabled={disabled}
       onClick={onClick}
-      className={cn("h-10 justify-center text-sm font-semibold", className)}
+      className={cn(
+        "h-[72px] flex-col items-center justify-center gap-1.5 rounded-lg text-white shadow-md transition duration-150 hover:scale-[1.02] active:scale-[0.98] disabled:scale-100 disabled:opacity-50",
+        tone === "buy"
+          ? "bg-emerald-700 hover:bg-emerald-600"
+          : "bg-rose-700 hover:bg-rose-600",
+      )}
     >
       {busy ? pendingLabel : (
         <>
-          <Icon className="mr-1.5 h-4 w-4" /> {label}
+          <span className="flex items-center gap-1.5 text-sm font-bold">
+            <Icon className="h-3.5 w-3.5" />
+            {label}
+          </span>
+          <span className="text-xs font-semibold opacity-90">{strike}</span>
         </>
       )}
     </Button>
-  );
-}
-
-function DirectionGroup({
-  title,
-  subtitle,
-  tone,
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  tone: "bullish" | "bearish";
-  children: ReactNode;
-}) {
-  const Icon = tone === "bullish" ? TrendingUp : TrendingDown;
-  const toneClass =
-    tone === "bullish"
-      ? {
-          section: "border-l-4 border-l-emerald-500/80 bg-emerald-500/[0.03]",
-          chip: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-          icon: "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-        }
-      : {
-          section: "border-l-4 border-l-rose-500/80 bg-rose-500/[0.03]",
-          chip: "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
-          icon: "border-rose-500/25 bg-rose-500/10 text-rose-600 dark:text-rose-400",
-        };
-
-  return (
-    <section className={cn("rounded-lg border border-border/70 bg-card px-3 py-2.5", toneClass.section)}>
-      <div className="mb-2 flex min-w-0 items-start gap-2">
-        <span className={cn("mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border", toneClass.icon)}>
-          <Icon className="h-4 w-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 items-center gap-1.5">
-            <span className={cn("rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none", toneClass.chip)}>
-              {title}
-            </span>
-          </div>
-          <p className="mt-1 truncate text-[10px] text-muted-foreground">{subtitle}</p>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2">{children}</div>
-    </section>
-  );
-}
-
-function DisclosureSection({
-  title,
-  summary,
-  open,
-  onOpenChange,
-  children,
-}: {
-  title: string;
-  summary: ReactNode;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  children: ReactNode;
-}) {
-  return (
-    <section className="rounded-lg border border-border/70 bg-card">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
-        onClick={() => onOpenChange(!open)}
-        aria-expanded={open}
-      >
-        <div className="min-w-0 flex-1 space-y-1.5">
-          <SectionLabel>{title}</SectionLabel>
-          {summary}
-        </div>
-        <ChevronDown
-          className={cn(
-            "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-            open ? "rotate-180" : "rotate-0",
-          )}
-        />
-      </button>
-      {open ? <div className="space-y-3 border-t border-border/60 p-3 pt-2.5">{children}</div> : null}
-    </section>
-  );
-}
-
-function SummaryChips({ items }: { items: { label: string; value: string }[] }) {
-  return (
-    <div className="scrollbar-hidden flex min-w-0 gap-1 overflow-x-auto whitespace-nowrap">
-      {items.map((item) => (
-        <span
-          key={`${item.label}-${item.value}`}
-          className="inline-flex shrink-0 items-center gap-1 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
-        >
-          <span className="shrink-0">{item.label}</span>
-          <span className="min-w-0 truncate font-semibold text-foreground">{item.value}</span>
-        </span>
-      ))}
-    </div>
   );
 }
 
@@ -619,14 +506,5 @@ function Field({ label, children }: { label: ReactNode; children: ReactNode }) {
       <Label className="text-[11px] font-medium text-muted-foreground">{label}</Label>
       {children}
     </div>
-  );
-}
-
-function SummaryItem({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="flex items-center gap-1 overflow-hidden">
-      <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span className="truncate font-medium">{value}</span>
-    </span>
   );
 }
