@@ -156,15 +156,21 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   };
 
   const busy = mutation.isPending;
-  const pendingLabel = asDraft ? "Saving…" : "Placing…";
+  const pendingLabel = asDraft ? "Saving..." : "Placing...";
   const expiryList = expiriesQuery.data ?? [];
   const strikeList = strikesQuery.data?.strikes ?? [];
   const atm = strikesQuery.data?.atm;
+  const activeTargets = targetRows.filter((t) => t.points > 0);
+  const targetSummary =
+    activeTargets.length > 0
+      ? activeTargets.map((t) => `${t.points} / ${t.exit_pct}%`).join(" | ")
+      : "No targets";
+  const canSubmit = !!underlying && !!expiry && strike !== "" && !busy;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[480px]">
-        <div className="space-y-4 p-4 sm:p-5">
+      <DialogContent className="max-h-[92vh] gap-0 overflow-hidden p-0 sm:max-w-[600px]">
+        <div className="scrollbar-hidden max-h-[92vh] space-y-4 overflow-y-auto overscroll-contain p-4 sm:p-5">
           {/* Header */}
           <DialogHeader className="space-y-1">
             <DialogTitle className="flex items-center justify-between gap-2 text-base">
@@ -188,7 +194,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
           {/* Contract */}
           <div className="space-y-2.5">
             <SectionLabel>Contract</SectionLabel>
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2 min-[600px]:grid-cols-4">
               <Field label="Instrument">
                 <Select value={underlying} onValueChange={setUnderlying}>
                   <SelectTrigger>
@@ -206,7 +212,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               <Field label="Expiry">
                 <Select value={expiry} onValueChange={setExpiry} disabled={expiryList.length === 0}>
                   <SelectTrigger>
-                    <SelectValue placeholder={expiriesQuery.isLoading ? "Loading…" : "Select"} />
+                    <SelectValue placeholder={expiriesQuery.isLoading ? "Loading..." : "Select"} />
                   </SelectTrigger>
                   <SelectContent>
                     {expiryList.map((e) => (
@@ -224,7 +230,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                   disabled={strikeList.length === 0}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder={strikesQuery.isLoading ? "Loading…" : "Select"} />
+                    <SelectValue placeholder={strikesQuery.isLoading ? "Loading..." : "Select"} />
                   </SelectTrigger>
                   <SelectContent>
                     {strikeList.map((s) => (
@@ -267,7 +273,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
           {/* Risk */}
           <div className="space-y-2.5">
             <SectionLabel>Risk Controls</SectionLabel>
-            <div className="grid grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 gap-2.5 min-[440px]:grid-cols-2">
               <Field label="Stop-loss (pts)">
                 <Input
                   type="number"
@@ -279,24 +285,33 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               </Field>
               <div className="flex items-end">
                 <label className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-[11px] text-muted-foreground">
-                  Save as draft
+                  <span className="min-w-0 truncate">Draft only</span>
                   <Switch checked={asDraft} onCheckedChange={setAsDraft} />
                 </label>
               </div>
             </div>
 
-            <div className="flex items-center justify-between pt-0.5">
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-xs font-medium">Targets</span>
-                <span className="text-[10px] text-muted-foreground">points → % exit</span>
+            <div className="rounded-lg border border-border/70 bg-muted/25 px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex shrink-0 items-center rounded-md border border-border/70 bg-card px-2 py-1 text-[11px] font-semibold text-foreground">
+                      Targets
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">points / % exit</span>
+                  </div>
+                  <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                    {targetSummary}
+                  </p>
+                </div>
+                <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                  Override
+                  <Switch checked={overrideTargets} onCheckedChange={setOverrideTargets} />
+                </label>
               </div>
-              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                Override
-                <Switch checked={overrideTargets} onCheckedChange={setOverrideTargets} />
-              </label>
             </div>
 
-            {targetRows.length > 0 ? (
+            {overrideTargets && targetRows.length > 0 ? (
               <div className="space-y-1.5">
                 <div className="grid grid-cols-[1.25rem_1fr_1fr] gap-2 px-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                   <span />
@@ -304,91 +319,96 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                   <span>% Exit</span>
                 </div>
                 {targetRows.map((t, i) => (
-                  <div key={i} className="grid grid-cols-[1.25rem_1fr_1fr] items-center gap-2">
+                  <div key={i} className="grid grid-cols-[1.25rem_minmax(0,1fr)_minmax(0,1fr)] items-center gap-2">
                     <span className="text-[11px] font-medium text-muted-foreground">T{i + 1}</span>
                     <input
                       type="number"
-                      disabled={!overrideTargets}
                       value={t.points}
                       onChange={(e) =>
                         setTargetRows((rows) =>
                           rows.map((r, idx) => (idx === i ? { ...r, points: Number(e.target.value) } : r)),
                         )
                       }
-                      className="h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]"
+                      className="h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring dark:[color-scheme:dark]"
                     />
                     <input
                       type="number"
-                      disabled={!overrideTargets}
                       value={t.exit_pct}
                       onChange={(e) =>
                         setTargetRows((rows) =>
                           rows.map((r, idx) => (idx === i ? { ...r, exit_pct: Number(e.target.value) } : r)),
                         )
                       }
-                      className="h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]"
+                      className="h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring dark:[color-scheme:dark]"
                     />
                   </div>
                 ))}
               </div>
-            ) : (
-              <p className="text-[11px] text-muted-foreground">No targets configured — add them in the admin panel.</p>
-            )}
+            ) : targetRows.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">No targets configured - add them in the admin panel.</p>
+            ) : null}
           </div>
 
-          {/* Summary + actions */}
-          <div>
-            <div className="mb-3 grid grid-cols-3 gap-x-2 gap-y-1.5 rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-[11px]">
-              <SummaryItem label="Instr" value={underlying || "—"} />
-              <SummaryItem label="Exp" value={expiry || "—"} />
-              <SummaryItem label="Strike" value={strike === "" ? "—" : String(strike)} />
-              <SummaryItem label="Lots" value={String(lots)} />
-              <SummaryItem label="SL" value={slPoints === "" ? "—" : slPoints} />
-              <SummaryItem label="Mode" value={isSandbox ? "Sandbox" : "Live"} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-            <OrderButton
-              side="BUY"
-              optionType="CE"
-              busy={busy}
-              pendingLabel={pendingLabel}
-              onClick={() => submit("BUY", "CE")}
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
-              Icon={TrendingUp}
-              label="Buy CE"
-            />
-            <OrderButton
-              side="SELL"
-              optionType="CE"
-              busy={busy}
-              pendingLabel={pendingLabel}
-              onClick={() => submit("SELL", "CE")}
-              className="bg-rose-600 text-white hover:bg-rose-700"
-              Icon={TrendingDown}
-              label="Sell CE"
-            />
-            <OrderButton
-              side="BUY"
-              optionType="PE"
-              busy={busy}
-              pendingLabel={pendingLabel}
-              onClick={() => submit("BUY", "PE")}
-              className="bg-emerald-600 text-white hover:bg-emerald-700"
-              Icon={TrendingDown}
-              label="Buy PE"
-            />
-            <OrderButton
-              side="SELL"
-              optionType="PE"
-              busy={busy}
-              pendingLabel={pendingLabel}
-              onClick={() => submit("SELL", "PE")}
-              className="bg-rose-600 text-white hover:bg-rose-700"
-              Icon={TrendingUp}
-              label="Sell PE"
-            />
-            </div>
+          {/* Preview */}
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 rounded-lg border border-border/70 bg-muted/35 px-3 py-2 text-[11px] min-[520px]:grid-cols-6">
+            <SummaryItem label="Instr" value={underlying || "-"} />
+            <SummaryItem label="Exp" value={expiry || "-"} />
+            <SummaryItem label="Strike" value={strike === "" ? "-" : String(strike)} />
+            <SummaryItem label="Lots" value={String(lots)} />
+            <SummaryItem label="SL" value={slPoints === "" ? "-" : slPoints} />
+            <SummaryItem label="Mode" value={isSandbox ? "Sandbox" : "Live"} />
           </div>
+
+          {/* Actions */}
+          <div className="grid grid-cols-1 gap-3 min-[540px]:grid-cols-2">
+            <DirectionGroup title="Bullish" subtitle="Targets above futures" tone="bullish">
+              <OrderButton
+                disabled={!canSubmit}
+                busy={busy}
+                pendingLabel={pendingLabel}
+                onClick={() => submit("BUY", "CE")}
+                className="bg-emerald-600 text-white hover:bg-emerald-700"
+                Icon={TrendingUp}
+                label="Buy CE"
+              />
+              <OrderButton
+                disabled={!canSubmit}
+                busy={busy}
+                pendingLabel={pendingLabel}
+                onClick={() => submit("SELL", "PE")}
+                className="bg-emerald-700 text-white hover:bg-emerald-800"
+                Icon={TrendingUp}
+                label="Sell PE"
+              />
+            </DirectionGroup>
+
+            <DirectionGroup title="Bearish" subtitle="Targets below futures" tone="bearish">
+              <OrderButton
+                disabled={!canSubmit}
+                busy={busy}
+                pendingLabel={pendingLabel}
+                onClick={() => submit("BUY", "PE")}
+                className="bg-rose-600 text-white hover:bg-rose-700"
+                Icon={TrendingDown}
+                label="Buy PE"
+              />
+              <OrderButton
+                disabled={!canSubmit}
+                busy={busy}
+                pendingLabel={pendingLabel}
+                onClick={() => submit("SELL", "CE")}
+                className="bg-rose-700 text-white hover:bg-rose-800"
+                Icon={TrendingDown}
+                label="Sell CE"
+              />
+            </DirectionGroup>
+          </div>
+
+          {!canSubmit && !busy ? (
+            <p className="text-center text-[11px] text-muted-foreground">
+              Select instrument, expiry, and strike to enable order actions.
+            </p>
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>
@@ -396,6 +416,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 }
 
 function OrderButton({
+  disabled,
   busy,
   pendingLabel,
   onClick,
@@ -403,8 +424,7 @@ function OrderButton({
   Icon,
   label,
 }: {
-  side: Side;
-  optionType: OptionType;
+  disabled: boolean;
   busy: boolean;
   pendingLabel: string;
   onClick: () => void;
@@ -413,13 +433,48 @@ function OrderButton({
   label: string;
 }) {
   return (
-    <Button disabled={busy} onClick={onClick} className={cn("h-10 justify-center text-sm font-semibold", className)}>
+    <Button
+      disabled={disabled}
+      onClick={onClick}
+      className={cn("h-10 justify-center text-sm font-semibold", className)}
+    >
       {busy ? pendingLabel : (
         <>
           <Icon className="mr-1.5 h-4 w-4" /> {label}
         </>
       )}
     </Button>
+  );
+}
+
+function DirectionGroup({
+  title,
+  subtitle,
+  tone,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  tone: "bullish" | "bearish";
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-border/70 bg-card px-3 py-2.5">
+      <div className="mb-2 min-w-0">
+        <p
+          className={cn(
+            "text-xs font-semibold",
+            tone === "bullish"
+              ? "text-emerald-600 dark:text-emerald-400"
+              : "text-rose-600 dark:text-rose-400",
+          )}
+        >
+          {title}
+        </p>
+        <p className="truncate text-[10px] text-muted-foreground">{subtitle}</p>
+      </div>
+      <div className="grid grid-cols-2 gap-2">{children}</div>
+    </section>
   );
 }
 

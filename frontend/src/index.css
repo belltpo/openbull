@@ -204,6 +204,15 @@ html[data-trading-mode="sandbox"] {
   }
 }
 
+.scrollbar-hidden {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
+}
+
 /* ---------------------------------------------------------------------------
  * Futures-Risk "trading" surface — glassmorphism + futuristic accents.
  * Scoped, reusable utility classes used by the Futures-Risk dashboard. Built
