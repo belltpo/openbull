@@ -110,6 +110,11 @@ def get_config_value(key: str, default: str = "") -> str:
 def set_config(key: str, value: str) -> bool:
     with session_scope() as db:
         row = db.execute(select(FrConfig).where(FrConfig.key == key)).scalar_one_or_none()
+        if row is None and key in fr_defaults.CONFIG_DEFAULTS:
+            _, desc, editable = fr_defaults.CONFIG_DEFAULTS[key]
+            row = FrConfig(key=key, value=value, description=desc, is_editable=editable)
+            db.add(row)
+            return editable
         if row is None or not row.is_editable:
             return False
         row.value = value

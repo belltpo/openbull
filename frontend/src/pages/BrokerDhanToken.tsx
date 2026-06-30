@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -10,7 +10,6 @@ import { Label } from "@/components/ui/label";
 import { dhanTokenLogin } from "@/api/broker";
 
 export default function BrokerDhanToken() {
-  const navigate = useNavigate();
   const [accessToken, setAccessToken] = useState("");
   const [clientId, setClientId] = useState("");
 

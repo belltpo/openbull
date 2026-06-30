@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Minus, Plus, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
+import { ChevronDown, Minus, Plus, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
 
 import {
   Dialog,
@@ -63,6 +63,15 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [overrideTargets, setOverrideTargets] = useState(false);
   const [targetRows, setTargetRows] = useState<{ points: number; exit_pct: number }[]>([]);
   const [asDraft, setAsDraft] = useState(false);
+  const [contractOpen, setContractOpen] = useState(false);
+  const [riskOpen, setRiskOpen] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setContractOpen(false);
+      setRiskOpen(false);
+    }
+  }, [open]);
 
   // Pre-fill defaults from admin config once loaded.
   useEffect(() => {
@@ -82,8 +91,11 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   // Default the underlying to the first available.
   useEffect(() => {
-    if (!underlying && underlyings.length > 0) setUnderlying(underlyings[0].underlying);
-  }, [underlyings, underlying]);
+    if (underlying || underlyings.length === 0) return;
+    const preferredUnderlying = String(configQuery.data?.default_underlying?.value ?? "").toUpperCase();
+    const preferred = underlyings.find((m) => m.underlying === preferredUnderlying);
+    setUnderlying((preferred ?? underlyings[0]).underlying);
+  }, [configQuery.data, underlyings, underlying]);
 
   const selectedMap = underlyings.find((m) => m.underlying === underlying);
   const underlyingExchange = selectedMap?.underlying_exchange ?? "NSE_INDEX";
@@ -109,10 +121,19 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   useEffect(() => {
     const d = strikesQuery.data;
     if (!d) return;
-    if (d.atm && (strike === "" || !d.strikes.includes(Number(strike)))) {
-      setStrike(d.atm);
-    } else if (!d.atm && d.strikes.length && strike === "") {
-      setStrike(d.strikes[Math.floor(d.strikes.length / 2)]);
+    const validStrikes = d.strikes.filter((s) => Number.isFinite(s) && s > 0);
+    const currentStrike = strike === "" ? null : Number(strike);
+    const hasCurrentStrike = currentStrike != null && validStrikes.includes(currentStrike);
+    const atmStrike = d.atm && d.atm > 0 && validStrikes.includes(d.atm) ? d.atm : null;
+
+    if (hasCurrentStrike) return;
+
+    if (atmStrike) {
+      setStrike(atmStrike);
+    } else if (validStrikes.length) {
+      setStrike(validStrikes[Math.floor(validStrikes.length / 2)]);
+    } else {
+      setStrike("");
     }
   }, [strikesQuery.data, strike]);
 
@@ -121,8 +142,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     onSuccess: (trade) => {
       toast.success(
         asDraft
-          ? `Draft saved — ${trade.side} ${trade.lots} lot ${trade.option_symbol}`
-          : `${trade.side} ${trade.lots} lot ${trade.option_symbol} placed — entry futures ${trade.entry_futures_price}`,
+          ? `Draft saved - ${trade.side} ${trade.lots} lot ${trade.option_symbol}`
+          : `${trade.side} ${trade.lots} lot ${trade.option_symbol} placed - entry futures ${trade.entry_futures_price}`,
       );
       qc.invalidateQueries({ queryKey: ["fr-trades"] });
       onPlaced?.();
@@ -137,8 +158,9 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   });
 
   const submit = (side: Side, optionType: OptionType) => {
-    if (!underlying || !expiry || strike === "") {
-      toast.error("Pick instrument, expiry and strike first");
+    const selectedStrike = Number(strike);
+    if (!underlying || !expiry || strike === "" || !Number.isFinite(selectedStrike) || selectedStrike <= 0) {
+      toast.error("Pick instrument, expiry and a valid strike first");
       return;
     }
     const payload: PlaceTradePayload = {
@@ -148,7 +170,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
       option_type: optionType,
       side,
       lots,
-      strike: Number(strike),
+      strike: selectedStrike,
       sl_points: slPoints === "" ? null : Number(slPoints),
       targets: overrideTargets ? targetRows.filter((t) => t.points > 0) : null,
     };
@@ -165,7 +187,13 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     activeTargets.length > 0
       ? activeTargets.map((t) => `${t.points} / ${t.exit_pct}%`).join(" | ")
       : "No targets";
-  const canSubmit = !!underlying && !!expiry && strike !== "" && !busy;
+  const strikeValue = Number(strike);
+  const hasValidStrike = strike !== "" && Number.isFinite(strikeValue) && strikeValue > 0;
+  const canSubmit = !!underlying && !!expiry && hasValidStrike && !busy;
+  const contractSummary = `${underlying || "-"} | ${expiry || "-"} | ${
+    hasValidStrike ? strike : "Select strike"
+  } | ${lots} lot${lots === 1 ? "" : "s"}`;
+  const riskSummary = `SL ${slPoints || "-"} | ${asDraft ? "Draft" : isSandbox ? "Sandbox" : "Live"} | ${targetSummary}`;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -192,8 +220,12 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
           </DialogHeader>
 
           {/* Contract */}
-          <div className="space-y-2.5">
-            <SectionLabel>Contract</SectionLabel>
+          <DisclosureSection
+            title="Contract"
+            summary={contractSummary}
+            open={contractOpen}
+            onOpenChange={setContractOpen}
+          >
             <div className="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2 min-[600px]:grid-cols-4">
               <Field label="Instrument">
                 <Select value={underlying} onValueChange={setUnderlying}>
@@ -236,7 +268,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                     {strikeList.map((s) => (
                       <SelectItem key={s} value={String(s)}>
                         {s}
-                        {atm === s ? "  • ATM" : ""}
+                        {atm === s ? " - ATM" : ""}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -268,11 +300,15 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                 </div>
               </Field>
             </div>
-          </div>
+          </DisclosureSection>
 
           {/* Risk */}
-          <div className="space-y-2.5">
-            <SectionLabel>Risk Controls</SectionLabel>
+          <DisclosureSection
+            title="Risk Controls"
+            summary={riskSummary}
+            open={riskOpen}
+            onOpenChange={setRiskOpen}
+          >
             <div className="grid grid-cols-1 gap-2.5 min-[440px]:grid-cols-2">
               <Field label="Stop-loss (pts)">
                 <Input
@@ -347,7 +383,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
             ) : targetRows.length === 0 ? (
               <p className="text-[11px] text-muted-foreground">No targets configured - add them in the admin panel.</p>
             ) : null}
-          </div>
+          </DisclosureSection>
 
           {/* Preview */}
           <div className="grid grid-cols-2 gap-x-2 gap-y-1.5 rounded-lg border border-border/70 bg-muted/35 px-3 py-2 text-[11px] min-[520px]:grid-cols-6">
@@ -474,6 +510,43 @@ function DirectionGroup({
         <p className="truncate text-[10px] text-muted-foreground">{subtitle}</p>
       </div>
       <div className="grid grid-cols-2 gap-2">{children}</div>
+    </section>
+  );
+}
+
+function DisclosureSection({
+  title,
+  summary,
+  open,
+  onOpenChange,
+  children,
+}: {
+  title: string;
+  summary: ReactNode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-border/70 bg-card">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left"
+        onClick={() => onOpenChange(!open)}
+        aria-expanded={open}
+      >
+        <div className="min-w-0 space-y-1">
+          <SectionLabel>{title}</SectionLabel>
+          <p className="truncate text-[11px] text-muted-foreground">{summary}</p>
+        </div>
+        <ChevronDown
+          className={cn(
+            "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+            open ? "rotate-180" : "rotate-0",
+          )}
+        />
+      </button>
+      {open ? <div className="space-y-3 border-t border-border/60 p-3 pt-2.5">{children}</div> : null}
     </section>
   );
 }
