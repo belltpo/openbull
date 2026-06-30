@@ -198,7 +198,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="gap-2.5 overflow-hidden p-3.5 sm:max-w-[360px]">
+        <DialogContent className="gap-2.5 overflow-hidden p-3 sm:max-w-[330px]">
           <DialogHeader className="pr-16">
             <DialogTitle className="text-base font-semibold tracking-tight">Quick Order</DialogTitle>
           </DialogHeader>
@@ -212,7 +212,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
             <Settings className="h-4 w-4" />
           </button>
 
-          <div className="grid grid-cols-2 gap-2.5">
+          <div className="grid grid-cols-2 gap-2">
             <QuickActionButton
               disabled={!canSubmitCe}
               busy={busy}
@@ -472,7 +472,7 @@ function QuickActionButton({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "h-[72px] flex-col items-center justify-center gap-1.5 rounded-lg text-white shadow-md transition duration-150 hover:scale-[1.02] active:scale-[0.98] disabled:scale-100 disabled:opacity-50",
+        "h-12 flex-col items-center justify-center gap-0.5 rounded-full px-3 text-white shadow-md transition duration-150 hover:scale-[1.02] active:scale-[0.98] disabled:scale-100 disabled:opacity-50",
         tone === "buy"
           ? "bg-emerald-700 hover:bg-emerald-600"
           : "bg-rose-700 hover:bg-rose-600",
@@ -480,11 +480,11 @@ function QuickActionButton({
     >
       {busy ? pendingLabel : (
         <>
-          <span className="flex items-center gap-1.5 text-sm font-bold">
-            <Icon className="h-3.5 w-3.5" />
+          <span className="flex items-center gap-1.5 text-[13px] font-bold leading-none">
+            <Icon className="h-3.5 w-3.5 shrink-0" />
             {label}
           </span>
-          <span className="text-xs font-semibold opacity-90">{strike}</span>
+          <span className="text-[11px] font-semibold leading-none opacity-90">{strike}</span>
         </>
       )}
     </Button>
