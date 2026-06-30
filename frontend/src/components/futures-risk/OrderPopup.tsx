@@ -389,6 +389,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
             />
             </div>
           </div>
+        </div>
       </DialogContent>
     </Dialog>
   );

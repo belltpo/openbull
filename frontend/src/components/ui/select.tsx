@@ -65,7 +65,7 @@ interface SelectValueProps {
 }
 
 export function SelectValue({ placeholder }: SelectValueProps) {
-  return <SelectPrimitive.Value>{placeholder}</SelectPrimitive.Value>;
+  return <SelectPrimitive.Value placeholder={placeholder} />;
 }
 
 interface SelectContentProps {
