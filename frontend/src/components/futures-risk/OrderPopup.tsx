@@ -517,20 +517,34 @@ function DirectionGroup({
   tone: "bullish" | "bearish";
   children: ReactNode;
 }) {
+  const Icon = tone === "bullish" ? TrendingUp : TrendingDown;
+  const toneClass =
+    tone === "bullish"
+      ? {
+          section: "border-l-4 border-l-emerald-500/80 bg-emerald-500/[0.03]",
+          chip: "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+          icon: "border-emerald-500/25 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+        }
+      : {
+          section: "border-l-4 border-l-rose-500/80 bg-rose-500/[0.03]",
+          chip: "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+          icon: "border-rose-500/25 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+        };
+
   return (
-    <section className="rounded-lg border border-border/70 bg-card px-3 py-2.5">
-      <div className="mb-2 min-w-0">
-        <p
-          className={cn(
-            "text-xs font-semibold",
-            tone === "bullish"
-              ? "text-emerald-600 dark:text-emerald-400"
-              : "text-rose-600 dark:text-rose-400",
-          )}
-        >
-          {title}
-        </p>
-        <p className="truncate text-[10px] text-muted-foreground">{subtitle}</p>
+    <section className={cn("rounded-lg border border-border/70 bg-card px-3 py-2.5", toneClass.section)}>
+      <div className="mb-2 flex min-w-0 items-start gap-2">
+        <span className={cn("mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md border", toneClass.icon)}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className={cn("rounded border px-1.5 py-0.5 text-[10px] font-semibold leading-none", toneClass.chip)}>
+              {title}
+            </span>
+          </div>
+          <p className="mt-1 truncate text-[10px] text-muted-foreground">{subtitle}</p>
+        </div>
       </div>
       <div className="grid grid-cols-2 gap-2">{children}</div>
     </section>
