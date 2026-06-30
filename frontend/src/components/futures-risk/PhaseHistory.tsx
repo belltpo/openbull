@@ -51,23 +51,24 @@ function PhasePill({ p }: { p: FrPhase }) {
   );
 }
 
-export function PhaseHistory({ underlying }: { underlying?: string }) {
+export function PhaseHistory({ underlying, dataOverride }: { underlying?: string; dataOverride?: FrPhase[] }) {
   const { data } = useQuery({
     queryKey: ["fr-phases", underlying ?? "all"],
     queryFn: () => listPhases(underlying),
     refetchInterval: 8000,
+    enabled: !dataOverride,
   });
 
   const groups = useMemo(() => {
     const map = new Map<string, FrPhase[]>();
-    for (const p of data ?? []) {
+    for (const p of dataOverride ?? data ?? []) {
       const key = p.phase_group ?? `${p.underlying}`;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(p);
     }
     for (const arr of map.values()) arr.sort((a, b) => a.phase_no - b.phase_no);
     return Array.from(map.entries());
-  }, [data]);
+  }, [data, dataOverride]);
 
   if (groups.length === 0) {
     return <p className="text-sm text-muted-foreground">No phase history yet — placed positions appear here as Phase 1, 2, 3…</p>;

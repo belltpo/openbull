@@ -35,6 +35,7 @@ interface Props {
   onPlaceDraft: (id: number) => void;
   onDelete: (id: number) => void;
   busy?: boolean;
+  enableRemoteDetail?: boolean;
 }
 
 function Metric({ label, value, tone, sub }: { label: string; value: React.ReactNode; tone?: "good" | "bad"; sub?: React.ReactNode }) {
@@ -109,12 +110,13 @@ export function PositionCard({
   onPlaceDraft,
   onDelete,
   busy,
+  enableRemoteDetail = true,
 }: Props) {
   const [showLog, setShowLog] = useState(false);
   const detail = useQuery({
     queryKey: ["fr-trade-detail", trade.id],
     queryFn: () => getTrade(trade.id),
-    enabled: showLog,
+    enabled: showLog && enableRemoteDetail,
     refetchInterval: showLog && trade.status === "active" ? 4000 : false,
   });
 

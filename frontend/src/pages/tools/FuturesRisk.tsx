@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Activity, History, LayoutGrid, Plus, Settings, TrendingUp, Wallet, Zap } from "lucide-react";
@@ -16,6 +16,7 @@ import { ModifyPositionDialog } from "@/components/futures-risk/ModifyPositionDi
 import { ExitDialog } from "@/components/futures-risk/ExitDialog";
 import { PhaseHistory } from "@/components/futures-risk/PhaseHistory";
 import { fmt, livePnl } from "@/components/futures-risk/frFormat";
+import { makeFuturesRiskDemoData } from "@/components/futures-risk/demoData";
 
 const STATUS_FILTERS = ["active", "draft", "all", "completed", "stopped"] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
@@ -55,6 +56,9 @@ function HeroStat({
 export default function FuturesRisk() {
   const { user } = useAuth();
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const demoEnabled = searchParams.get("demo") === "1";
+  const demoData = useMemo(() => makeFuturesRiskDemoData(), []);
   const [popupOpen, setPopupOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [tab, setTab] = useState<"positions" | "phases">("positions");
@@ -67,8 +71,11 @@ export default function FuturesRisk() {
     queryKey: ["fr-trades", statusFilter],
     queryFn: () => listTrades(statusFilter),
     refetchInterval: 4000,
+    enabled: !demoEnabled,
   });
-  const trades = tradesQuery.data ?? [];
+  const trades = demoEnabled
+    ? demoData.trades.filter((trade) => statusFilter === "all" || trade.status === statusFilter)
+    : tradesQuery.data ?? [];
 
   // Subscribe to every active trade's futures + option symbol.
   const subscriptionSymbols = useMemo(() => {
@@ -93,9 +100,10 @@ export default function FuturesRisk() {
   const { data: tickMap } = useMarketData({
     symbols: subscriptionSymbols,
     mode: "LTP",
-    enabled: subscriptionSymbols.length > 0,
+    enabled: !demoEnabled && subscriptionSymbols.length > 0,
   });
-  const ltpOf = (symbol: string, exchange: string): number | undefined => tickMap.get(`${exchange}:${symbol}`)?.data.ltp;
+  const ltpOf = (symbol: string, exchange: string): number | undefined =>
+    demoEnabled ? demoData.prices.get(`${exchange}:${symbol}`) : tickMap.get(`${exchange}:${symbol}`)?.data.ltp;
 
   const placeMutation = useMutation({
     mutationFn: (id: number) => placeDraft(id),
@@ -131,6 +139,13 @@ export default function FuturesRisk() {
     [trades, tickMap],
   );
   const realizedTotal = useMemo(() => trades.reduce((a, t) => a + (t.realized_pnl ?? 0), 0), [trades]);
+  const demoOnly = () => toast.info("Demo data only - no broker action sent");
+  const toggleDemo = () => {
+    const next = new URLSearchParams(searchParams);
+    if (demoEnabled) next.delete("demo");
+    else next.set("demo", "1");
+    setSearchParams(next);
+  };
 
   return (
     <div className="fr-grid-bg -m-2 space-y-5 rounded-2xl p-2 md:-m-4 md:p-4">
@@ -145,6 +160,9 @@ export default function FuturesRisk() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button variant={demoEnabled ? "default" : "outline"} onClick={toggleDemo}>
+            {demoEnabled ? "Demo On" : "Demo Data"}
+          </Button>
           {user?.is_admin && (
             <Link to="/tools/futures-risk/admin" className={cn(buttonVariants({ variant: "outline" }))}>
               <Settings className="mr-1 h-4 w-4" /> Admin
@@ -231,17 +249,26 @@ export default function FuturesRisk() {
                   trade={t}
                   liveFut={ltpOf(t.futures_symbol, t.futures_exchange)}
                   liveOpt={ltpOf(t.option_symbol, t.option_exchange)}
-                  onModify={setModifyTarget}
+                  onModify={(tr) => (demoEnabled ? demoOnly() : setModifyTarget(tr))}
+                  enableRemoteDetail={!demoEnabled}
                   onExit={(tr) => {
-                    setExitMode("full");
-                    setExitTarget(tr);
+                    if (demoEnabled) {
+                      demoOnly();
+                    } else {
+                      setExitMode("full");
+                      setExitTarget(tr);
+                    }
                   }}
                   onEmergency={(tr) => {
-                    setExitMode("emergency");
-                    setExitTarget(tr);
+                    if (demoEnabled) {
+                      demoOnly();
+                    } else {
+                      setExitMode("emergency");
+                      setExitTarget(tr);
+                    }
                   }}
-                  onPlaceDraft={(id) => placeMutation.mutate(id)}
-                  onDelete={(id) => deleteMutation.mutate(id)}
+                  onPlaceDraft={(id) => (demoEnabled ? demoOnly() : placeMutation.mutate(id))}
+                  onDelete={(id) => (demoEnabled ? demoOnly() : deleteMutation.mutate(id))}
                   busy={placeMutation.isPending || deleteMutation.isPending}
                 />
               ))}
@@ -249,7 +276,7 @@ export default function FuturesRisk() {
           )}
         </>
       ) : (
-        <PhaseHistory />
+        <PhaseHistory dataOverride={demoEnabled ? demoData.phases : undefined} />
       )}
 
       {/* Dialogs */}
