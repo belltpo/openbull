@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Minus, Plus, TrendingDown, TrendingUp } from "lucide-react";
+import { Minus, Plus, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
 
 import {
   Dialog,
@@ -15,6 +15,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { useTradingMode } from "@/contexts/TradingModeContext";
 import {
@@ -34,15 +42,10 @@ interface Props {
   onPlaced?: () => void;
 }
 
-const inputCls =
-  "h-9 w-full rounded-lg border border-input bg-background px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 dark:[color-scheme:dark]";
-
-const numCls =
-  "rounded border border-input bg-background text-center text-foreground outline-none focus-visible:border-ring disabled:opacity-60 dark:[color-scheme:dark]";
-
 export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const { mode } = useTradingMode();
   const qc = useQueryClient();
+  const isSandbox = mode === "sandbox";
 
   const mapsQuery = useQuery({ queryKey: ["fr-symbol-maps"], queryFn: listSymbolMaps, enabled: open });
   const configQuery = useQuery({ queryKey: ["fr-config"], queryFn: getFrConfig, enabled: open });
@@ -154,164 +157,148 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   };
 
   const busy = mutation.isPending;
-
   const pendingLabel = asDraft ? "Saving…" : "Placing…";
-
-  const OrderButton = ({
-    side,
-    optionType,
-    label,
-    Icon,
-    className,
-  }: {
-    side: Side;
-    optionType: OptionType;
-    label: string;
-    Icon: typeof TrendingUp;
-    className: string;
-  }) => (
-    <Button disabled={busy} onClick={() => submit(side, optionType)} className={cn("h-10 justify-center", className)}>
-      {busy ? (
-        pendingLabel
-      ) : (
-        <>
-          <Icon className="mr-1 h-4 w-4" /> {label}
-        </>
-      )}
-    </Button>
-  );
+  const expiryList = expiriesQuery.data ?? [];
+  const strikeList = strikesQuery.data?.strikes ?? [];
+  const atm = strikesQuery.data?.atm;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 p-0 sm:max-w-[560px]">
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[520px]">
         {/* Header */}
-        <DialogHeader className="space-y-0 border-b px-4 py-3">
+        <DialogHeader className="gap-1 border-b bg-muted/30 px-5 py-3.5">
           <DialogTitle className="flex items-center justify-between gap-2 text-base">
-            <span>Quick Options Order</span>
-            <Badge variant={mode === "sandbox" ? "secondary" : "outline"}>
-              {mode === "sandbox" ? "Sandbox" : "Live"}
+            <span className="font-semibold tracking-tight">Quick Options Order</span>
+            <Badge
+              className={cn(
+                "border-transparent text-[11px] font-medium",
+                isSandbox ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+              )}
+            >
+              {isSandbox ? "Sandbox" : "Live"}
             </Badge>
           </DialogTitle>
           <DialogDescription className="text-[11px] leading-tight">
-            Targets &amp; stop-loss track the underlying futures price.
+            Stop-loss &amp; targets track the underlying futures price.
           </DialogDescription>
         </DialogHeader>
 
-        {/* Contract */}
-        <section className="space-y-2.5 px-4 py-3">
-          <SectionLabel>Contract</SectionLabel>
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <Field label="Instrument">
-              <select className={inputCls} value={underlying} onChange={(e) => setUnderlying(e.target.value)}>
-                {underlyings.length === 0 && <option value="">No mappings — add in admin</option>}
-                {underlyings.map((m) => (
-                  <option key={m.underlying} value={m.underlying}>
-                    {m.underlying}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Expiry">
-              <select className={inputCls} value={expiry} onChange={(e) => setExpiry(e.target.value)}>
-                {(expiriesQuery.data ?? []).map((e) => (
-                  <option key={e.value} value={e.value}>
-                    {e.display}
-                  </option>
-                ))}
-                {expiriesQuery.isLoading && <option>Loading…</option>}
-              </select>
-            </Field>
-            <Field
-              label={
-                strikesQuery.data?.atm ? (
-                  <>
-                    Strike <span className="text-muted-foreground">(ATM {strikesQuery.data.atm})</span>
-                  </>
-                ) : (
-                  "Strike"
-                )
-              }
-            >
-              <select
-                className={inputCls}
-                value={strike}
-                onChange={(e) => setStrike(e.target.value === "" ? "" : Number(e.target.value))}
-              >
-                {(strikesQuery.data?.strikes ?? []).map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                    {strikesQuery.data?.atm === s ? "  • ATM" : ""}
-                  </option>
-                ))}
-                {strikesQuery.isLoading && <option>Loading…</option>}
-              </select>
-            </Field>
-            <Field label="Lots">
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-input bg-background text-foreground"
-                  onClick={() => setLots((l) => Math.max(1, l - 1))}
+        <div className="divide-y">
+          {/* Contract */}
+          <section className="space-y-3 px-5 py-4">
+            <SectionLabel>Contract</SectionLabel>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Instrument">
+                <Select value={underlying} onValueChange={setUnderlying}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={underlyings.length === 0 ? "No mappings" : "Select"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {underlyings.map((m) => (
+                      <SelectItem key={m.underlying} value={m.underlying}>
+                        {m.underlying}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Expiry">
+                <Select value={expiry} onValueChange={setExpiry} disabled={expiryList.length === 0}>
+                  <SelectTrigger>
+                    <SelectValue placeholder={expiriesQuery.isLoading ? "Loading…" : "Select"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {expiryList.map((e) => (
+                      <SelectItem key={e.value} value={e.value}>
+                        {e.display}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label={atm ? `Strike (ATM ${atm})` : "Strike"}>
+                <Select
+                  value={strike === "" ? "" : String(strike)}
+                  onValueChange={(v) => setStrike(v === "" ? "" : Number(v))}
+                  disabled={strikeList.length === 0}
                 >
-                  <Minus className="h-3.5 w-3.5" />
-                </button>
-                <input
+                  <SelectTrigger>
+                    <SelectValue placeholder={strikesQuery.isLoading ? "Loading…" : "Select"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {strikeList.map((s) => (
+                      <SelectItem key={s} value={String(s)}>
+                        {s}
+                        {atm === s ? "  • ATM" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field label="Lots">
+                <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-input">
+                  <button
+                    type="button"
+                    className="flex w-9 items-center justify-center border-r border-input bg-background text-muted-foreground hover:bg-accent"
+                    onClick={() => setLots((l) => Math.max(1, l - 1))}
+                  >
+                    <Minus className="h-3.5 w-3.5" />
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    value={lots}
+                    onChange={(e) => setLots(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                    className="w-full bg-background px-1 text-center text-sm outline-none [appearance:textfield] dark:[color-scheme:dark] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  />
+                  <button
+                    type="button"
+                    className="flex w-9 items-center justify-center border-l border-input bg-background text-muted-foreground hover:bg-accent"
+                    onClick={() => setLots((l) => l + 1)}
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </Field>
+            </div>
+          </section>
+
+          {/* Risk */}
+          <section className="space-y-3 px-5 py-4">
+            <SectionLabel>Risk Controls</SectionLabel>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Stop-loss (pts)">
+                <Input
                   type="number"
-                  min={1}
-                  value={lots}
-                  onChange={(e) => setLots(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                  className="h-9 w-full rounded-lg border border-input bg-background px-2 text-center text-sm text-foreground outline-none dark:[color-scheme:dark]"
+                  step="0.5"
+                  value={slPoints}
+                  onChange={(e) => setSlPoints(e.target.value)}
+                  className="h-9 dark:[color-scheme:dark]"
                 />
-                <button
-                  type="button"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-input bg-background text-foreground"
-                  onClick={() => setLots((l) => l + 1)}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </Field>
-          </div>
-        </section>
+              </Field>
+            </div>
 
-        {/* Risk */}
-        <section className="space-y-2.5 border-t px-4 py-3">
-          <SectionLabel>Risk</SectionLabel>
-          <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-            <Field label="Stop-loss (pts)">
-              <Input
-                type="number"
-                step="0.5"
-                value={slPoints}
-                onChange={(e) => setSlPoints(e.target.value)}
-                className="h-9"
-              />
-            </Field>
-          </div>
-
-          <div className="flex items-center justify-between pt-0.5">
-            <span className="text-xs font-medium">Targets (futures points → % exit)</span>
-            <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={overrideTargets}
-                onChange={(e) => setOverrideTargets(e.target.checked)}
-                className="h-3.5 w-3.5"
-              />
-              Override
-            </label>
-          </div>
-          {targetRows.length > 0 && (
-            <>
-              <div className="grid grid-cols-[2rem_1fr_1fr] gap-2 px-1 text-[11px] text-muted-foreground">
-                <span />
-                <span>Points</span>
-                <span>% Exit</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium">Targets</span>
+                <span className="text-[11px] text-muted-foreground">points → % exit</span>
               </div>
+              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                Override
+                <Switch checked={overrideTargets} onCheckedChange={setOverrideTargets} />
+              </label>
+            </div>
+
+            {targetRows.length > 0 ? (
               <div className="space-y-1.5">
+                <div className="grid grid-cols-[1.5rem_1fr_1fr] gap-2 px-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <span />
+                  <span>Points</span>
+                  <span>% Exit</span>
+                </div>
                 {targetRows.map((t, i) => (
-                  <div key={i} className="grid grid-cols-[2rem_1fr_1fr] items-center gap-2 text-xs">
-                    <span className="text-muted-foreground">T{i + 1}</span>
+                  <div key={i} className="grid grid-cols-[1.5rem_1fr_1fr] items-center gap-2">
+                    <span className="text-[11px] font-medium text-muted-foreground">T{i + 1}</span>
                     <input
                       type="number"
                       disabled={!overrideTargets}
@@ -321,7 +308,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                           rows.map((r, idx) => (idx === i ? { ...r, points: Number(e.target.value) } : r)),
                         )
                       }
-                      className={cn("h-7 w-full px-1.5 text-xs", numCls)}
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]"
                     />
                     <input
                       type="number"
@@ -332,43 +319,77 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                           rows.map((r, idx) => (idx === i ? { ...r, exit_pct: Number(e.target.value) } : r)),
                         )
                       }
-                      className={cn("h-7 w-full px-1.5 text-xs", numCls)}
+                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]"
                     />
                   </div>
                 ))}
               </div>
-            </>
-          )}
-          {targetRows.length === 0 && (
-            <p className="text-[11px] text-muted-foreground">No targets configured — add them in the admin panel.</p>
-          )}
-        </section>
+            ) : (
+              <p className="text-[11px] text-muted-foreground">No targets configured — add them in the admin panel.</p>
+            )}
+          </section>
 
-        {/* Draft toggle */}
-        <section className="border-t px-4 py-2.5">
-          <label className="flex items-center gap-2 text-xs">
-            <input type="checkbox" checked={asDraft} onChange={(e) => setAsDraft(e.target.checked)} className="h-3.5 w-3.5" />
-            <span>
-              <span className="font-medium">Save as draft</span>{" "}
-              <span className="text-muted-foreground">— editable, place later (no order sent now)</span>
-            </span>
-          </label>
-        </section>
+          {/* Draft toggle */}
+          <section className="flex items-center justify-between px-5 py-3">
+            <div className="pr-3">
+              <div className="text-xs font-medium">Save as draft</div>
+              <div className="text-[11px] text-muted-foreground">Editable, place later — no order sent now.</div>
+            </div>
+            <Switch checked={asDraft} onCheckedChange={setAsDraft} />
+          </section>
+        </div>
 
         {/* Summary + actions */}
-        <DialogFooter className="block border-t px-4 py-3">
-          <div className="mb-2.5 grid grid-cols-2 gap-x-3 gap-y-1 rounded-md bg-muted/50 px-2.5 py-1.5 text-[11px] sm:grid-cols-3">
+        <DialogFooter className="block gap-0 border-t bg-muted/30 px-5 py-3.5">
+          <div className="mb-3 grid grid-cols-3 gap-x-2 gap-y-1.5 rounded-md border border-border/60 bg-background px-3 py-2 text-[11px]">
             <SummaryItem label="Instr" value={underlying || "—"} />
             <SummaryItem label="Exp" value={expiry || "—"} />
             <SummaryItem label="Strike" value={strike === "" ? "—" : String(strike)} />
             <SummaryItem label="Lots" value={String(lots)} />
-            <SummaryItem label="Mode" value={mode === "sandbox" ? "Sandbox" : "Live"} />
+            <SummaryItem label="SL" value={slPoints === "" ? "—" : slPoints} />
+            <SummaryItem label="Mode" value={isSandbox ? "Sandbox" : "Live"} />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <OrderButton side="BUY" optionType="CE" label="Buy CE" Icon={TrendingUp} className="bg-green-600 text-white hover:bg-green-700" />
-            <OrderButton side="SELL" optionType="CE" label="Sell CE" Icon={TrendingDown} className="bg-red-600 text-white hover:bg-red-700" />
-            <OrderButton side="BUY" optionType="PE" label="Buy PE" Icon={TrendingDown} className="bg-green-600 text-white hover:bg-green-700" />
-            <OrderButton side="SELL" optionType="PE" label="Sell PE" Icon={TrendingUp} className="bg-red-600 text-white hover:bg-red-700" />
+            <OrderButton
+              side="BUY"
+              optionType="CE"
+              busy={busy}
+              pendingLabel={pendingLabel}
+              onClick={() => submit("BUY", "CE")}
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+              Icon={TrendingUp}
+              label="Buy CE"
+            />
+            <OrderButton
+              side="SELL"
+              optionType="CE"
+              busy={busy}
+              pendingLabel={pendingLabel}
+              onClick={() => submit("SELL", "CE")}
+              className="bg-rose-600 text-white hover:bg-rose-700"
+              Icon={TrendingDown}
+              label="Sell CE"
+            />
+            <OrderButton
+              side="BUY"
+              optionType="PE"
+              busy={busy}
+              pendingLabel={pendingLabel}
+              onClick={() => submit("BUY", "PE")}
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+              Icon={TrendingDown}
+              label="Buy PE"
+            />
+            <OrderButton
+              side="SELL"
+              optionType="PE"
+              busy={busy}
+              pendingLabel={pendingLabel}
+              onClick={() => submit("SELL", "PE")}
+              className="bg-rose-600 text-white hover:bg-rose-700"
+              Icon={TrendingUp}
+              label="Sell PE"
+            />
           </div>
         </DialogFooter>
       </DialogContent>
@@ -376,14 +397,47 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   );
 }
 
+function OrderButton({
+  busy,
+  pendingLabel,
+  onClick,
+  className,
+  Icon,
+  label,
+}: {
+  side: Side;
+  optionType: OptionType;
+  busy: boolean;
+  pendingLabel: string;
+  onClick: () => void;
+  className: string;
+  Icon: typeof TrendingUp;
+  label: string;
+}) {
+  return (
+    <Button disabled={busy} onClick={onClick} className={cn("h-10 justify-center text-sm font-semibold", className)}>
+      {busy ? pendingLabel : (
+        <>
+          <Icon className="mr-1.5 h-4 w-4" /> {label}
+        </>
+      )}
+    </Button>
+  );
+}
+
 function SectionLabel({ children }: { children: ReactNode }) {
-  return <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{children}</h3>;
+  return (
+    <div className="flex items-center gap-1.5">
+      <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" />
+      <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{children}</h3>
+    </div>
+  );
 }
 
 function Field({ label, children }: { label: ReactNode; children: ReactNode }) {
   return (
-    <div className="space-y-1">
-      <Label className="text-xs">{label}</Label>
+    <div className="space-y-1.5">
+      <Label className="text-[11px] font-medium text-muted-foreground">{label}</Label>
       {children}
     </div>
   );
@@ -391,9 +445,9 @@ function Field({ label, children }: { label: ReactNode; children: ReactNode }) {
 
 function SummaryItem({ label, value }: { label: string; value: string }) {
   return (
-    <span className="inline-flex items-center gap-1">
-      <span className="text-muted-foreground">{label}:</span>
-      <span className="font-medium">{value}</span>
+    <span className="flex items-center gap-1 overflow-hidden">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span className="truncate font-medium">{value}</span>
     </span>
   );
 }
