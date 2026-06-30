@@ -7,7 +7,6 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -164,30 +163,32 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[520px]">
-        {/* Header */}
-        <DialogHeader className="gap-1 border-b bg-muted/30 px-5 py-3.5">
-          <DialogTitle className="flex items-center justify-between gap-2 text-base">
-            <span className="font-semibold tracking-tight">Quick Options Order</span>
-            <Badge
-              className={cn(
-                "border-transparent text-[11px] font-medium",
-                isSandbox ? "bg-amber-500/15 text-amber-600 dark:text-amber-400" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-              )}
-            >
-              {isSandbox ? "Sandbox" : "Live"}
-            </Badge>
-          </DialogTitle>
-          <DialogDescription className="text-[11px] leading-tight">
-            Stop-loss &amp; targets track the underlying futures price.
-          </DialogDescription>
-        </DialogHeader>
+      <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[480px]">
+        <div className="space-y-4 p-4 sm:p-5">
+          {/* Header */}
+          <DialogHeader className="space-y-1">
+            <DialogTitle className="flex items-center justify-between gap-2 text-base">
+              <span className="font-semibold tracking-tight">Quick Options Order</span>
+              <Badge
+                className={cn(
+                  "border-transparent px-2 py-0.5 text-[11px] font-medium",
+                  isSandbox
+                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                    : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+                )}
+              >
+                {isSandbox ? "Sandbox" : "Live"}
+              </Badge>
+            </DialogTitle>
+            <DialogDescription className="text-[11px] leading-tight">
+              Stop-loss &amp; targets track the underlying futures price.
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="divide-y">
           {/* Contract */}
-          <section className="space-y-3 px-5 py-4">
+          <div className="space-y-2.5">
             <SectionLabel>Contract</SectionLabel>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-2.5">
               <Field label="Instrument">
                 <Select value={underlying} onValueChange={setUnderlying}>
                   <SelectTrigger>
@@ -239,7 +240,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                 <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-input">
                   <button
                     type="button"
-                    className="flex w-9 items-center justify-center border-r border-input bg-background text-muted-foreground hover:bg-accent"
+                    className="flex w-9 shrink-0 items-center justify-center border-r border-input bg-background text-muted-foreground hover:bg-accent"
                     onClick={() => setLots((l) => Math.max(1, l - 1))}
                   >
                     <Minus className="h-3.5 w-3.5" />
@@ -249,11 +250,11 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                     min={1}
                     value={lots}
                     onChange={(e) => setLots(Math.max(1, parseInt(e.target.value, 10) || 1))}
-                    className="w-full bg-background px-1 text-center text-sm outline-none [appearance:textfield] dark:[color-scheme:dark] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    className="min-w-0 flex-1 bg-background px-1 text-center text-sm outline-none [appearance:textfield] dark:[color-scheme:dark] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                   />
                   <button
                     type="button"
-                    className="flex w-9 items-center justify-center border-l border-input bg-background text-muted-foreground hover:bg-accent"
+                    className="flex w-9 shrink-0 items-center justify-center border-l border-input bg-background text-muted-foreground hover:bg-accent"
                     onClick={() => setLots((l) => l + 1)}
                   >
                     <Plus className="h-3.5 w-3.5" />
@@ -261,12 +262,12 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                 </div>
               </Field>
             </div>
-          </section>
+          </div>
 
           {/* Risk */}
-          <section className="space-y-3 px-5 py-4">
+          <div className="space-y-2.5">
             <SectionLabel>Risk Controls</SectionLabel>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-2.5">
               <Field label="Stop-loss (pts)">
                 <Input
                   type="number"
@@ -276,12 +277,18 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                   className="h-9 dark:[color-scheme:dark]"
                 />
               </Field>
+              <div className="flex items-end">
+                <label className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-[11px] text-muted-foreground">
+                  Save as draft
+                  <Switch checked={asDraft} onCheckedChange={setAsDraft} />
+                </label>
+              </div>
             </div>
 
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
+            <div className="flex items-center justify-between pt-0.5">
+              <div className="flex items-baseline gap-1.5">
                 <span className="text-xs font-medium">Targets</span>
-                <span className="text-[11px] text-muted-foreground">points → % exit</span>
+                <span className="text-[10px] text-muted-foreground">points → % exit</span>
               </div>
               <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 Override
@@ -291,13 +298,13 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
             {targetRows.length > 0 ? (
               <div className="space-y-1.5">
-                <div className="grid grid-cols-[1.5rem_1fr_1fr] gap-2 px-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                <div className="grid grid-cols-[1.25rem_1fr_1fr] gap-2 px-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                   <span />
                   <span>Points</span>
                   <span>% Exit</span>
                 </div>
                 {targetRows.map((t, i) => (
-                  <div key={i} className="grid grid-cols-[1.5rem_1fr_1fr] items-center gap-2">
+                  <div key={i} className="grid grid-cols-[1.25rem_1fr_1fr] items-center gap-2">
                     <span className="text-[11px] font-medium text-muted-foreground">T{i + 1}</span>
                     <input
                       type="number"
@@ -308,7 +315,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                           rows.map((r, idx) => (idx === i ? { ...r, points: Number(e.target.value) } : r)),
                         )
                       }
-                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]"
+                      className="h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]"
                     />
                     <input
                       type="number"
@@ -319,7 +326,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                           rows.map((r, idx) => (idx === i ? { ...r, exit_pct: Number(e.target.value) } : r)),
                         )
                       }
-                      className="h-8 w-full rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]"
+                      className="h-8 w-full min-w-0 rounded-md border border-input bg-background px-2 text-center text-xs text-foreground outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50 dark:[color-scheme:dark]"
                     />
                   </div>
                 ))}
@@ -327,29 +334,19 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
             ) : (
               <p className="text-[11px] text-muted-foreground">No targets configured — add them in the admin panel.</p>
             )}
-          </section>
-
-          {/* Draft toggle */}
-          <section className="flex items-center justify-between px-5 py-3">
-            <div className="pr-3">
-              <div className="text-xs font-medium">Save as draft</div>
-              <div className="text-[11px] text-muted-foreground">Editable, place later — no order sent now.</div>
-            </div>
-            <Switch checked={asDraft} onCheckedChange={setAsDraft} />
-          </section>
-        </div>
-
-        {/* Summary + actions */}
-        <DialogFooter className="block gap-0 border-t bg-muted/30 px-5 py-3.5">
-          <div className="mb-3 grid grid-cols-3 gap-x-2 gap-y-1.5 rounded-md border border-border/60 bg-background px-3 py-2 text-[11px]">
-            <SummaryItem label="Instr" value={underlying || "—"} />
-            <SummaryItem label="Exp" value={expiry || "—"} />
-            <SummaryItem label="Strike" value={strike === "" ? "—" : String(strike)} />
-            <SummaryItem label="Lots" value={String(lots)} />
-            <SummaryItem label="SL" value={slPoints === "" ? "—" : slPoints} />
-            <SummaryItem label="Mode" value={isSandbox ? "Sandbox" : "Live"} />
           </div>
-          <div className="grid grid-cols-2 gap-2">
+
+          {/* Summary + actions */}
+          <div>
+            <div className="mb-3 grid grid-cols-3 gap-x-2 gap-y-1.5 rounded-lg border border-border/60 bg-muted/40 px-3 py-2 text-[11px]">
+              <SummaryItem label="Instr" value={underlying || "—"} />
+              <SummaryItem label="Exp" value={expiry || "—"} />
+              <SummaryItem label="Strike" value={strike === "" ? "—" : String(strike)} />
+              <SummaryItem label="Lots" value={String(lots)} />
+              <SummaryItem label="SL" value={slPoints === "" ? "—" : slPoints} />
+              <SummaryItem label="Mode" value={isSandbox ? "Sandbox" : "Live"} />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
             <OrderButton
               side="BUY"
               optionType="CE"
@@ -390,8 +387,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               Icon={TrendingUp}
               label="Sell PE"
             />
+            </div>
           </div>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
