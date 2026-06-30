@@ -196,10 +196,27 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const strikeValue = Number(strike);
   const hasValidStrike = strike !== "" && Number.isFinite(strikeValue) && strikeValue > 0;
   const canSubmit = !!underlying && !!expiry && hasValidStrike && !busy;
-  const contractSummary = `${underlying || "-"} | ${expiry || "-"} | ${
-    hasValidStrike ? strike : "Select strike"
-  } | ${lots} lot${lots === 1 ? "" : "s"}`;
-  const riskSummary = `SL ${slPoints || "-"} | ${asDraft ? "Draft" : isSandbox ? "Sandbox" : "Live"} | ${targetSummary}`;
+  const contractSummary = (
+    <SummaryChips
+      items={[
+        { label: "Instr", value: underlying || "-" },
+        { label: "Exp", value: expiry || "-" },
+        { label: "Strike", value: hasValidStrike ? String(strike) : "Select" },
+        { label: "Lots", value: String(lots) },
+      ]}
+    />
+  );
+  const riskSummary = (
+    <SummaryChips
+      items={[
+        { label: "SL", value: slPoints || "-" },
+        { label: "Mode", value: asDraft ? "Draft" : isSandbox ? "Sandbox" : "Live" },
+        ...(activeTargets.length > 0
+          ? activeTargets.map((t, i) => ({ label: `T${i + 1}`, value: `${t.points} / ${t.exit_pct}%` }))
+          : [{ label: "Targets", value: "None" }]),
+      ]}
+    />
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -541,9 +558,9 @@ function DisclosureSection({
         onClick={() => onOpenChange(!open)}
         aria-expanded={open}
       >
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0 flex-1 space-y-1.5">
           <SectionLabel>{title}</SectionLabel>
-          <p className="truncate text-[11px] text-muted-foreground">{summary}</p>
+          {summary}
         </div>
         <ChevronDown
           className={cn(
@@ -554,6 +571,22 @@ function DisclosureSection({
       </button>
       {open ? <div className="space-y-3 border-t border-border/60 p-3 pt-2.5">{children}</div> : null}
     </section>
+  );
+}
+
+function SummaryChips({ items }: { items: { label: string; value: string }[] }) {
+  return (
+    <div className="scrollbar-hidden flex min-w-0 gap-1 overflow-x-auto whitespace-nowrap">
+      {items.map((item) => (
+        <span
+          key={`${item.label}-${item.value}`}
+          className="inline-flex shrink-0 items-center gap-1 rounded border border-border/70 bg-muted/35 px-1.5 py-0.5 text-[10px] leading-none text-muted-foreground"
+        >
+          <span className="shrink-0">{item.label}</span>
+          <span className="min-w-0 truncate font-semibold text-foreground">{item.value}</span>
+        </span>
+      ))}
+    </div>
   );
 }
 
