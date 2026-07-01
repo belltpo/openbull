@@ -251,7 +251,6 @@ html[data-trading-mode="sandbox"] {
     opacity: 0.8;
   }
   .fr-grid-bg {
-    background-color: color-mix(in oklch, var(--background) 96%, var(--card));
     background-image:
       radial-gradient(circle at 1px 1px, color-mix(in oklch, var(--foreground) 7%, transparent) 1px, transparent 0);
     background-size: 22px 22px;
