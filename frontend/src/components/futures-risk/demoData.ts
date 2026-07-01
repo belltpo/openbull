@@ -163,13 +163,15 @@ export function makeFuturesRiskDemoData(baseDate = new Date()): DemoData {
       [`${trade.option_exchange}:${trade.option_symbol}`, Math.max(1, trade.entry_option_price + (trade.side === "BUY" ? 1 : -1) * (6 + index))],
     ]),
   );
+  const phaseNoBySymbol = new Map<string, number>();
   const phases: FrPhase[] = trades
     .filter((trade) => trade.status !== "draft")
+    .sort((a, b) => a.underlying.localeCompare(b.underlying) || String(a.created_at).localeCompare(String(b.created_at)))
     .map((trade) => ({
       trade_id: trade.id,
       underlying: trade.underlying,
       phase_group: trade.phase_group,
-      phase_no: trade.phase_no,
+      phase_no: (phaseNoBySymbol.set(trade.underlying, (phaseNoBySymbol.get(trade.underlying) ?? 0) + 1), phaseNoBySymbol.get(trade.underlying)!),
       status: trade.status,
       option_symbol: trade.option_symbol,
       option_exchange: trade.option_exchange,

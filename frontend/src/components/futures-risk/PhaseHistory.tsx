@@ -45,6 +45,31 @@ function phaseMtm(p: FrPhase, liveOpt: number | undefined): number {
   return (p.realized_pnl ?? 0) + phaseOpenPnl(p, liveOpt);
 }
 
+function Metric({
+  label,
+  value,
+  sub,
+  icon,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  icon?: ReactNode;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/40 p-2">
+      <div className="flex items-center gap-1 text-[10px] uppercase text-muted-foreground">
+        {icon}
+        {label}
+      </div>
+      <div className={cn("mt-1 font-semibold tabular-nums", valueClassName)}>{value}</div>
+      {sub ? <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{sub}</div> : null}
+    </div>
+  );
+}
+
 function PhaseCard({ phase, liveOpt }: { phase: FrPhase; liveOpt: number | undefined }) {
   const mtm = phaseMtm(phase, liveOpt);
   const pnlTone = mtm >= 0 ? "text-emerald-500" : "text-red-500";
@@ -64,12 +89,7 @@ function PhaseCard({ phase, liveOpt }: { phase: FrPhase; liveOpt: number | undef
             <span className="flex items-center gap-1 text-sm font-semibold">
               <Layers className="h-3.5 w-3.5" /> Phase {phase.phase_no}
             </span>
-            <span
-              className={cn(
-                "rounded-md border px-1.5 py-0.5 text-[10px] font-semibold capitalize",
-                statusTone,
-              )}
-            >
+            <span className={cn("rounded-md border px-1.5 py-0.5 text-[10px] font-semibold capitalize", statusTone)}>
               {phase.status}
             </span>
           </div>
@@ -77,12 +97,13 @@ function PhaseCard({ phase, liveOpt }: { phase: FrPhase; liveOpt: number | undef
         </div>
         <div className="text-right">
           <p className="text-[10px] uppercase text-muted-foreground">Phase MTM</p>
-          <p className={cn("text-sm font-bold tabular-nums", pnlTone)}>₹{fmt(mtm)}</p>
+          <p className={cn("text-sm font-bold tabular-nums", pnlTone)}>Rs. {fmt(mtm)}</p>
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
-        <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Opt ₹${fmt(phase.entry_option_price)}`} />
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs lg:grid-cols-5">
+        <Metric label="Phase MTM" value={`Rs. ${fmt(mtm)}`} sub={phase.status === "active" ? "live + booked" : "booked"} valueClassName={pnlTone} />
+        <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} />
         <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} icon={<Shield className="h-3 w-3" />} />
         <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={`${phase.remaining_qty}/${phase.total_qty} qty`} icon={<Target className="h-3 w-3" />} />
         <Metric label="Duration" value={durationFmt(phase.duration_sec)} sub={`${timeFmt(phase.entry_time)} -> ${phase.exit_time ? timeFmt(phase.exit_time) : "open"}`} icon={<Clock className="h-3 w-3" />} />
@@ -105,23 +126,11 @@ function PhaseCard({ phase, liveOpt }: { phase: FrPhase; liveOpt: number | undef
                 <span>{t.status}</span>
               </div>
               <div className="mt-0.5 tabular-nums">{fmt(t.trigger_price, 0)}</div>
+              <div className="mt-0.5 text-[10px] opacity-80">{fmt(t.points, 0)} pts / {fmt(t.exit_pct, 0)}%</div>
             </div>
           ))}
         </div>
       )}
-    </div>
-  );
-}
-
-function Metric({ label, value, sub, icon }: { label: string; value: string; sub?: string; icon?: ReactNode }) {
-  return (
-    <div className="rounded-lg border border-border/60 bg-background/40 p-2">
-      <div className="flex items-center gap-1 text-[10px] uppercase text-muted-foreground">
-        {icon}
-        {label}
-      </div>
-      <div className="mt-1 font-semibold tabular-nums">{value}</div>
-      {sub ? <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{sub}</div> : null}
     </div>
   );
 }
@@ -216,6 +225,10 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
           const totalMtm = phases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
           const realized = phases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
           const active = phases.filter((p) => p.status === "active").length;
+          const targetsHit = phases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
+          const targetsTotal = phases.reduce((sum, p) => sum + p.targets_total, 0);
+          const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
+
           return (
             <section key={symbol} className="space-y-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -223,10 +236,11 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
                   <h3 className="text-lg font-bold tracking-tight">{symbol}</h3>
                   <p className="text-xs text-muted-foreground">{phases.length} phase(s) in selected range</p>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-right text-xs">
-                  <Metric label="Cumulative MTM" value={`₹${fmt(totalMtm)}`} icon={<TrendingUp className="h-3 w-3" />} />
-                  <Metric label="Realized" value={`₹${fmt(realized)}`} />
-                  <Metric label="Active" value={String(active)} />
+                <div className="grid grid-cols-2 gap-2 text-right text-xs sm:grid-cols-4">
+                  <Metric label="Overall Instrument MTM" value={`Rs. ${fmt(totalMtm)}`} icon={<TrendingUp className="h-3 w-3" />} valueClassName={totalTone} />
+                  <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} />
+                  <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} />
+                  <Metric label="Active Phases" value={String(active)} />
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">

@@ -787,6 +787,22 @@ def _assign_phase(db, user_id: int, underlying: str) -> tuple[str, int]:
     return group, int(max_no) + 1
 
 
+def _assert_no_active_phase(db, user_id: int, underlying: str, exclude_trade_id: int | None = None) -> None:
+    q = select(FrTrade).where(
+        FrTrade.user_id == user_id,
+        FrTrade.underlying == underlying,
+        FrTrade.status == "active",
+    )
+    if exclude_trade_id is not None:
+        q = q.where(FrTrade.id != exclude_trade_id)
+    existing = db.execute(q.order_by(FrTrade.phase_no.desc()).limit(1)).scalar_one_or_none()
+    if existing is not None:
+        raise FrError(
+            f"{underlying} Phase {existing.phase_no} is still active. Complete it before starting the next phase.",
+            409,
+        )
+
+
 def _leg_exit_pnl(side: str, entry_opt: float, exit_opt: float, qty: int) -> float:
     """Realized P&L for exiting ``qty`` of the option leg at ``exit_opt``."""
     if exit_opt <= 0 or entry_opt <= 0 or qty <= 0:
@@ -835,6 +851,8 @@ def place_trade(
     Raises ``FrError`` on validation / resolution / placement failure.
     """
     p = _normalise_params(params)
+    with session_scope() as db:
+        _assert_no_active_phase(db, user_id, p["underlying"])
     plan = _resolve_trade_plan(auth_token, broker, config, p, require_price=True)
 
     # Place the entry order
@@ -997,6 +1015,8 @@ def place_draft(
         raise FrError("Draft is missing its parameters; recreate it", 422)
 
     p = _normalise_params(p)
+    with session_scope() as db:
+        _assert_no_active_phase(db, user_id, p["underlying"], exclude_trade_id=trade_id)
     plan = _resolve_trade_plan(auth_token, broker, config, p, require_price=True)
 
     order_data = {
@@ -1182,10 +1202,12 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
         q = select(FrTrade).where(FrTrade.user_id == user_id, FrTrade.phase_no > 0)
         if underlying:
             q = q.where(FrTrade.underlying == underlying.strip().upper())
-        q = q.order_by(FrTrade.phase_group, FrTrade.phase_no)
+        q = q.order_by(FrTrade.underlying, FrTrade.created_at, FrTrade.id)
         trades = db.execute(q).scalars().all()
         out: list[dict[str, Any]] = []
+        display_phase_no: dict[str, int] = {}
         for t in trades:
+            display_phase_no[t.underlying] = display_phase_no.get(t.underlying, 0) + 1
             tgts = db.execute(
                 select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
             ).scalars().all()
@@ -1205,8 +1227,8 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
             out.append({
                 "trade_id": t.id,
                 "underlying": t.underlying,
-                "phase_group": t.phase_group,
-                "phase_no": t.phase_no,
+                "phase_group": t.phase_group or f"{user_id}:{t.underlying}",
+                "phase_no": display_phase_no[t.underlying],
                 "status": t.status,
                 "option_symbol": t.option_symbol,
                 "option_exchange": t.option_exchange,
