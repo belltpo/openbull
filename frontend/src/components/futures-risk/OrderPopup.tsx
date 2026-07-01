@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Minus, Plus, Settings, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowLeft, Minus, Plus, Settings, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
 
 import {
   Dialog,
@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { useMarketData } from "@/hooks/useMarketData";
 import {
   createDraft,
   getFrConfig,
@@ -37,6 +38,12 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPlaced?: () => void;
+}
+
+const QUICK_ORDER_SETTINGS_KEY = "openbull:futures-risk:quick-order-settings";
+
+function formatStrikeForSymbol(strike: number): string {
+  return Number.isInteger(strike) ? String(strike) : String(strike).replace(/\.0+$/, "").replace(".", "");
 }
 
 export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
@@ -63,10 +70,67 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ceStrike, setCeStrike] = useState<number | "">("");
   const [peStrike, setPeStrike] = useState<number | "">("");
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [hasSavedSettings, setHasSavedSettings] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(QUICK_ORDER_SETTINGS_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw) as Partial<{
+          underlying: string;
+          expiry: string;
+          ceStrike: number;
+          peStrike: number;
+          lots: number;
+          slPoints: string;
+          targetTemplateId: number | null;
+          overrideTargets: boolean;
+          targetRows: { points: number; exit_pct: number }[];
+          asDraft: boolean;
+        }>;
+        if (saved.underlying) setUnderlying(saved.underlying);
+        if (saved.expiry) setExpiry(saved.expiry);
+        if (Number(saved.ceStrike) > 0) setCeStrike(Number(saved.ceStrike));
+        if (Number(saved.peStrike) > 0) setPeStrike(Number(saved.peStrike));
+        if (Number(saved.lots) > 0) setLots(Number(saved.lots));
+        if (saved.slPoints != null) setSlPoints(String(saved.slPoints));
+        if ("targetTemplateId" in saved) setTargetTemplateId(saved.targetTemplateId ?? null);
+        if (typeof saved.overrideTargets === "boolean") setOverrideTargets(saved.overrideTargets);
+        if (Array.isArray(saved.targetRows)) setTargetRows(saved.targetRows);
+        if (typeof saved.asDraft === "boolean") setAsDraft(saved.asDraft);
+        setHasSavedSettings(true);
+      }
+    } catch {
+      window.localStorage.removeItem(QUICK_ORDER_SETTINGS_KEY);
+    } finally {
+      setSettingsHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!settingsHydrated) return;
+    if (!underlying && !expiry) return;
+    window.localStorage.setItem(
+      QUICK_ORDER_SETTINGS_KEY,
+      JSON.stringify({
+        underlying,
+        expiry,
+        ceStrike,
+        peStrike,
+        lots,
+        slPoints,
+        targetTemplateId,
+        overrideTargets,
+        targetRows,
+        asDraft,
+      }),
+    );
+  }, [asDraft, ceStrike, expiry, lots, overrideTargets, peStrike, settingsHydrated, slPoints, targetRows, targetTemplateId, underlying]);
 
   // Pre-fill defaults from admin config once loaded.
   useEffect(() => {
-    if (configQuery.data) {
+    if (configQuery.data && settingsHydrated && !hasSavedSettings) {
       const configuredLots = Number(configQuery.data.default_lots?.value);
       if (Number.isFinite(configuredLots) && configuredLots > 0) {
         setLots((prev) => (prev === 1 ? configuredLots : prev));
@@ -76,7 +140,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
         setSlPoints(String(configuredSl));
       }
     }
-  }, [configQuery.data, slPoints]);
+  }, [configQuery.data, hasSavedSettings, settingsHydrated, slPoints]);
 
   const templates = useMemo(
     () => (templatesQuery.data ?? []).filter((t) => t.enabled),
@@ -103,11 +167,12 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   // Default the underlying to the first available.
   useEffect(() => {
+    if (!settingsHydrated) return;
     if (underlying || underlyings.length === 0) return;
     const preferredUnderlying = String(configQuery.data?.default_underlying?.value ?? "").toUpperCase();
     const preferred = underlyings.find((m) => m.underlying === preferredUnderlying);
     setUnderlying((preferred ?? underlyings[0]).underlying);
-  }, [configQuery.data, underlyings, underlying]);
+  }, [configQuery.data, settingsHydrated, underlyings, underlying]);
 
   const selectedMap = underlyings.find((m) => m.underlying === underlying);
   const underlyingExchange = selectedMap?.underlying_exchange ?? "NSE_INDEX";
@@ -203,8 +268,28 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const expiryList = expiriesQuery.data ?? [];
   const strikeList = strikesQuery.data?.strikes ?? [];
   const atm = strikesQuery.data?.atm;
+  const optionExchange = strikesQuery.data?.options_exchange ?? "NFO";
   const ceStrikeLabel = ceStrike === "" ? "--" : String(ceStrike);
   const peStrikeLabel = peStrike === "" ? "--" : String(peStrike);
+  const ceSymbol = underlying && expiry && Number(ceStrike) > 0
+    ? `${underlying}${expiry.toUpperCase()}${formatStrikeForSymbol(Number(ceStrike))}CE`
+    : "";
+  const peSymbol = underlying && expiry && Number(peStrike) > 0
+    ? `${underlying}${expiry.toUpperCase()}${formatStrikeForSymbol(Number(peStrike))}PE`
+    : "";
+  const liveSymbols = useMemo(() => {
+    const out: Array<{ symbol: string; exchange: string }> = [];
+    if (ceSymbol) out.push({ symbol: ceSymbol, exchange: optionExchange });
+    if (peSymbol && peSymbol !== ceSymbol) out.push({ symbol: peSymbol, exchange: optionExchange });
+    return out;
+  }, [ceSymbol, optionExchange, peSymbol]);
+  const { data: tickMap } = useMarketData({
+    symbols: liveSymbols,
+    mode: "LTP",
+    enabled: open && liveSymbols.length > 0,
+  });
+  const ceLtp = ceSymbol ? tickMap.get(`${optionExchange}:${ceSymbol}`)?.data.ltp : undefined;
+  const peLtp = peSymbol ? tickMap.get(`${optionExchange}:${peSymbol}`)?.data.ltp : undefined;
   const targetSummary =
     targetRows.length > 0
       ? targetRows.map((t, i) => `T${i + 1} ${t.points} / ${t.exit_pct}%`).join(" | ")
@@ -237,6 +322,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               tone="buy"
               label="Buy CE"
               strike={`${ceStrikeLabel} CE`}
+              ltp={ceLtp}
               Icon={TrendingUp}
               onClick={() => submit("BUY", "CE")}
             />
@@ -247,6 +333,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               tone="sell"
               label="Sell CE"
               strike={`${ceStrikeLabel} CE`}
+              ltp={ceLtp}
               Icon={TrendingDown}
               onClick={() => submit("SELL", "CE")}
             />
@@ -257,6 +344,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               tone="buy"
               label="Buy PE"
               strike={`${peStrikeLabel} PE`}
+              ltp={peLtp}
               Icon={TrendingUp}
               onClick={() => submit("BUY", "PE")}
             />
@@ -267,6 +355,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               tone="sell"
               label="Sell PE"
               strike={`${peStrikeLabel} PE`}
+              ltp={peLtp}
               Icon={TrendingDown}
               onClick={() => submit("SELL", "PE")}
             />
@@ -278,9 +367,20 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
         <DialogContent className="max-h-[92vh] gap-0 overflow-hidden p-0 sm:max-w-[600px]">
           <div className="scrollbar-hidden max-h-[92vh] space-y-4 overflow-y-auto overscroll-contain p-4 sm:p-5">
             <DialogHeader className="space-y-1">
-              <DialogTitle className="text-base font-semibold tracking-tight">Quick Order Settings</DialogTitle>
+              <div className="flex items-center gap-2 pr-8">
+                <button
+                  type="button"
+                  className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground hover:bg-muted hover:text-foreground"
+                  onClick={() => setSettingsOpen(false)}
+                  aria-label="Back to quick order"
+                  title="Back"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+                <DialogTitle className="text-base font-semibold tracking-tight">Quick Order Settings</DialogTitle>
+              </div>
               <DialogDescription className="text-[11px] leading-tight">
-                Configure the values used by the compact quick order buttons.
+                Changes auto-save and update the compact quick order buttons.
               </DialogDescription>
             </DialogHeader>
 
@@ -492,6 +592,7 @@ function QuickActionButton({
   Icon,
   label,
   strike,
+  ltp,
 }: {
   disabled: boolean;
   busy: boolean;
@@ -501,6 +602,7 @@ function QuickActionButton({
   Icon: typeof TrendingUp;
   label: string;
   strike: string;
+  ltp?: number;
 }) {
   return (
     <Button
@@ -520,6 +622,9 @@ function QuickActionButton({
             {label}
           </span>
           <span className="text-[11px] font-semibold leading-none opacity-90">{strike}</span>
+          <span className="text-[10px] font-semibold leading-none opacity-80">
+            LTP {ltp === undefined ? "--" : ltp.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+          </span>
         </>
       )}
     </Button>
