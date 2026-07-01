@@ -149,7 +149,7 @@ function PhaseCard({
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 text-sm lg:grid-cols-5">
+      <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 xl:grid-cols-3">
         <Metric label="Phase MTM" value={`Rs. ${fmt(mtm)}`} sub={phase.status === "active" ? "live + booked" : "booked"} valueClassName={pnlTone} />
         <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} />
         <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} icon={<Shield className="h-3 w-3" />} />
@@ -158,7 +158,7 @@ function PhaseCard({
       </div>
 
       {phase.targets.length > 0 && (
-        <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
           {phase.targets.map((t) => (
             <div
               key={t.seq}
@@ -295,27 +295,40 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
       {groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">No phase history for the selected date range.</p>
       ) : (
-        groups.map(([symbol, phases]) => {
-          const allInstrumentPhases = allBySymbol.get(symbol) ?? phases;
-          const totalMtm = allInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
-          const realized = allInstrumentPhases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
-          const active = allInstrumentPhases.filter((p) => p.status === "active").length;
-          const targetsHit = allInstrumentPhases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
-          const targetsTotal = allInstrumentPhases.reduce((sum, p) => sum + p.targets_total, 0);
-          const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 min-[1900px]:grid-cols-3">
+          {groups.map(([symbol, phases]) => {
+            const allInstrumentPhases = allBySymbol.get(symbol) ?? phases;
+            const totalMtm = allInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
+            const realized = allInstrumentPhases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
+            const active = allInstrumentPhases.filter((p) => p.status === "active").length;
+            const targetsHit = allInstrumentPhases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
+            const targetsTotal = allInstrumentPhases.reduce((sum, p) => sum + p.targets_total, 0);
+            const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
 
-          return (
-            <section key={symbol} className="fr-glass rounded-2xl border border-border/70 p-4">
-              <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-                <div className="min-w-0">
-                  <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Showing {phases.length} of {allInstrumentPhases.length} phase(s)
-                  </p>
+            return (
+              <section key={symbol} className="fr-glass h-fit rounded-2xl border border-border/70 p-4">
+                <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="min-w-0">
+                    <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Showing {phases.length} of {allInstrumentPhases.length} phase(s)
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] xl:items-start">
+                <aside className="mb-3 grid grid-cols-2 gap-2 text-right text-sm">
+                  <Metric
+                    label="Overall Instrument MTM"
+                    value={`Rs. ${fmt(totalMtm)}`}
+                    icon={<TrendingUp className="h-3 w-3" />}
+                    valueClassName={totalTone}
+                    className="min-h-16 bg-card/55"
+                  />
+                  <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} className="min-h-16 bg-card/55" />
+                  <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} className="min-h-16 bg-card/55" />
+                  <Metric label="Active Phases" value={String(active)} className="min-h-16 bg-card/55" />
+                </aside>
+
                 <div className="grid min-w-0 grid-cols-1 gap-3">
                   {phases.map((p) => {
                     const previousPhases = allInstrumentPhases.filter((item) => item.phase_no < p.phase_no);
@@ -331,23 +344,10 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
                     );
                   })}
                 </div>
-
-                <aside className="grid grid-cols-2 gap-2 text-right text-sm xl:grid-cols-1">
-                  <Metric
-                    label="Overall Instrument MTM"
-                    value={`Rs. ${fmt(totalMtm)}`}
-                    icon={<TrendingUp className="h-3 w-3" />}
-                    valueClassName={totalTone}
-                    className="min-h-16 bg-card/55"
-                  />
-                  <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} className="min-h-16 bg-card/55" />
-                  <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} className="min-h-16 bg-card/55" />
-                  <Metric label="Active Phases" value={String(active)} className="min-h-16 bg-card/55" />
-                </aside>
-              </div>
-            </section>
-          );
-        })
+              </section>
+            );
+          })}
+        </div>
       )}
     </div>
   );

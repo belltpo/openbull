@@ -303,7 +303,7 @@ export default function FuturesRisk() {
               </Button>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 min-[1900px]:grid-cols-3">
               {positionGroups.map(([symbol, symbolTrades]) => {
                 const instrumentTrades = allByInstrument.get(symbol) ?? symbolTrades;
                 const phaseTrades = instrumentTrades.filter((trade) => trade.phase_no > 0);
@@ -322,7 +322,7 @@ export default function FuturesRisk() {
                 const pnlTone = instrumentPnl >= 0 ? "good" : "bad";
 
                 return (
-                  <section key={symbol} className="fr-glass rounded-2xl border border-border/70 p-4">
+                  <section key={symbol} className="fr-glass h-fit rounded-2xl border border-border/70 p-4">
                     <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                       <div className="min-w-0">
                         <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
@@ -332,7 +332,19 @@ export default function FuturesRisk() {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] xl:items-start">
+                    <aside className="mb-3 grid grid-cols-2 gap-2 text-sm">
+                      <InstrumentStat
+                        icon={<TrendingUp className="h-3 w-3" />}
+                        label="Overall Instrument P&L"
+                        value={`Rs. ${fmt(instrumentPnl)}`}
+                        tone={pnlTone}
+                      />
+                      <InstrumentStat label="Booked P&L" value={`Rs. ${fmt(bookedPnl)}`} tone={bookedPnl >= 0 ? "good" : "bad"} />
+                      <InstrumentStat label="Targets" value={`${targetsHit}/${targetsTotal}`} />
+                      <InstrumentStat label="Active Phases" value={String(activePhases)} />
+                    </aside>
+
+                    <div className="grid grid-cols-1 gap-3">
                       <div className="grid min-w-0 grid-cols-1 gap-3">
                         {symbolTrades.map((t) => {
                           const previousTrades = phaseTrades.filter((item) => item.phase_no > 0 && item.phase_no < t.phase_no);
@@ -369,18 +381,6 @@ export default function FuturesRisk() {
                           );
                         })}
                       </div>
-
-                      <aside className="grid grid-cols-2 gap-2 text-sm xl:grid-cols-1">
-                        <InstrumentStat
-                          icon={<TrendingUp className="h-3 w-3" />}
-                          label="Overall Instrument P&L"
-                          value={`Rs. ${fmt(instrumentPnl)}`}
-                          tone={pnlTone}
-                        />
-                        <InstrumentStat label="Booked P&L" value={`Rs. ${fmt(bookedPnl)}`} tone={bookedPnl >= 0 ? "good" : "bad"} />
-                        <InstrumentStat label="Targets" value={`${targetsHit}/${targetsTotal}`} />
-                        <InstrumentStat label="Active Phases" value={String(activePhases)} />
-                      </aside>
                     </div>
                   </section>
                 );
