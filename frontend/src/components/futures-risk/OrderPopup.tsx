@@ -1,15 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ArrowLeft, Minus, Plus, Settings, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowLeft, Minus, Plus, Settings, ShieldCheck, TrendingDown, TrendingUp, X } from "lucide-react";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -74,7 +67,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [hasSavedSettings, setHasSavedSettings] = useState(false);
   const [quickOrderPosition, setQuickOrderPosition] = useState<{ x: number; y: number } | null>(null);
-  const [draggingQuickOrder, setDraggingQuickOrder] = useState(false);
+  const [settingsPosition, setSettingsPosition] = useState<{ x: number; y: number } | null>(null);
+  const [draggingPanel, setDraggingPanel] = useState<"quick" | "settings" | null>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
@@ -132,17 +126,23 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     );
   }, [asDraft, ceStrike, expiry, lots, overrideTargets, peStrike, settingsHydrated, slPoints, targetRows, targetTemplateId, underlying]);
 
+  const closeQuickOrder = () => {
+    setSettingsOpen(false);
+    onOpenChange(false);
+  };
+
   useEffect(() => {
-    if (!draggingQuickOrder) return;
+    if (!draggingPanel) return;
 
     const move = (event: PointerEvent) => {
-      const width = 354;
-      const height = 260;
+      const width = draggingPanel === "settings" ? Math.min(760, window.innerWidth - 16) : 354;
+      const height = draggingPanel === "settings" ? Math.min(680, window.innerHeight - 16) : 300;
       const nextX = Math.max(8, Math.min(window.innerWidth - width - 8, event.clientX - dragOffsetRef.current.x));
       const nextY = Math.max(8, Math.min(window.innerHeight - height - 8, event.clientY - dragOffsetRef.current.y));
-      setQuickOrderPosition({ x: nextX, y: nextY });
+      if (draggingPanel === "settings") setSettingsPosition({ x: nextX, y: nextY });
+      else setQuickOrderPosition({ x: nextX, y: nextY });
     };
-    const stop = () => setDraggingQuickOrder(false);
+    const stop = () => setDraggingPanel(null);
 
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", stop, { once: true });
@@ -150,19 +150,20 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", stop);
     };
-  }, [draggingQuickOrder]);
+  }, [draggingPanel]);
 
-  const startQuickOrderDrag = (event: ReactPointerEvent<HTMLElement>) => {
+  const startPanelDrag = (panel: "quick" | "settings", event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
-    const popup = event.currentTarget.closest('[data-slot="dialog-content"]') as HTMLElement | null;
+    const popup = event.currentTarget.closest("[data-fr-floating-panel]") as HTMLElement | null;
     if (!popup) return;
     const rect = popup.getBoundingClientRect();
     dragOffsetRef.current = {
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
-    setQuickOrderPosition({ x: rect.left, y: rect.top });
-    setDraggingQuickOrder(true);
+    if (panel === "settings") setSettingsPosition({ x: rect.left, y: rect.top });
+    else setQuickOrderPosition({ x: rect.left, y: rect.top });
+    setDraggingPanel(panel);
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
@@ -276,7 +277,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
       );
       qc.invalidateQueries({ queryKey: ["fr-trades"] });
       onPlaced?.();
-      onOpenChange(false);
+      closeQuickOrder();
     },
     onError: (err: unknown) => {
       const msg =
@@ -347,17 +348,20 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent
+      {open && (
+        <div
+          data-fr-floating-panel
+          role="dialog"
+          aria-label="Quick Order"
           className={cn(
-            "gap-2.5 overflow-hidden p-3 sm:max-w-[330px]",
+            "fixed left-1/2 top-1/2 z-50 grid w-[calc(100vw-2rem)] max-w-[330px] -translate-x-1/2 -translate-y-1/2 gap-2.5 overflow-hidden rounded-xl bg-popover p-3 text-sm text-popover-foreground shadow-2xl ring-1 ring-foreground/10",
             quickOrderPosition && "left-0 top-0 translate-x-0 translate-y-0",
           )}
           style={quickOrderPosition ? { left: quickOrderPosition.x, top: quickOrderPosition.y, transform: "none" } : undefined}
         >
-          <DialogHeader className="cursor-move select-none pr-16" onPointerDown={startQuickOrderDrag}>
-            <DialogTitle className="text-base font-semibold tracking-tight">Quick Order</DialogTitle>
-          </DialogHeader>
+          <div className="cursor-move select-none pr-16" onPointerDown={(event) => startPanelDrag("quick", event)}>
+            <h2 className="text-base font-semibold tracking-tight">Quick Order</h2>
+          </div>
           <div className="rounded-xl border border-border/70 bg-muted/35 px-3 py-2">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -379,6 +383,15 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
             title="Settings"
           >
             <Settings className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            onClick={closeQuickOrder}
+            aria-label="Close quick order"
+            title="Close"
+          >
+            <X className="h-4 w-4" />
           </button>
 
           <div className="grid grid-cols-2 gap-2">
@@ -427,13 +440,22 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               onClick={() => submit("SELL", "PE")}
             />
           </div>
-        </DialogContent>
-      </Dialog>
+        </div>
+      )}
 
-      <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="max-h-[92vh] gap-0 overflow-hidden p-0 sm:max-w-[600px]">
+      {settingsOpen && (
+        <div
+          data-fr-floating-panel
+          role="dialog"
+          aria-label="Quick Order Settings"
+          className={cn(
+            "fixed left-1/2 top-1/2 z-50 grid max-h-[92vh] w-[calc(100vw-2rem)] max-w-[600px] -translate-x-1/2 -translate-y-1/2 gap-0 overflow-hidden rounded-xl bg-popover p-0 text-sm text-popover-foreground shadow-2xl ring-1 ring-foreground/10",
+            settingsPosition && "left-0 top-0 translate-x-0 translate-y-0",
+          )}
+          style={settingsPosition ? { left: settingsPosition.x, top: settingsPosition.y, transform: "none" } : undefined}
+        >
           <div className="scrollbar-hidden max-h-[92vh] space-y-4 overflow-y-auto overscroll-contain p-4 sm:p-5">
-            <DialogHeader className="space-y-1">
+            <div className="space-y-1">
               <div className="flex items-center gap-2 pr-8">
                 <button
                   type="button"
@@ -444,12 +466,26 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                 >
                   <ArrowLeft className="h-4 w-4" />
                 </button>
-                <DialogTitle className="text-base font-semibold tracking-tight">Quick Order Settings</DialogTitle>
+                <div
+                  className="min-w-0 flex-1 cursor-move select-none"
+                  onPointerDown={(event) => startPanelDrag("settings", event)}
+                >
+                  <h2 className="truncate text-base font-semibold tracking-tight">Quick Order Settings</h2>
+                </div>
               </div>
-              <DialogDescription className="text-[11px] leading-tight">
+              <p className="text-[11px] leading-tight text-muted-foreground">
                 Changes auto-save and update the compact quick order buttons.
-              </DialogDescription>
-            </DialogHeader>
+              </p>
+            </div>
+            <button
+              type="button"
+              className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              onClick={() => setSettingsOpen(false)}
+              aria-label="Close quick order settings"
+              title="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
 
             <div className="space-y-2.5">
               <SectionLabel>Contract</SectionLabel>
@@ -644,8 +680,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
             ) : null}
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+        </div>
+      )}
     </>
   );
 }
