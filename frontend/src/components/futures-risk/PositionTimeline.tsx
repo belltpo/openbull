@@ -27,7 +27,7 @@ function fmt(value: number | null | undefined, digits = 2): string {
 }
 
 function optLine(liveOpt: number | undefined): string {
-  return `Opt LTP ${fmt(liveOpt)}`;
+  return `O ${fmt(liveOpt)}`;
 }
 
 function initialSlPrice(trade: FrTrade): number {
@@ -52,21 +52,21 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
 
   steps.push({
     key: "initial-sl",
-    label: t1Hit ? "Initial SL" : "Stoploss",
+    label: t1Hit ? "Init SL" : "Stoploss",
     state: t1Hit ? "done" : stopped ? "failed" : placed ? "current" : "todo",
     tone: t1Hit ? "muted" : "red",
     icon: <Shield className="h-3.5 w-3.5" />,
-    futures: `Fut ${fmt(t1Hit ? initialSlPrice(trade) : trade.sl_price)}`,
+    futures: `F ${fmt(t1Hit ? initialSlPrice(trade) : trade.sl_price)}`,
     option: optLine(liveOpt),
   });
 
   steps.push({
     key: "entry",
-    label: t1Hit ? "Stoploss" : placed ? "Entry" : "Entry Pending",
+    label: t1Hit ? "Stoploss" : placed ? "Entry" : "Pending",
     state: t1Hit && !closed ? "current" : placed ? "done" : "current",
     tone: t1Hit ? "red" : "blue",
     icon: <Play className="h-3.5 w-3.5" />,
-    futures: placed ? `Fut ${fmt(trade.entry_futures_price)}` : "Draft",
+    futures: placed ? `F ${fmt(trade.entry_futures_price)}` : "Draft",
     option: optLine(liveOpt),
   });
 
@@ -74,11 +74,11 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
     const hit = target.status === "hit";
     steps.push({
       key: `t${target.seq}`,
-      label: `Target ${target.seq}`,
+      label: `T${target.seq}`,
       state: hit ? "done" : closed ? "todo" : target.seq === nextPendingSeq ? "current" : "todo",
       tone: "green",
       icon: <Target className="h-3.5 w-3.5" />,
-      futures: `Fut ${fmt(target.trigger_price)}`,
+      futures: `F ${fmt(target.trigger_price)}`,
       option: optLine(liveOpt),
     });
   });
@@ -121,10 +121,10 @@ export function PositionTimeline({ trade, liveOpt }: { trade: FrTrade; liveOpt?:
     <div className="flex items-start gap-0 overflow-x-auto pb-1">
       {steps.map((step, index) => (
         <div key={step.key} className="flex min-w-0 items-start">
-          <div className="flex w-[3.9rem] flex-col items-center text-center sm:w-[4.35rem]">
+          <div className="flex w-[3.25rem] flex-col items-center text-center sm:w-[3.65rem]">
             <div
               className={cn(
-                "flex h-6 w-6 items-center justify-center rounded-full border transition-colors",
+                "flex h-5 w-5 items-center justify-center rounded-full border transition-colors [&_svg]:h-3 [&_svg]:w-3",
                 step.state === "todo" ? toneRing.muted : toneRing[step.tone],
                 step.state === "current" && "fr-dot-live",
               )}
@@ -134,11 +134,11 @@ export function PositionTimeline({ trade, liveOpt }: { trade: FrTrade; liveOpt?:
             <span className="mt-1 line-clamp-1 text-[10px] font-semibold leading-tight text-foreground/85">
               {step.label}
             </span>
-            {step.futures && <span className="text-[9px] tabular-nums text-muted-foreground">{step.futures}</span>}
-            {step.option && <span className="text-[9px] tabular-nums text-muted-foreground">{step.option}</span>}
+            {step.futures && <span className="mt-0.5 text-[9px] leading-none tabular-nums text-muted-foreground">{step.futures}</span>}
+            {step.option && <span className="mt-1 text-[9px] leading-none tabular-nums text-muted-foreground">{step.option}</span>}
           </div>
           {index < steps.length - 1 && (
-            <div className={cn("mt-3 h-0.5 w-2 shrink-0 rounded-full sm:w-3", connectorClass(step, steps[index + 1]))} />
+            <div className={cn("mt-2.5 h-0.5 w-2 shrink-0 rounded-full", connectorClass(step, steps[index + 1]))} />
           )}
         </div>
       ))}
