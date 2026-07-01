@@ -75,9 +75,12 @@ export interface FrPhase {
   phase_no: number;
   status: TradeStatus;
   option_symbol: string;
+  option_exchange: string;
   side: Side;
   option_type: OptionType;
   lots: number;
+  lot_size: number;
+  total_qty: number;
   entry_time: string | null;
   exit_time: string | null;
   entry_futures_price: number;
@@ -86,6 +89,7 @@ export interface FrPhase {
   sl_basis: string;
   targets_total: number;
   targets_achieved: number[];
+  targets: FrTradeTarget[];
   realized_pnl: number;
   remaining_qty: number;
   duration_sec: number | null;

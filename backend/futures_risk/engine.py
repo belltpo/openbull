@@ -214,7 +214,11 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                 continue
             if not auto_exit:
                 continue
-            qty = min(tgt.exit_qty, t.remaining_qty)
+            is_final_pending_target = not any(x.status == "pending" and x.seq > tgt.seq for x in all_targets)
+            planned_qty = tgt.exit_qty
+            if is_final_pending_target:
+                planned_qty = max(planned_qty, t.remaining_qty)
+            qty = min(planned_qty, t.remaining_qty)
             ok, oid, msg = _place_exit(t, qty, f"t{tgt.seq}") if qty > 0 else (True, None, "ok")
             if not ok:
                 log_event(

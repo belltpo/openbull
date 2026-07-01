@@ -774,14 +774,15 @@ def _session_date_ist() -> str:
 
 
 def _assign_phase(db, user_id: int, underlying: str) -> tuple[str, int]:
-    """Return (phase_group, next_phase_no) for a (user, underlying, session).
+    """Return (phase_group, next_phase_no) for a (user, underlying).
 
-    The phase number increments 1,2,3… as positions close and reopen on the
-    same underlying within the same IST session.
+    The phase number increments 1,2,3... as positions close and reopen on the
+    same underlying. Phase display can still be filtered by date in the UI, but
+    numbering belongs to the symbol, not to the calendar day.
     """
-    group = f"{user_id}:{underlying}:{_session_date_ist()}"
+    group = f"{user_id}:{underlying}"
     max_no = db.execute(
-        select(func.max(FrTrade.phase_no)).where(FrTrade.phase_group == group)
+        select(func.max(FrTrade.phase_no)).where(FrTrade.user_id == user_id, FrTrade.underlying == underlying)
     ).scalar() or 0
     return group, int(max_no) + 1
 
@@ -1208,9 +1209,12 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
                 "phase_no": t.phase_no,
                 "status": t.status,
                 "option_symbol": t.option_symbol,
+                "option_exchange": t.option_exchange,
                 "side": t.side,
                 "option_type": t.option_type,
                 "lots": t.lots,
+                "lot_size": t.lot_size,
+                "total_qty": t.total_qty,
                 "entry_time": t.created_at.isoformat() if t.created_at else None,
                 "exit_time": t.closed_at.isoformat() if t.closed_at else None,
                 "entry_futures_price": t.entry_futures_price,
@@ -1219,6 +1223,7 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
                 "sl_basis": t.sl_basis,
                 "targets_total": len(tgts),
                 "targets_achieved": achieved,
+                "targets": [_target_row_to_dict(r) for r in tgts],
                 "realized_pnl": t.realized_pnl,
                 "remaining_qty": t.remaining_qty,
                 "duration_sec": (
