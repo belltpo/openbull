@@ -201,6 +201,7 @@ html[data-trading-mode="sandbox"] {
   }
   html {
     @apply font-sans;
+    font-size: 17px;
   }
 }
 
