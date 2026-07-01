@@ -10,6 +10,7 @@ the rest of OpenBull's symbology.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -513,14 +514,22 @@ def list_expiries(underlying: str, underlying_exchange: str = "NSE_INDEX") -> li
     with session_scope() as db:
         rows = db.execute(
             text(
-                "SELECT DISTINCT expiry FROM symtoken "
+                "SELECT symbol, expiry FROM symtoken "
                 "WHERE symbol LIKE :prefix AND exchange = :exch "
                 "AND instrumenttype IN ('CE','PE') AND expiry IS NOT NULL AND expiry != ''"
             ),
             {"prefix": f"{base}%", "exch": options_exchange},
         ).fetchall()
+    exact_pattern = re.compile(
+        rf"^{re.escape(base.upper())}\d{{2}}[A-Z]{{3}}\d{{2}}\d+(?:\.\d+)?(?:CE|PE)$"
+    )
+    expiries = {
+        exp
+        for sym, exp in rows
+        if sym and exp and exact_pattern.match(str(sym).upper())
+    }
     out: list[tuple[datetime, str]] = []
-    for (exp,) in rows:
+    for exp in expiries:
         try:
             d = datetime.strptime(exp, "%d-%b-%y")
         except (ValueError, TypeError):
