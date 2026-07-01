@@ -28,7 +28,7 @@ import {
   listExpiries,
   listStrikes,
   listSymbolMaps,
-  listTargets,
+  listTargetTemplates,
   placeTrade,
 } from "@/api/futuresRisk";
 import type { OptionType, PlaceTradePayload, Side } from "@/types/futuresRisk";
@@ -44,7 +44,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   const mapsQuery = useQuery({ queryKey: ["fr-symbol-maps"], queryFn: listSymbolMaps, enabled: open });
   const configQuery = useQuery({ queryKey: ["fr-config"], queryFn: getFrConfig, enabled: open });
-  const targetsQuery = useQuery({ queryKey: ["fr-targets"], queryFn: listTargets, enabled: open });
+  const templatesQuery = useQuery({ queryKey: ["fr-target-templates"], queryFn: listTargetTemplates, enabled: open });
 
   const underlyings = useMemo(
     () => (mapsQuery.data ?? []).filter((m) => m.enabled),
@@ -56,6 +56,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [strike, setStrike] = useState<number | "">("");
   const [lots, setLots] = useState(1);
   const [slPoints, setSlPoints] = useState<string>("");
+  const [targetTemplateId, setTargetTemplateId] = useState<number | null>(null);
   const [overrideTargets, setOverrideTargets] = useState(false);
   const [targetRows, setTargetRows] = useState<{ points: number; exit_pct: number }[]>([]);
   const [asDraft, setAsDraft] = useState(false);
@@ -77,13 +78,28 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     }
   }, [configQuery.data, slPoints]);
 
+  const templates = useMemo(
+    () => (templatesQuery.data ?? []).filter((t) => t.enabled),
+    [templatesQuery.data],
+  );
+  const selectedTemplate = useMemo(
+    () => templates.find((t) => t.id === targetTemplateId) ?? null,
+    [templates, targetTemplateId],
+  );
+
   useEffect(() => {
-    if (targetsQuery.data) {
-      setTargetRows(
-        targetsQuery.data.filter((t) => t.enabled).map((t) => ({ points: t.points, exit_pct: t.exit_pct })),
-      );
-    }
-  }, [targetsQuery.data]);
+    if (templates.length === 0) return;
+    if (targetTemplateId && templates.some((t) => t.id === targetTemplateId)) return;
+    const next = templates.find((t) => t.is_default) ?? templates[0];
+    setTargetTemplateId(next.id);
+  }, [templates, targetTemplateId]);
+
+  useEffect(() => {
+    if (!selectedTemplate || overrideTargets) return;
+    setTargetRows(
+      selectedTemplate.targets.filter((t) => t.enabled).map((t) => ({ points: t.points, exit_pct: t.exit_pct })),
+    );
+  }, [overrideTargets, selectedTemplate]);
 
   // Default the underlying to the first available.
   useEffect(() => {
@@ -177,6 +193,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
       strike: selectedStrike,
       sl_points: slPoints === "" ? null : Number(slPoints),
       targets: overrideTargets ? targetRows.filter((t) => t.points > 0) : null,
+      target_template_id: overrideTargets ? null : targetTemplateId,
     };
     mutation.mutate(payload);
   };
@@ -376,6 +393,24 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                   className="h-9 dark:[color-scheme:dark]"
                 />
               </Field>
+              <Field label="Target Template">
+                <Select
+                  value={targetTemplateId == null ? "" : String(targetTemplateId)}
+                  onValueChange={(v) => setTargetTemplateId(v ? Number(v) : null)}
+                  disabled={templates.length === 0 || overrideTargets}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={templatesQuery.isLoading ? "Loading..." : "Select"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templates.map((t) => (
+                      <SelectItem key={t.id} value={String(t.id)}>
+                        {t.name}{t.is_default ? " - default" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
               <div className="flex items-end">
                 <label className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-2.5 text-[11px] text-muted-foreground">
                   <span className="min-w-0 truncate">Draft only</span>
@@ -394,7 +429,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                     <span className="text-[10px] text-muted-foreground">points / % exit</span>
                   </div>
                   <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                    {targetSummary}
+                    {selectedTemplate && !overrideTargets ? `${selectedTemplate.name}: ${targetSummary}` : targetSummary}
                   </p>
                 </div>
                 <label className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -438,7 +473,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                 ))}
               </div>
             ) : targetRows.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground">No targets configured - add them in the admin panel.</p>
+              <p className="text-[11px] text-muted-foreground">No targets configured - add a target template in the admin panel.</p>
             ) : null}
           </div>
         </div>

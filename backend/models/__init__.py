@@ -16,6 +16,7 @@ from backend.models.strategy_module import (
 )
 from backend.models.futures_risk import (
     FrConfig,
+    FrTargetTemplate,
     FrTargetLevel,
     FrSymbolMap,
     FrTrade,
@@ -41,6 +42,7 @@ __all__ = [
     "SmWebhookEvent",
     "SmStrategyEvent",
     "FrConfig",
+    "FrTargetTemplate",
     "FrTargetLevel",
     "FrSymbolMap",
     "FrTrade",

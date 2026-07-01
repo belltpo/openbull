@@ -106,15 +106,28 @@ export interface ModifyTradePayload {
   // editable any time
   sl_points?: number;
   targets?: { points: number; exit_pct: number }[];
+  target_template_id?: number | null;
   trailing_mode?: TrailingMode;
 }
 
 export interface FrTemplateTarget {
   id: number;
+  template_id: number;
   seq: number;
   points: number;
   exit_pct: number;
   enabled: boolean;
+}
+
+export interface FrTargetTemplate {
+  id: number;
+  name: string;
+  description: string;
+  is_default: boolean;
+  enabled: boolean;
+  targets: FrTemplateTarget[];
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 export interface FrSymbolMap {
@@ -164,4 +177,5 @@ export interface PlaceTradePayload {
   offset?: string;
   sl_points?: number | null;
   targets?: { points: number; exit_pct: number }[] | null;
+  target_template_id?: number | null;
 }

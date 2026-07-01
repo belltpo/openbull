@@ -10,7 +10,8 @@ ownership, JSONB for flexible payloads, all in the same Postgres DB.
 Tables
 ------
 * ``fr_config``        — global admin key/value config (default SL, trailing, …)
-* ``fr_target_level``  — admin-editable target template rows (CRUD)
+* ``fr_target_template`` — named target templates (CRUD)
+* ``fr_target_level``  — target rows within each template (CRUD)
 * ``fr_symbol_map``    — underlying → futures-contract mapping (CRUD)
 * ``fr_trade``         — one placed option trade + its futures-risk plan
 * ``fr_trade_target``  — per-trade snapshot of each target level
@@ -51,13 +52,37 @@ class FrConfig(Base):
     )
 
 
+class FrTargetTemplate(Base):
+    """Named target template. Target rows are snapshotted onto a trade at
+    placement so later template edits never change live trades."""
+
+    __tablename__ = "fr_target_template"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(100), unique=True, nullable=False, index=True)
+    description = Column(String(500), nullable=True)
+    is_default = Column(Boolean, nullable=False, default=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("idx_fr_target_template_default", "is_default"),)
+
+
 class FrTargetLevel(Base):
-    """Admin target template. Each row is one target (T1, T2 …). Snapshotted
-    onto a trade at placement so later admin edits never change live trades."""
+    """One target row (T1, T2 …) inside a named template."""
 
     __tablename__ = "fr_target_level"
 
     id = Column(Integer, primary_key=True)
+    template_id = Column(
+        Integer,
+        ForeignKey("fr_target_template.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     seq = Column(Integer, nullable=False)  # 1-based target index (T1=1, T2=2, …)
     points = Column(Float, nullable=False)  # futures points from entry
     exit_pct = Column(Float, nullable=False, default=0.0)  # % of position to exit
@@ -66,7 +91,7 @@ class FrTargetLevel(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
-    __table_args__ = (Index("idx_fr_target_seq", "seq", unique=True),)
+    __table_args__ = (Index("idx_fr_target_template_seq", "template_id", "seq", unique=True),)
 
 
 class FrSymbolMap(Base):

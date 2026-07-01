@@ -11,6 +11,7 @@ import type {
   FrStrikes,
   FrPhase,
   FrSymbolMap,
+  FrTargetTemplate,
   FrTemplateTarget,
   FrTrade,
   ModifyTradePayload,
@@ -32,6 +33,33 @@ export async function setFrConfig(key: string, value: string): Promise<void> {
 }
 
 // ---- Target template ----
+export async function listTargetTemplates(): Promise<FrTargetTemplate[]> {
+  const r = await api.get<Wrapped<FrTargetTemplate[]>>("/web/fr/target-templates");
+  return r.data.data;
+}
+export async function createTargetTemplate(data: {
+  name: string;
+  description?: string | null;
+  enabled?: boolean;
+  is_default?: boolean;
+  targets?: { points: number; exit_pct: number; enabled?: boolean }[];
+}): Promise<FrTargetTemplate> {
+  const r = await api.post<Wrapped<FrTargetTemplate>>("/web/fr/target-templates", data);
+  return r.data.data;
+}
+export async function updateTargetTemplate(
+  id: number,
+  data: Partial<Pick<FrTargetTemplate, "name" | "description" | "enabled" | "is_default">> & {
+    targets?: { points: number; exit_pct: number; enabled?: boolean }[];
+  },
+): Promise<FrTargetTemplate> {
+  const r = await api.put<Wrapped<FrTargetTemplate>>(`/web/fr/target-templates/${id}`, data);
+  return r.data.data;
+}
+export async function deleteTargetTemplate(id: number): Promise<void> {
+  await api.delete(`/web/fr/target-templates/${id}`);
+}
+
 export async function listTargets(): Promise<FrTemplateTarget[]> {
   const r = await api.get<Wrapped<FrTemplateTarget[]>>("/web/fr/targets");
   return r.data.data;

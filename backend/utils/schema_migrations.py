@@ -62,6 +62,72 @@ def _add_index_if_missing(
     logger.info("Schema migration: created index %s on %s(%s)", index_name, table, col_list)
 
 
+def _migrate_fr_target_templates(engine: Engine) -> None:
+    insp = inspect(engine)
+    tables = set(insp.get_table_names())
+    if "fr_target_level" not in tables:
+        return
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS fr_target_template (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) NOT NULL UNIQUE,
+                    description VARCHAR(500),
+                    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                'CREATE INDEX IF NOT EXISTS "idx_fr_target_template_default" '
+                'ON "fr_target_template" ("is_default")'
+            )
+        )
+        default_id = conn.execute(
+            text("SELECT id FROM fr_target_template WHERE is_default = TRUE LIMIT 1")
+        ).scalar()
+        if default_id is None:
+            default_id = conn.execute(
+                text(
+                    "INSERT INTO fr_target_template (name, description, is_default, enabled) "
+                    "VALUES (:name, :description, TRUE, TRUE) RETURNING id"
+                ),
+                {
+                    "name": "Default",
+                    "description": "Default target plan migrated from the original target levels.",
+                },
+            ).scalar_one()
+
+        cols = {c["name"] for c in inspect(conn).get_columns("fr_target_level")}
+        if "template_id" not in cols:
+            conn.execute(text('ALTER TABLE "fr_target_level" ADD COLUMN "template_id" INTEGER'))
+        conn.execute(
+            text("UPDATE fr_target_level SET template_id = :tid WHERE template_id IS NULL"),
+            {"tid": default_id},
+        )
+        conn.execute(text('ALTER TABLE "fr_target_level" ALTER COLUMN "template_id" SET NOT NULL'))
+        conn.execute(text('DROP INDEX IF EXISTS "idx_fr_target_seq"'))
+        conn.execute(
+            text(
+                'CREATE INDEX IF NOT EXISTS "ix_fr_target_level_template_id" '
+                'ON "fr_target_level" ("template_id")'
+            )
+        )
+        conn.execute(
+            text(
+                'CREATE UNIQUE INDEX IF NOT EXISTS "idx_fr_target_template_seq" '
+                'ON "fr_target_level" ("template_id", "seq")'
+            )
+        )
+
+
 def run_startup_migrations() -> None:
     """Apply every pending in-place migration. Called from the app lifespan."""
     engine = create_engine(get_settings().sync_database_url, future=True)
@@ -123,6 +189,10 @@ def run_startup_migrations() -> None:
         _add_index_if_missing(
             engine, "fr_trade", "idx_fr_trade_phase_group", ["phase_group", "phase_no"]
         )
+
+        # Futures-Risk target templates: preserve the old global target list as
+        # the Default template, then scope target seq uniqueness per template.
+        _migrate_fr_target_templates(engine)
     except Exception:
         logger.exception("Startup schema migration failed")
     finally:

@@ -21,6 +21,7 @@ from backend.models.futures_risk import (
     FrConfig,
     FrSymbolMap,
     FrTargetLevel,
+    FrTargetTemplate,
     FrTrade,
     FrTradeEvent,
     FrTradeTarget,
@@ -67,9 +68,18 @@ def seed_defaults() -> None:
                 if key not in existing_keys:
                     db.add(FrConfig(key=key, value=value, description=desc, is_editable=editable))
 
+            default_template = _get_or_create_default_template(db)
             if db.execute(select(func.count(FrTargetLevel.id))).scalar() == 0:
                 for seq, points, pct in fr_defaults.TARGET_DEFAULTS:
-                    db.add(FrTargetLevel(seq=seq, points=points, exit_pct=pct, enabled=True))
+                    db.add(
+                        FrTargetLevel(
+                            template_id=default_template.id,
+                            seq=seq,
+                            points=points,
+                            exit_pct=pct,
+                            enabled=True,
+                        )
+                    )
 
             if db.execute(select(func.count(FrSymbolMap.id))).scalar() == 0:
                 for und, uexch, fexch, lot, auto in fr_defaults.SYMBOL_MAP_DEFAULTS:
@@ -133,22 +143,214 @@ def _bool_cfg(key: str, default: bool) -> bool:
 # Target template CRUD
 # ---------------------------------------------------------------------------
 
+def _get_or_create_default_template(db) -> FrTargetTemplate:
+    row = db.execute(
+        select(FrTargetTemplate).where(FrTargetTemplate.is_default == True)  # noqa: E712
+    ).scalar_one_or_none()
+    if row is not None:
+        return row
+    row = db.execute(select(FrTargetTemplate).order_by(FrTargetTemplate.id).limit(1)).scalar_one_or_none()
+    if row is not None:
+        row.is_default = True
+        row.enabled = True
+        db.flush()
+        return row
+    row = FrTargetTemplate(
+        name="Default",
+        description="Default target plan",
+        is_default=True,
+        enabled=True,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _set_default_template(db, template_id: int) -> None:
+    db.execute(text("UPDATE fr_target_template SET is_default = FALSE"))
+    row = db.get(FrTargetTemplate, template_id)
+    if row is not None:
+        row.is_default = True
+        row.enabled = True
+
+
+def _template_to_dict(r: FrTargetTemplate, targets: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    data = {
+        "id": r.id,
+        "name": r.name,
+        "description": r.description or "",
+        "is_default": r.is_default,
+        "enabled": r.enabled,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+    }
+    if targets is not None:
+        data["targets"] = targets
+    return data
+
+
 def _target_to_dict(r: FrTargetLevel) -> dict[str, Any]:
-    return {"id": r.id, "seq": r.seq, "points": r.points, "exit_pct": r.exit_pct, "enabled": r.enabled}
+    return {
+        "id": r.id,
+        "template_id": r.template_id,
+        "seq": r.seq,
+        "points": r.points,
+        "exit_pct": r.exit_pct,
+        "enabled": r.enabled,
+    }
 
 
-def list_targets(enabled_only: bool = False) -> list[dict[str, Any]]:
+def _targets_for_template(db, template_id: int, enabled_only: bool = False) -> list[dict[str, Any]]:
+    q = select(FrTargetLevel).where(FrTargetLevel.template_id == template_id).order_by(FrTargetLevel.seq)
+    if enabled_only:
+        q = q.where(FrTargetLevel.enabled == True)  # noqa: E712
+    return [_target_to_dict(r) for r in db.execute(q).scalars().all()]
+
+
+def list_target_templates(enabled_only: bool = False) -> list[dict[str, Any]]:
     with session_scope() as db:
-        q = select(FrTargetLevel).order_by(FrTargetLevel.seq)
+        _get_or_create_default_template(db)
+        q = select(FrTargetTemplate).order_by(FrTargetTemplate.is_default.desc(), FrTargetTemplate.name)
         if enabled_only:
-            q = q.where(FrTargetLevel.enabled == True)  # noqa: E712
-        return [_target_to_dict(r) for r in db.execute(q).scalars().all()]
+            q = q.where(FrTargetTemplate.enabled == True)  # noqa: E712
+        rows = db.execute(q).scalars().all()
+        return [_template_to_dict(r, _targets_for_template(db, r.id)) for r in rows]
 
 
-def create_target(points: float, exit_pct: float, enabled: bool = True) -> dict[str, Any]:
+def get_target_template(template_id: int | None = None) -> dict[str, Any] | None:
     with session_scope() as db:
-        max_seq = db.execute(select(func.max(FrTargetLevel.seq))).scalar() or 0
-        row = FrTargetLevel(seq=int(max_seq) + 1, points=float(points), exit_pct=float(exit_pct), enabled=bool(enabled))
+        row = _get_or_create_default_template(db) if template_id is None else db.get(FrTargetTemplate, template_id)
+        if row is None:
+            return None
+        return _template_to_dict(row, _targets_for_template(db, row.id))
+
+
+def _clean_template_targets(targets: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for i, t in enumerate(targets or [], start=1):
+        points = float(t.get("points", 0) or 0)
+        if points <= 0:
+            continue
+        exit_pct = float(t.get("exit_pct", 0) or 0)
+        if exit_pct < 0 or exit_pct > 100:
+            raise FrError("Target exit_pct must be between 0 and 100", 400)
+        out.append(
+            {
+                "seq": len(out) + 1,
+                "points": points,
+                "exit_pct": exit_pct,
+                "enabled": bool(t.get("enabled", True)),
+            }
+        )
+    return out
+
+
+def _replace_template_targets(db, template_id: int, targets: list[dict[str, Any]]) -> None:
+    db.execute(text("DELETE FROM fr_target_level WHERE template_id = :tid"), {"tid": template_id})
+    for row in _clean_template_targets(targets):
+        db.add(
+            FrTargetLevel(
+                template_id=template_id,
+                seq=row["seq"],
+                points=row["points"],
+                exit_pct=row["exit_pct"],
+                enabled=row["enabled"],
+            )
+        )
+
+
+def create_target_template(data: dict[str, Any]) -> dict[str, Any]:
+    name = str(data.get("name", "")).strip()
+    if not name:
+        raise FrError("Template name is required", 400)
+    targets = _clean_template_targets(data.get("targets") or [])
+    with session_scope() as db:
+        exists = db.execute(select(FrTargetTemplate).where(FrTargetTemplate.name == name)).scalar_one_or_none()
+        if exists is not None:
+            raise FrError(f"Target template '{name}' already exists", 409)
+        row = FrTargetTemplate(
+            name=name,
+            description=(data.get("description") or None),
+            enabled=bool(data.get("enabled", True)),
+            is_default=False,
+        )
+        db.add(row)
+        db.flush()
+        _replace_template_targets(db, row.id, targets)
+        if bool(data.get("is_default", False)):
+            _set_default_template(db, row.id)
+        db.flush()
+        return _template_to_dict(row, _targets_for_template(db, row.id))
+
+
+def update_target_template(template_id: int, data: dict[str, Any]) -> dict[str, Any] | None:
+    with session_scope() as db:
+        row = db.get(FrTargetTemplate, template_id)
+        if row is None:
+            return None
+        if "name" in data:
+            name = str(data["name"]).strip()
+            if not name:
+                raise FrError("Template name is required", 400)
+            duplicate = db.execute(
+                select(FrTargetTemplate).where(FrTargetTemplate.name == name, FrTargetTemplate.id != template_id)
+            ).scalar_one_or_none()
+            if duplicate is not None:
+                raise FrError(f"Target template '{name}' already exists", 409)
+            row.name = name
+        if "description" in data:
+            row.description = data["description"] or None
+        if "enabled" in data:
+            if row.is_default and not bool(data["enabled"]):
+                raise FrError("Default template cannot be disabled", 400)
+            row.enabled = bool(data["enabled"])
+        if "targets" in data and data["targets"] is not None:
+            _replace_template_targets(db, row.id, data["targets"])
+        if bool(data.get("is_default", False)):
+            _set_default_template(db, row.id)
+        db.flush()
+        return _template_to_dict(row, _targets_for_template(db, row.id))
+
+
+def delete_target_template(template_id: int) -> bool:
+    with session_scope() as db:
+        row = db.get(FrTargetTemplate, template_id)
+        if row is None:
+            return False
+        if row.is_default:
+            raise FrError("Default template cannot be deleted", 400)
+        enabled_count = db.execute(
+            select(func.count(FrTargetTemplate.id)).where(FrTargetTemplate.enabled == True)  # noqa: E712
+        ).scalar() or 0
+        if enabled_count <= 1 and row.enabled:
+            raise FrError("At least one enabled target template is required", 400)
+        db.delete(row)
+    return True
+
+
+def list_targets(enabled_only: bool = False, template_id: int | None = None) -> list[dict[str, Any]]:
+    with session_scope() as db:
+        template = _get_or_create_default_template(db) if template_id is None else db.get(FrTargetTemplate, template_id)
+        if template is None:
+            return []
+        return _targets_for_template(db, template.id, enabled_only=enabled_only)
+
+
+def create_target(points: float, exit_pct: float, enabled: bool = True, template_id: int | None = None) -> dict[str, Any]:
+    with session_scope() as db:
+        template = _get_or_create_default_template(db) if template_id is None else db.get(FrTargetTemplate, template_id)
+        if template is None:
+            raise FrError("Target template not found", 404)
+        max_seq = db.execute(
+            select(func.max(FrTargetLevel.seq)).where(FrTargetLevel.template_id == template.id)
+        ).scalar() or 0
+        row = FrTargetLevel(
+            template_id=template.id,
+            seq=int(max_seq) + 1,
+            points=float(points),
+            exit_pct=float(exit_pct),
+            enabled=bool(enabled),
+        )
         db.add(row)
         db.flush()
         return _target_to_dict(row)
@@ -174,11 +376,16 @@ def delete_target(target_id: int) -> bool:
         row = db.get(FrTargetLevel, target_id)
         if row is None:
             return False
+        template_id = row.template_id
         db.delete(row)
         db.flush()
         # Re-sequence remaining rows to stay contiguous (1..n). Two-phase to
         # avoid colliding with the unique index on seq.
-        remaining = db.execute(select(FrTargetLevel).order_by(FrTargetLevel.seq)).scalars().all()
+        remaining = db.execute(
+            select(FrTargetLevel)
+            .where(FrTargetLevel.template_id == template_id)
+            .order_by(FrTargetLevel.seq)
+        ).scalars().all()
         for i, r in enumerate(remaining, start=1):
             r.seq = 1000 + i
         db.flush()
@@ -474,6 +681,7 @@ def _normalise_params(params: dict[str, Any]) -> dict[str, Any]:
         "offset": params.get("offset") or "ATM",
         "sl_points": sl_points,
         "targets": params.get("targets") or None,
+        "target_template_id": int(params["target_template_id"]) if params.get("target_template_id") not in (None, "", 0, "0") else None,
     }
 
 
@@ -536,9 +744,9 @@ def _resolve_trade_plan(
             if float(t.get("points", 0)) > 0
         ]
     else:
-        template = list_targets(enabled_only=True)
+        template = list_targets(enabled_only=True, template_id=p.get("target_template_id"))
     if not template:
-        raise FrError("No targets configured. Add target levels in the admin panel.", 400)
+        raise FrError("No targets configured for the selected template.", 400)
     lot_size = int(opt["lotsize"] or 1)
     target_rows = _build_targets(entry_fut, direction, p["lots"], lot_size, template)
 
@@ -1107,7 +1315,7 @@ def manual_exit(
 # Fields that may only be changed while a position is a draft (pre-placement).
 _DRAFT_ONLY_FIELDS = {"underlying", "underlying_exchange", "option_type", "side", "expiry", "strike", "offset", "lots", "product"}
 # Fields editable at any time, including after placement.
-_LIVE_EDITABLE_FIELDS = {"sl_points", "targets", "trailing_mode"}
+_LIVE_EDITABLE_FIELDS = {"sl_points", "targets", "target_template_id", "trailing_mode"}
 
 
 def modify_trade(
@@ -1156,7 +1364,17 @@ def modify_trade(
                 t.meta = meta
                 changes.append(f"trailing→{fields['trailing_mode']}")
 
+            target_source = None
             if "targets" in fields and fields["targets"] is not None:
+                target_source = [
+                    {"seq": i + 1, "points": float(x["points"]), "exit_pct": float(x.get("exit_pct", 0))}
+                    for i, x in enumerate(fields["targets"])
+                    if float(x.get("points", 0)) > 0
+                ]
+            elif fields.get("target_template_id") is not None:
+                target_source = list_targets(enabled_only=True, template_id=int(fields["target_template_id"]))
+
+            if target_source is not None:
                 # Replace only the PENDING targets; keep already-hit ones intact.
                 hit = db.execute(
                     select(FrTradeTarget).where(
@@ -1168,7 +1386,7 @@ def modify_trade(
                 base_seq = len(hit)
                 template = [
                     {"seq": base_seq + i + 1, "points": float(x["points"]), "exit_pct": float(x.get("exit_pct", 0))}
-                    for i, x in enumerate(fields["targets"])
+                    for i, x in enumerate(target_source)
                     if float(x.get("points", 0)) > 0
                 ]
                 new_rows = _build_targets(t.entry_futures_price, t.direction, remaining_lots, t.lot_size, template)
@@ -1186,6 +1404,12 @@ def modify_trade(
             if not changes:
                 raise FrError("No editable fields provided", 400)
             t.modified_by = user_id
+            if fields.get("target_template_id") is not None:
+                meta = dict(t.meta or {})
+                params = dict(meta.get("params") or {})
+                params["target_template_id"] = int(fields["target_template_id"])
+                meta["params"] = params
+                t.meta = meta
             log_event(
                 db, trade_id=trade_id, user_id=user_id, kind="modified",
                 message="Modified active trade: " + "; ".join(changes), payload={"fields": list(fields)},

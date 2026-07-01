@@ -12,22 +12,22 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import {
+  createTargetTemplate,
   createSymbolMap,
-  createTarget,
+  deleteTargetTemplate,
   deleteSymbolMap,
-  deleteTarget,
   getFrConfig,
+  listTargetTemplates,
   listSymbolMaps,
-  listTargets,
   setFrConfig,
+  updateTargetTemplate,
   updateSymbolMap,
-  updateTarget,
 } from "@/api/futuresRisk";
-import type { FrSymbolMap, FrTemplateTarget } from "@/types/futuresRisk";
+import type { FrSymbolMap } from "@/types/futuresRisk";
 
 const inputCls =
   "h-8 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground outline-none transition focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25 dark:[color-scheme:dark]";
-const rowCls = "rounded-md border border-border/70 bg-card px-2.5 py-2";
+const rowCls = "rounded-md border border-border/70 bg-background/60 px-2.5 py-2";
 
 type SettingType = "bool" | "number" | "text" | "select";
 const SETTINGS: { key: string; label: string; type: SettingType; options?: string[] }[] = [
@@ -61,15 +61,15 @@ function AdminPanel({
   children: ReactNode;
 }) {
   return (
-    <Card className={cn("overflow-hidden border-border/70 shadow-sm", className)}>
-      <CardHeader className="flex flex-row items-start justify-between gap-3 border-b bg-muted/25 px-3 py-2.5 sm:px-4">
+    <Card className={cn("self-start overflow-hidden rounded-lg border-border/70 bg-card/95 shadow-sm", className)}>
+      <CardHeader className="flex flex-row items-start justify-between gap-3 border-b bg-muted/20 px-4 py-3">
         <div className="min-w-0">
           <CardTitle className="text-sm font-semibold tracking-tight">{title}</CardTitle>
           <CardDescription className="mt-0.5 text-xs leading-tight">{description}</CardDescription>
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </CardHeader>
-      <CardContent className={cn("space-y-2.5 p-2.5 sm:p-3", contentClassName)}>{children}</CardContent>
+      <CardContent className={cn("space-y-3 p-3.5", contentClassName)}>{children}</CardContent>
     </Card>
   );
 }
@@ -126,7 +126,6 @@ function DefaultOrderSetup() {
     <AdminPanel
       title="Default Order Setup"
       description="Controls what opens by default in the quick options order card."
-      className="h-full"
       action={
         <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
           <Save className="mr-1.5 h-4 w-4" /> Save
@@ -229,7 +228,6 @@ function RiskSettings() {
     <AdminPanel
       title="Risk Engine"
       description="Automation, trailing stop-loss behavior, and polling cadence."
-      className="h-full"
       action={
         <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
           <Save className="mr-1.5 h-4 w-4" /> Save
@@ -279,116 +277,215 @@ function RiskSettings() {
 }
 
 // ---------------------------------------------------------------------------
-// Target levels
+// Target templates
 // ---------------------------------------------------------------------------
 
 function TargetLevels() {
   const qc = useQueryClient();
-  const query = useQuery({ queryKey: ["fr-targets"], queryFn: listTargets });
-  const [rows, setRows] = useState<FrTemplateTarget[]>([]);
-  const [newPts, setNewPts] = useState("");
-  const [newPct, setNewPct] = useState("");
+  const query = useQuery({ queryKey: ["fr-target-templates"], queryFn: listTargetTemplates });
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [enabled, setEnabled] = useState(true);
+  const [isDefault, setIsDefault] = useState(false);
+  const [rows, setRows] = useState<{ points: number; exit_pct: number; enabled: boolean }[]>([]);
 
   useEffect(() => {
-    if (query.data) setRows(query.data);
-  }, [query.data]);
+    const templates = query.data ?? [];
+    if (templates.length === 0) return;
+    if (selectedId && templates.some((t) => t.id === selectedId)) return;
+    const preferred = templates.find((t) => t.is_default) ?? templates[0];
+    setSelectedId(preferred.id);
+  }, [query.data, selectedId]);
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["fr-targets"] });
+  const selected = useMemo(
+    () => (query.data ?? []).find((t) => t.id === selectedId) ?? null,
+    [query.data, selectedId],
+  );
+
+  useEffect(() => {
+    if (!selected) return;
+    setName(selected.name);
+    setDescription(selected.description ?? "");
+    setEnabled(selected.enabled);
+    setIsDefault(selected.is_default);
+    setRows(selected.targets.map((t) => ({ points: t.points, exit_pct: t.exit_pct, enabled: t.enabled })));
+  }, [selected]);
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["fr-target-templates"] });
+    qc.invalidateQueries({ queryKey: ["fr-targets"] });
+  };
   const onErr = (err: unknown) =>
     // @ts-expect-error axios error shape
     toast.error(String(err?.response?.data?.detail ?? "Failed"));
 
   const saveMut = useMutation({
-    mutationFn: (r: FrTemplateTarget) => updateTarget(r.id, { points: r.points, exit_pct: r.exit_pct, enabled: r.enabled }),
+    mutationFn: () => {
+      if (!selectedId) throw new Error("Select a target template first");
+      return updateTargetTemplate(selectedId, {
+        name,
+        description,
+        enabled,
+        is_default: isDefault,
+        targets: rows.filter((r) => r.points > 0),
+      });
+    },
     onSuccess: () => {
-      toast.success("Target updated");
+      toast.success("Target template saved");
       invalidate();
     },
     onError: onErr,
   });
   const delMut = useMutation({
-    mutationFn: (id: number) => deleteTarget(id),
+    mutationFn: (id: number) => deleteTargetTemplate(id),
     onSuccess: () => {
-      toast.success("Target removed");
+      toast.success("Template removed");
+      setSelectedId(null);
       invalidate();
     },
     onError: onErr,
   });
   const addMut = useMutation({
-    mutationFn: () => createTarget(Number(newPts), Number(newPct), true),
-    onSuccess: () => {
-      toast.success("Target added");
-      setNewPts("");
-      setNewPct("");
+    mutationFn: () =>
+      createTargetTemplate({
+        name: "New Template",
+        description: "",
+        enabled: true,
+        targets: [
+          { points: 50, exit_pct: 25, enabled: true },
+          { points: 100, exit_pct: 25, enabled: true },
+        ],
+      }),
+    onSuccess: (template) => {
+      toast.success("Template created");
+      setSelectedId(template.id);
       invalidate();
     },
     onError: onErr,
   });
 
+  const templates = query.data ?? [];
+  const totalExit = rows.reduce((sum, r) => sum + (r.enabled ? Number(r.exit_pct) || 0 : 0), 0);
+
   return (
     <AdminPanel
-      title="Target Levels"
-      description="Targets fire from futures-point movement; exit % is converted to whole lots."
-    >
-        <div className="hidden grid-cols-[2.5rem_1fr_1fr_auto_auto] items-center gap-2 px-1 text-[11px] text-muted-foreground sm:grid">
-          <span>T#</span>
-          <span>Points</span>
-          <span>Exit %</span>
-          <span>On</span>
-          <span></span>
-        </div>
-        {rows.map((r, i) => (
-          <div key={r.id} className={cn(rowCls, "grid grid-cols-2 items-end gap-2 sm:grid-cols-[2.5rem_1fr_1fr_auto_auto] sm:items-center")}>
-            <span className="col-span-2 text-sm font-semibold text-muted-foreground sm:col-span-1">T{i + 1}</span>
-            <div className="space-y-1 sm:space-y-0">
-              <Label className="text-[10px] text-muted-foreground sm:hidden">Points</Label>
-              <input
-                type="number"
-                className={inputCls}
-                value={r.points}
-                onChange={(e) =>
-                  setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, points: Number(e.target.value) } : x)))
-                }
-              />
-            </div>
-            <div className="space-y-1 sm:space-y-0">
-              <Label className="text-[10px] text-muted-foreground sm:hidden">Exit %</Label>
-              <input
-                type="number"
-                className={inputCls}
-                value={r.exit_pct}
-                onChange={(e) =>
-                  setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, exit_pct: Number(e.target.value) } : x)))
-                }
-              />
-            </div>
-            <label className="flex h-9 items-center justify-between rounded-md border border-input bg-background px-2 text-xs text-muted-foreground sm:w-16">
-              On
-              <Switch
-                checked={r.enabled}
-                onCheckedChange={(checked) => setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, enabled: checked } : x)))}
-              />
-            </label>
-            <div className="flex justify-end gap-1">
-              <Button size="xs" variant="outline" onClick={() => saveMut.mutate(r)}>
-                <Save className="h-3.5 w-3.5" />
-              </Button>
-              <Button size="xs" variant="ghost" onClick={() => delMut.mutate(r.id)}>
-                <Trash2 className="h-3.5 w-3.5" />
-              </Button>
-            </div>
-          </div>
-        ))}
-        {/* Add row */}
-        <div className={cn(rowCls, "grid grid-cols-2 items-end gap-2 border-dashed sm:grid-cols-[2.5rem_1fr_1fr_auto_auto] sm:items-center")}>
-          <span className="col-span-2 text-sm font-semibold text-muted-foreground sm:col-span-1">New</span>
-          <input type="number" placeholder="points" className={inputCls} value={newPts} onChange={(e) => setNewPts(e.target.value)} />
-          <input type="number" placeholder="% exit" className={inputCls} value={newPct} onChange={(e) => setNewPct(e.target.value)} />
-          <span className="hidden sm:block" />
-          <Button className="col-span-2 sm:col-span-1" size="sm" disabled={!newPts || !newPct || addMut.isPending} onClick={() => addMut.mutate()}>
-            <Plus className="mr-1.5 h-3.5 w-3.5" /> Add
+      title="Target Templates"
+      description="Create reusable target plans. New positions generate targets from the selected template."
+      contentClassName="space-y-3"
+      action={
+        <div className="flex gap-1.5">
+          <Button size="sm" variant="outline" onClick={() => addMut.mutate()} disabled={addMut.isPending}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> New
+          </Button>
+          <Button size="sm" onClick={() => saveMut.mutate()} disabled={!selectedId || saveMut.isPending}>
+            <Save className="mr-1.5 h-3.5 w-3.5" /> Save
           </Button>
         </div>
+      }
+    >
+      {templates.length === 0 ? (
+        <div className={cn(rowCls, "flex items-center justify-between gap-3")}>
+          <span className="text-sm text-muted-foreground">No target templates yet.</span>
+          <Button size="sm" onClick={() => addMut.mutate()} disabled={addMut.isPending}>
+            <Plus className="mr-1.5 h-3.5 w-3.5" /> Create
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="grid grid-cols-1 items-start gap-2 xl:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_auto]">
+            <div className={cn(rowCls, "space-y-1.5")}>
+              <Label className="text-xs font-medium text-muted-foreground">Template</Label>
+              <select className={inputCls} value={selectedId ?? ""} onChange={(e) => setSelectedId(Number(e.target.value))}>
+                {templates.map((t) => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}{t.is_default ? " (default)" : ""}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className={cn(rowCls, "space-y-1.5")}>
+              <Label className="text-xs font-medium text-muted-foreground">Name</Label>
+              <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className={cn(rowCls, "flex h-full min-h-[58px] items-center gap-4")}>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Switch checked={enabled} onCheckedChange={setEnabled} disabled={isDefault} />
+                Enabled
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Switch checked={isDefault} onCheckedChange={setIsDefault} />
+                Default
+              </label>
+            </div>
+          </div>
+
+          <div className={cn(rowCls, "space-y-1.5")}>
+            <Label className="text-xs font-medium text-muted-foreground">Description</Label>
+            <input
+              className={inputCls}
+              placeholder="Optional note for this target plan"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="outline">{rows.filter((r) => r.enabled).length} active target(s)</Badge>
+            <Badge variant={totalExit > 100 ? "destructive" : "outline"}>{totalExit}% planned exit</Badge>
+          </div>
+
+          <div className="hidden grid-cols-[3rem_minmax(120px,1fr)_minmax(100px,1fr)_4.5rem_2.25rem] items-center gap-2 rounded-md bg-muted/25 px-2 py-1.5 text-[11px] text-muted-foreground sm:grid">
+            <span>T#</span>
+            <span>Points</span>
+            <span>Exit %</span>
+            <span>On</span>
+            <span></span>
+          </div>
+          {rows.map((r, i) => (
+            <div key={i} className={cn(rowCls, "grid grid-cols-2 items-end gap-2 sm:grid-cols-[3rem_minmax(120px,1fr)_minmax(100px,1fr)_4.5rem_2.25rem] sm:items-center")}>
+              <span className="col-span-2 text-sm font-semibold text-muted-foreground sm:col-span-1">T{i + 1}</span>
+              <input
+                type="number"
+                min={0}
+                step="0.5"
+                className={inputCls}
+                value={r.points}
+                onChange={(e) => setRows((rs) => rs.map((x, idx) => (idx === i ? { ...x, points: Number(e.target.value) } : x)))}
+              />
+              <input
+                type="number"
+                min={0}
+                max={100}
+                className={inputCls}
+                value={r.exit_pct}
+                onChange={(e) => setRows((rs) => rs.map((x, idx) => (idx === i ? { ...x, exit_pct: Number(e.target.value) } : x)))}
+              />
+              <label className="flex h-8 items-center justify-center rounded-md border border-input bg-background px-2 text-xs text-muted-foreground">
+                <Switch checked={r.enabled} onCheckedChange={(checked) => setRows((rs) => rs.map((x, idx) => (idx === i ? { ...x, enabled: checked } : x)))} />
+              </label>
+              <div className="flex justify-end">
+                <Button size="xs" variant="ghost" onClick={() => setRows((rs) => rs.filter((_, idx) => idx !== i))}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+          <div className="flex flex-wrap justify-between gap-2">
+            <Button size="sm" variant="outline" onClick={() => setRows((rs) => [...rs, { points: 0, exit_pct: 0, enabled: true }])}>
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Target
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!selectedId || isDefault || delMut.isPending}
+              onClick={() => selectedId && delMut.mutate(selectedId)}
+            >
+              <Trash2 className="mr-1.5 h-3.5 w-3.5" /> Delete Template
+            </Button>
+          </div>
+        </>
+      )}
     </AdminPanel>
   );
 }
@@ -463,9 +560,10 @@ function SymbolMaps() {
     <AdminPanel
       title="Contract Mapping"
       description="Maps each underlying to the futures contract that drives stop-loss and target tracking."
+      contentClassName="p-0"
     >
-      <div className="scrollbar-hidden space-y-2 overflow-x-auto">
-        <div className={cn(headCls, "min-w-[760px] px-1 text-[11px] text-muted-foreground")}>
+      <div className="scrollbar-hidden overflow-x-auto">
+        <div className={cn(headCls, "min-w-[760px] border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground")}>
           <span>Underlying</span>
           <span>Spot exch</span>
           <span>Futures sym (manual)</span>
@@ -474,6 +572,7 @@ function SymbolMaps() {
           <span>On</span>
           <span></span>
         </div>
+        <div className="space-y-2 p-3.5">
         {rows.map((r) => (
           <div key={r.id} className={cn(headCls, rowCls, "min-w-[760px]")}>
             <input className={inputCls} value={r.underlying} onChange={(e) => setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, underlying: e.target.value.toUpperCase() } : x)))} />
@@ -502,7 +601,6 @@ function SymbolMaps() {
             </div>
           </div>
         ))}
-        {/* Add row */}
         <div className={cn(headCls, rowCls, "min-w-[760px] border-dashed")}>
           <input className={inputCls} placeholder="RELIANCE" value={draft.underlying ?? ""} onChange={(e) => setDraft((d) => ({ ...d, underlying: e.target.value.toUpperCase() }))} />
           <input className={inputCls} value={draft.underlying_exchange ?? ""} onChange={(e) => setDraft((d) => ({ ...d, underlying_exchange: e.target.value.toUpperCase() }))} />
@@ -518,6 +616,7 @@ function SymbolMaps() {
             <Plus className="mr-1.5 h-3.5 w-3.5" /> Add
           </Button>
         </div>
+        </div>
       </div>
     </AdminPanel>
   );
@@ -531,7 +630,7 @@ export default function FuturesRiskAdmin() {
   const { user } = useAuth();
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Futures-Risk Admin</h1>
@@ -552,11 +651,11 @@ export default function FuturesRiskAdmin() {
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1.25fr)_minmax(380px,0.75fr)]">
+          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.65fr)]">
             <DefaultOrderSetup />
             <RiskSettings />
           </div>
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(520px,0.95fr)_minmax(620px,1.05fr)]">
             <TargetLevels />
             <SymbolMaps />
           </div>

@@ -61,6 +61,7 @@ class TargetCreate(BaseModel):
     points: float = Field(..., gt=0)
     exit_pct: float = Field(..., ge=0, le=100)
     enabled: bool = True
+    template_id: int | None = None
 
 
 class TargetUpdate(BaseModel):
@@ -69,15 +70,80 @@ class TargetUpdate(BaseModel):
     enabled: bool | None = None
 
 
+class TargetTemplateTarget(BaseModel):
+    points: float = Field(..., gt=0)
+    exit_pct: float = Field(0, ge=0, le=100)
+    enabled: bool = True
+
+
+class TargetTemplateCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: str | None = Field(None, max_length=500)
+    enabled: bool = True
+    is_default: bool = False
+    targets: list[TargetTemplateTarget] = Field(default_factory=list)
+
+
+class TargetTemplateUpdate(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=100)
+    description: str | None = Field(None, max_length=500)
+    enabled: bool | None = None
+    is_default: bool | None = None
+    targets: list[TargetTemplateTarget] | None = None
+
+
+@router.get("/target-templates")
+async def get_target_templates(user: User = Depends(get_current_user)):
+    return {"status": "success", "data": fr.list_target_templates()}
+
+
+@router.post("/target-templates")
+async def add_target_template(payload: TargetTemplateCreate, user: User = Depends(get_current_user)):
+    _require_admin(user)
+    try:
+        return {"status": "success", "data": fr.create_target_template(payload.model_dump())}
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+
+
+@router.put("/target-templates/{template_id}")
+async def edit_target_template(template_id: int, payload: TargetTemplateUpdate, user: User = Depends(get_current_user)):
+    _require_admin(user)
+    try:
+        result = fr.update_target_template(template_id, payload.model_dump(exclude_none=True))
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Target template not found")
+    return {"status": "success", "data": result}
+
+
+@router.delete("/target-templates/{template_id}")
+async def remove_target_template(template_id: int, user: User = Depends(get_current_user)):
+    _require_admin(user)
+    try:
+        if not fr.delete_target_template(template_id):
+            raise HTTPException(status_code=404, detail="Target template not found")
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"status": "success"}
+
+
 @router.get("/targets")
-async def get_targets(user: User = Depends(get_current_user)):
-    return {"status": "success", "data": fr.list_targets()}
+async def get_targets(template_id: int | None = None, user: User = Depends(get_current_user)):
+    return {"status": "success", "data": fr.list_targets(template_id=template_id)}
 
 
 @router.post("/targets")
 async def add_target(payload: TargetCreate, user: User = Depends(get_current_user)):
     _require_admin(user)
-    return {"status": "success", "data": fr.create_target(payload.points, payload.exit_pct, payload.enabled)}
+    try:
+        return {
+            "status": "success",
+            "data": fr.create_target(payload.points, payload.exit_pct, payload.enabled, payload.template_id),
+        }
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
 
 
 @router.put("/targets/{target_id}")
@@ -210,6 +276,7 @@ class PlaceTrade(BaseModel):
     offset: str | None = "ATM"
     sl_points: float | None = None
     targets: list[TargetOverride] | None = None
+    target_template_id: int | None = None
 
 
 class ModifyTrade(BaseModel):
@@ -226,6 +293,7 @@ class ModifyTrade(BaseModel):
     # editable any time (incl. after placement)
     sl_points: float | None = Field(None, gt=0)
     targets: list[TargetOverride] | None = None
+    target_template_id: int | None = None
     trailing_mode: str | None = Field(None, pattern="^(entry_after_t1|prev_target|off)$")
 
 
