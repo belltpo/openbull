@@ -660,8 +660,10 @@ export default function FuturesRiskAdmin() {
               <DefaultOrderSetup />
               <RiskSettings />
             </div>
-            <TargetLevels />
-            <SymbolMaps />
+            <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+              <TargetLevels />
+              <SymbolMaps />
+            </div>
           </div>
         </>
       )}
