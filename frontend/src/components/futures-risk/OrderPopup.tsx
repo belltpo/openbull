@@ -47,6 +47,21 @@ function formatStrikeForSymbol(strike: number): string {
   return Number.isInteger(strike) ? String(strike) : String(strike).replace(/\.0+$/, "").replace(".", "");
 }
 
+function DragGrip() {
+  return (
+    <span
+      className="inline-flex h-5 w-9 items-center justify-center rounded-full border border-border/70 bg-muted/55 text-muted-foreground shadow-sm"
+      aria-hidden="true"
+    >
+      <span className="grid grid-cols-3 gap-0.5">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <span key={i} className="h-1 w-1 rounded-full bg-current opacity-75" />
+        ))}
+      </span>
+    </span>
+  );
+}
+
 function parseContractOrderDefaults(raw: string | undefined): Record<string, ContractOrderDefaults> {
   if (!raw) return {};
   try {
@@ -416,6 +431,14 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
           )}
           style={quickOrderPosition ? { left: quickOrderPosition.x, top: quickOrderPosition.y, transform: "none" } : undefined}
         >
+          <div
+            className="absolute left-1/2 top-2 z-10 -translate-x-1/2 cursor-move select-none"
+            onPointerDown={(event) => startPanelDrag("quick", event)}
+            title="Drag"
+            aria-label="Drag quick order"
+          >
+            <DragGrip />
+          </div>
           <div className="cursor-move select-none pr-16" onPointerDown={(event) => startPanelDrag("quick", event)}>
             <h2 className="text-base font-semibold tracking-tight">Quick Order</h2>
           </div>
@@ -511,6 +534,14 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
           )}
           style={settingsPosition ? { left: settingsPosition.x, top: settingsPosition.y, transform: "none" } : undefined}
         >
+          <div
+            className="absolute left-1/2 top-2 z-10 -translate-x-1/2 cursor-move select-none"
+            onPointerDown={(event) => startPanelDrag("settings", event)}
+            title="Drag"
+            aria-label="Drag quick order settings"
+          >
+            <DragGrip />
+          </div>
           <div className="scrollbar-hidden max-h-[92vh] space-y-4 overflow-y-auto overscroll-contain p-4 sm:p-5">
             <div className="space-y-1">
               <div className="flex items-center gap-2 pr-8">
