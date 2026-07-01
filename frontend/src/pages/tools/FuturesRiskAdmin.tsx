@@ -27,7 +27,7 @@ import type { FrSymbolMap } from "@/types/futuresRisk";
 
 const inputCls =
   "h-8 w-full rounded-md border border-input bg-background px-2 text-sm text-foreground outline-none transition focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25 dark:[color-scheme:dark]";
-const rowCls = "rounded-md border border-border/70 bg-background/60 px-2.5 py-2";
+const rowCls = "rounded-md border border-border/60 bg-background/50 px-2.5 py-2";
 
 type SettingType = "bool" | "number" | "text" | "select";
 const SETTINGS: { key: string; label: string; type: SettingType; options?: string[] }[] = [
@@ -62,14 +62,14 @@ function AdminPanel({
 }) {
   return (
     <Card className={cn("self-start overflow-hidden rounded-lg border-border/70 bg-card/95 shadow-sm", className)}>
-      <CardHeader className="flex flex-row items-start justify-between gap-3 border-b bg-muted/20 px-4 py-3">
+      <CardHeader className="flex flex-row items-start justify-between gap-3 border-b bg-muted/15 px-4 py-3">
         <div className="min-w-0">
           <CardTitle className="text-sm font-semibold tracking-tight">{title}</CardTitle>
           <CardDescription className="mt-0.5 text-xs leading-tight">{description}</CardDescription>
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </CardHeader>
-      <CardContent className={cn("space-y-3 p-3.5", contentClassName)}>{children}</CardContent>
+      <CardContent className={cn("space-y-3 p-4", contentClassName)}>{children}</CardContent>
     </Card>
   );
 }
@@ -132,8 +132,8 @@ function DefaultOrderSetup() {
         </Button>
       }
     >
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 2xl:grid-cols-5">
-        <div className={cn(rowCls, "space-y-1.5 sm:col-span-2 2xl:col-span-2")}>
+      <div className="grid grid-cols-1 gap-3">
+        <div className="space-y-1.5">
           <Label className="text-xs font-medium text-muted-foreground">Default Contract</Label>
           <select
             className={inputCls}
@@ -149,7 +149,8 @@ function DefaultOrderSetup() {
           </select>
         </div>
 
-        <div className={cn(rowCls, "space-y-1.5")}>
+        <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
           <Label className="text-xs font-medium text-muted-foreground">Default Lots</Label>
           <input
             type="number"
@@ -160,7 +161,7 @@ function DefaultOrderSetup() {
           />
         </div>
 
-        <div className={cn(rowCls, "space-y-1.5")}>
+        <div className="space-y-1.5">
           <Label className="text-xs font-medium text-muted-foreground">Default SL Points</Label>
           <input
             type="number"
@@ -171,8 +172,9 @@ function DefaultOrderSetup() {
             onChange={(e) => setLocal((p) => ({ ...p, default_sl_points: e.target.value }))}
           />
         </div>
+        </div>
 
-        <div className={cn(rowCls, "space-y-1.5")}>
+        <div className="space-y-1.5">
           <Label className="text-xs font-medium text-muted-foreground">Default Product</Label>
           <input
             className={cn(inputCls, "uppercase")}
@@ -234,9 +236,9 @@ function RiskSettings() {
         </Button>
       }
     >
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3">
           {SETTINGS.map((s) => (
-            <div key={s.key} className={cn(rowCls, "space-y-1.5")}>
+            <div key={s.key} className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <Label className="truncate text-xs font-medium text-muted-foreground">{s.label}</Label>
                 {s.type === "bool" ? (
@@ -393,8 +395,8 @@ function TargetLevels() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-1 items-start gap-2 xl:grid-cols-[minmax(220px,1fr)_minmax(220px,1fr)_auto]">
-            <div className={cn(rowCls, "space-y-1.5")}>
+          <div className="grid grid-cols-1 items-start gap-3 xl:grid-cols-[320px_minmax(0,1fr)_auto]">
+            <div className="space-y-1.5">
               <Label className="text-xs font-medium text-muted-foreground">Template</Label>
               <select className={inputCls} value={selectedId ?? ""} onChange={(e) => setSelectedId(Number(e.target.value))}>
                 {templates.map((t) => (
@@ -404,11 +406,11 @@ function TargetLevels() {
                 ))}
               </select>
             </div>
-            <div className={cn(rowCls, "space-y-1.5")}>
+            <div className="space-y-1.5">
               <Label className="text-xs font-medium text-muted-foreground">Name</Label>
               <input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} />
             </div>
-            <div className={cn(rowCls, "flex h-full min-h-[58px] items-center gap-4")}>
+            <div className="flex h-full min-h-[52px] items-end gap-4 pb-1">
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Switch checked={enabled} onCheckedChange={setEnabled} disabled={isDefault} />
                 Enabled
@@ -420,7 +422,7 @@ function TargetLevels() {
             </div>
           </div>
 
-          <div className={cn(rowCls, "space-y-1.5")}>
+          <div className="space-y-1.5">
             <Label className="text-xs font-medium text-muted-foreground">Description</Label>
             <input
               className={inputCls}
@@ -435,7 +437,7 @@ function TargetLevels() {
             <Badge variant={totalExit > 100 ? "destructive" : "outline"}>{totalExit}% planned exit</Badge>
           </div>
 
-          <div className="hidden grid-cols-[3rem_minmax(120px,1fr)_minmax(100px,1fr)_4.5rem_2.25rem] items-center gap-2 rounded-md bg-muted/25 px-2 py-1.5 text-[11px] text-muted-foreground sm:grid">
+          <div className="hidden grid-cols-[3rem_minmax(140px,1fr)_minmax(120px,1fr)_4rem_2.25rem] items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground sm:grid">
             <span>T#</span>
             <span>Points</span>
             <span>Exit %</span>
@@ -443,7 +445,7 @@ function TargetLevels() {
             <span></span>
           </div>
           {rows.map((r, i) => (
-            <div key={i} className={cn(rowCls, "grid grid-cols-2 items-end gap-2 sm:grid-cols-[3rem_minmax(120px,1fr)_minmax(100px,1fr)_4.5rem_2.25rem] sm:items-center")}>
+            <div key={i} className="grid grid-cols-2 items-end gap-2 rounded-md border border-border/50 bg-background/50 px-2 py-2 sm:grid-cols-[3rem_minmax(140px,1fr)_minmax(120px,1fr)_4rem_2.25rem] sm:items-center">
               <span className="col-span-2 text-sm font-semibold text-muted-foreground sm:col-span-1">T{i + 1}</span>
               <input
                 type="number"
@@ -554,7 +556,7 @@ function SymbolMaps() {
     onError: onErr,
   });
 
-  const headCls = "grid grid-cols-[1.4fr_1.4fr_1.4fr_1fr_.8fr_.8fr_auto] items-center gap-1.5";
+  const headCls = "grid grid-cols-[1.1fr_1.1fr_1.4fr_.8fr_4.5rem_4.5rem_4.25rem] items-center gap-2";
 
   return (
     <AdminPanel
@@ -563,7 +565,7 @@ function SymbolMaps() {
       contentClassName="p-0"
     >
       <div className="scrollbar-hidden overflow-x-auto">
-        <div className={cn(headCls, "min-w-[760px] border-b bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground")}>
+        <div className={cn(headCls, "min-w-[860px] border-b bg-muted/20 px-4 py-2 text-[11px] text-muted-foreground")}>
           <span>Underlying</span>
           <span>Spot exch</span>
           <span>Futures sym (manual)</span>
@@ -572,9 +574,9 @@ function SymbolMaps() {
           <span>On</span>
           <span></span>
         </div>
-        <div className="space-y-2 p-3.5">
+        <div className="space-y-2 p-4">
         {rows.map((r) => (
-          <div key={r.id} className={cn(headCls, rowCls, "min-w-[760px]")}>
+          <div key={r.id} className={cn(headCls, "min-w-[860px] rounded-md border border-border/50 bg-background/50 px-2.5 py-2")}>
             <input className={inputCls} value={r.underlying} onChange={(e) => setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, underlying: e.target.value.toUpperCase() } : x)))} />
             <input className={inputCls} value={r.underlying_exchange} onChange={(e) => setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, underlying_exchange: e.target.value.toUpperCase() } : x)))} />
             <input
@@ -601,7 +603,7 @@ function SymbolMaps() {
             </div>
           </div>
         ))}
-        <div className={cn(headCls, rowCls, "min-w-[760px] border-dashed")}>
+        <div className={cn(headCls, "min-w-[860px] rounded-md border border-dashed border-border/70 bg-muted/10 px-2.5 py-2")}>
           <input className={inputCls} placeholder="RELIANCE" value={draft.underlying ?? ""} onChange={(e) => setDraft((d) => ({ ...d, underlying: e.target.value.toUpperCase() }))} />
           <input className={inputCls} value={draft.underlying_exchange ?? ""} onChange={(e) => setDraft((d) => ({ ...d, underlying_exchange: e.target.value.toUpperCase() }))} />
           <input className={cn(inputCls, draft.auto_resolve && "opacity-50")} disabled={draft.auto_resolve} placeholder={draft.auto_resolve ? "(auto)" : "FUT symbol"} value={draft.futures_symbol ?? ""} onChange={(e) => setDraft((d) => ({ ...d, futures_symbol: e.target.value.toUpperCase() }))} />
@@ -630,7 +632,7 @@ export default function FuturesRiskAdmin() {
   const { user } = useAuth();
 
   return (
-    <div className="space-y-4">
+    <div className="mx-auto w-full max-w-[1500px] space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Futures-Risk Admin</h1>
@@ -651,13 +653,15 @@ export default function FuturesRiskAdmin() {
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(420px,0.65fr)]">
-            <DefaultOrderSetup />
-            <RiskSettings />
-          </div>
-          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[minmax(520px,0.95fr)_minmax(620px,1.05fr)]">
-            <TargetLevels />
-            <SymbolMaps />
+          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)] 2xl:grid-cols-[400px_minmax(0,1fr)]">
+            <div className="space-y-4">
+              <DefaultOrderSetup />
+              <RiskSettings />
+            </div>
+            <div className="space-y-4">
+              <TargetLevels />
+              <SymbolMaps />
+            </div>
           </div>
         </>
       )}
