@@ -44,7 +44,7 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
 
   steps.push({
     key: "placed",
-    label: "Order Placed",
+    label: "Placed",
     state: "done",
     tone: "neutral",
     icon: <ClipboardCheck className="h-3.5 w-3.5" />,
@@ -121,24 +121,24 @@ export function PositionTimeline({ trade, liveOpt }: { trade: FrTrade; liveOpt?:
     <div className="flex items-start gap-0 overflow-x-auto pb-1">
       {steps.map((step, index) => (
         <div key={step.key} className="flex min-w-0 items-start">
-          <div className="flex w-[5.25rem] flex-col items-center text-center sm:w-24">
+          <div className="flex w-[3.9rem] flex-col items-center text-center sm:w-[4.35rem]">
             <div
               className={cn(
-                "flex h-7 w-7 items-center justify-center rounded-full border transition-colors",
+                "flex h-6 w-6 items-center justify-center rounded-full border transition-colors",
                 step.state === "todo" ? toneRing.muted : toneRing[step.tone],
                 step.state === "current" && "fr-dot-live",
               )}
             >
               {step.icon}
             </div>
-            <span className="mt-1 line-clamp-2 min-h-6 text-[11px] font-semibold leading-tight text-foreground/85">
+            <span className="mt-1 line-clamp-1 text-[10px] font-semibold leading-tight text-foreground/85">
               {step.label}
             </span>
-            {step.futures && <span className="text-[10px] tabular-nums text-muted-foreground">{step.futures}</span>}
-            {step.option && <span className="text-[10px] tabular-nums text-muted-foreground">{step.option}</span>}
+            {step.futures && <span className="text-[9px] tabular-nums text-muted-foreground">{step.futures}</span>}
+            {step.option && <span className="text-[9px] tabular-nums text-muted-foreground">{step.option}</span>}
           </div>
           {index < steps.length - 1 && (
-            <div className={cn("mt-3.5 h-0.5 w-4 shrink-0 rounded-full sm:w-6", connectorClass(step, steps[index + 1]))} />
+            <div className={cn("mt-3 h-0.5 w-2 shrink-0 rounded-full sm:w-3", connectorClass(step, steps[index + 1]))} />
           )}
         </div>
       ))}

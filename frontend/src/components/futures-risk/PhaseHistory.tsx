@@ -295,7 +295,7 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
       {groups.length === 0 ? (
         <p className="text-sm text-muted-foreground">No phase history for the selected date range.</p>
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 min-[1700px]:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {groups.map(([symbol, phases]) => {
             const allInstrumentPhases = allBySymbol.get(symbol) ?? phases;
             const totalMtm = allInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);

@@ -42,7 +42,7 @@ interface Props {
 
 function Metric({ label, value, tone, sub }: { label: string; value: React.ReactNode; tone?: "good" | "bad"; sub?: React.ReactNode }) {
   return (
-    <div className="min-w-0">
+    <div className="min-w-0 rounded-lg border border-border/60 bg-background/45 px-2.5 py-2">
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p
         className={cn(
@@ -205,31 +205,29 @@ export function PositionCard({
       </div>
 
       {/* Futures vs Option live comparison */}
-      <div className="mt-3 grid grid-cols-2 gap-3 rounded-xl bg-foreground/[0.03] p-3">
-        <div className="space-y-2">
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="min-w-0 rounded-lg border border-border/60 bg-background/45 px-2.5 py-2">
           <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             {buy ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />} Futures
           </p>
-          <Metric
-            label="Live"
-            value={fmt(liveFut)}
-            sub={futDelta !== null ? <span className={futDelta >= 0 ? "text-emerald-600" : "text-red-600"}>{signed(futDelta)} vs entry</span> : `entry ${fmt(trade.entry_futures_price)}`}
-          />
+          <p className="mt-1 truncate text-sm font-semibold tabular-nums">{fmt(liveFut)}</p>
+          <p className="truncate text-[10px] tabular-nums text-muted-foreground">
+            {futDelta !== null ? <span className={futDelta >= 0 ? "text-emerald-600" : "text-red-600"}>{signed(futDelta)} vs entry</span> : `entry ${fmt(trade.entry_futures_price)}`}
+          </p>
         </div>
-        <div className="space-y-2">
+        <div className="min-w-0 rounded-lg border border-border/60 bg-background/45 px-2.5 py-2">
           <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             <Activity className="h-3 w-3" /> Option premium
           </p>
-          <Metric
-            label="Live"
-            value={fmt(liveOpt)}
-            sub={optDelta !== null ? <span className={optDelta >= 0 ? "text-emerald-600" : "text-red-600"}>{signed(optDelta)} vs entry</span> : `entry ${fmt(trade.entry_option_price)}`}
-          />
+          <p className="mt-1 truncate text-sm font-semibold tabular-nums">{fmt(liveOpt)}</p>
+          <p className="truncate text-[10px] tabular-nums text-muted-foreground">
+            {optDelta !== null ? <span className={optDelta >= 0 ? "text-emerald-600" : "text-red-600"}>{signed(optDelta)} vs entry</span> : `entry ${fmt(trade.entry_option_price)}`}
+          </p>
         </div>
       </div>
 
       {/* P&L + SL + qty */}
-      <div className="mt-3 grid grid-cols-3 gap-3">
+      <div className="mt-2 grid grid-cols-3 gap-2">
         <Metric
           label={isActive ? "Total P&L" : "Realized P&L"}
           value={`₹${fmt(pnl)}`}

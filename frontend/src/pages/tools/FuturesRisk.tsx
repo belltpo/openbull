@@ -303,7 +303,7 @@ export default function FuturesRisk() {
               </Button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 min-[1700px]:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
               {positionGroups.map(([symbol, symbolTrades]) => {
                 const instrumentTrades = allByInstrument.get(symbol) ?? symbolTrades;
                 const phaseTrades = instrumentTrades.filter((trade) => trade.phase_no > 0);
