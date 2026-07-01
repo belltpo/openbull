@@ -558,7 +558,7 @@ function SymbolMaps() {
     onError: onErr,
   });
 
-  const headCls = "grid grid-cols-[1.1fr_1.1fr_1.4fr_.8fr_4.5rem_4.5rem_4.25rem] items-center gap-2";
+  const headCls = "grid grid-cols-[1.15fr_minmax(160px,1.45fr)_0.75fr_4.25rem_4.25rem_4.5rem] items-center gap-2";
 
   return (
     <AdminPanel
@@ -567,9 +567,8 @@ function SymbolMaps() {
       contentClassName="p-0"
     >
       <div className="scrollbar-hidden overflow-x-auto">
-        <div className={cn(headCls, "min-w-[860px] border-b bg-muted/20 px-4 py-2 text-[11px] text-muted-foreground")}>
+        <div className={cn(headCls, "min-w-[680px] border-b bg-muted/20 px-4 py-2 text-[11px] text-muted-foreground")}>
           <span>Underlying</span>
-          <span>Spot exch</span>
           <span>Futures sym (manual)</span>
           <span>Fut exch</span>
           <span>Auto</span>
@@ -578,9 +577,8 @@ function SymbolMaps() {
         </div>
         <div className="space-y-2 p-4">
         {rows.map((r) => (
-          <div key={r.id} className={cn(headCls, "min-w-[860px] rounded-md border border-border/50 bg-background/50 px-2.5 py-2")}>
+          <div key={r.id} className={cn(headCls, "min-w-[680px] rounded-md border border-border/50 bg-background/50 px-2.5 py-2")}>
             <input className={inputCls} value={r.underlying} onChange={(e) => setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, underlying: e.target.value.toUpperCase() } : x)))} />
-            <input className={inputCls} value={r.underlying_exchange} onChange={(e) => setRows((rs) => rs.map((x) => (x.id === r.id ? { ...x, underlying_exchange: e.target.value.toUpperCase() } : x)))} />
             <input
               className={cn(inputCls, r.auto_resolve && "opacity-50")}
               placeholder={r.auto_resolve ? "(auto)" : "FUT symbol"}
@@ -605,9 +603,8 @@ function SymbolMaps() {
             </div>
           </div>
         ))}
-        <div className={cn(headCls, "min-w-[860px] rounded-md border border-dashed border-border/70 bg-muted/10 px-2.5 py-2")}>
+        <div className={cn(headCls, "min-w-[680px] rounded-md border border-dashed border-border/70 bg-muted/10 px-2.5 py-2")}>
           <input className={inputCls} placeholder="RELIANCE" value={draft.underlying ?? ""} onChange={(e) => setDraft((d) => ({ ...d, underlying: e.target.value.toUpperCase() }))} />
-          <input className={inputCls} value={draft.underlying_exchange ?? ""} onChange={(e) => setDraft((d) => ({ ...d, underlying_exchange: e.target.value.toUpperCase() }))} />
           <input className={cn(inputCls, draft.auto_resolve && "opacity-50")} disabled={draft.auto_resolve} placeholder={draft.auto_resolve ? "(auto)" : "FUT symbol"} value={draft.futures_symbol ?? ""} onChange={(e) => setDraft((d) => ({ ...d, futures_symbol: e.target.value.toUpperCase() }))} />
           <input className={inputCls} value={draft.futures_exchange ?? ""} onChange={(e) => setDraft((d) => ({ ...d, futures_exchange: e.target.value.toUpperCase() }))} />
           <div className="flex justify-center">
