@@ -295,15 +295,15 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
 
   return (
     <div className="space-y-4">
-      <div className="fr-glass fr-dark-surface flex flex-col gap-3 rounded-xl border border-border/70 p-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap gap-1.5">
           {(["today", "week", "month", "custom"] as DateFilter[]).map((f) => (
             <button
               key={f}
               onClick={() => setFilter(f)}
               className={cn(
-                "rounded-full px-3.5 py-1.5 text-sm font-semibold capitalize transition-colors",
-                filter === f ? "bg-primary text-primary-foreground" : "bg-foreground/[0.05] text-muted-foreground hover:text-foreground",
+                "rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors",
+                filter === f ? "bg-primary text-primary-foreground shadow" : "bg-foreground/[0.05] text-muted-foreground hover:bg-foreground/10",
               )}
             >
               {f === "week" ? "Week" : f === "month" ? "Month" : f}
