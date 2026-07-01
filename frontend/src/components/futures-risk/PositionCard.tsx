@@ -247,7 +247,7 @@ export function PositionCard({
 
       {/* Timeline */}
       <div className="mt-3 border-t border-border/60 pt-3">
-        <PositionTimeline trade={trade} />
+        <PositionTimeline trade={trade} liveOpt={liveOpt} />
       </div>
 
       {/* Actions */}

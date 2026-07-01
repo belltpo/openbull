@@ -103,33 +103,12 @@ def _place_exit(trade: FrTrade, qty: int, reason: str) -> tuple[bool, str | None
 # Trailing
 # ---------------------------------------------------------------------------
 
-def _apply_trailing(trade: FrTrade, all_targets: list[FrTradeTarget], hit_seq: int) -> None:
-    """Move the SL after a target is hit, per the configured trailing mode."""
-    if not fr_service._bool_cfg("trailing_enabled", True):
+def _apply_trailing(trade: FrTrade, hit_seq: int) -> None:
+    """After the first target, entry is the stop-loss for remaining quantity."""
+    if hit_seq < 1:
         return
-    # Per-trade override (set via modify); falls back to the global config.
-    mode = (trade.meta or {}).get("trailing_mode") or fr_service.get_config_value("trailing_mode", "entry_after_t1")
-    if mode == "off":
-        return
-
-    new_price: float | None = None
-    basis = trade.sl_basis
-    if mode == "entry_after_t1":
-        # After the first target, lock to cost-to-cost (entry futures price).
-        new_price = trade.entry_futures_price
-        basis = "entry"
-    elif mode == "prev_target":
-        if hit_seq <= 1:
-            new_price = trade.entry_futures_price
-            basis = "entry"
-        else:
-            prev = next((t for t in all_targets if t.seq == hit_seq - 1), None)
-            if prev is not None:
-                new_price = prev.trigger_price
-                basis = f"target{hit_seq - 1}"
-
-    if new_price is None:
-        return
+    new_price = trade.entry_futures_price
+    basis = "entry"
     # Only ever tighten in the favourable direction (never loosen the SL).
     improved = (
         (trade.direction == 1 and new_price > trade.sl_price)
@@ -242,7 +221,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                 payload={"futures_price": fut, "seq": tgt.seq, "exit_order_id": oid, "qty": qty, "exit_option_price": exit_px, "pnl": pnl_inc},
             )
             prev_sl = t.sl_price
-            _apply_trailing(t, all_targets, tgt.seq)
+            _apply_trailing(t, tgt.seq)
             if t.sl_price != prev_sl:
                 log_event(
                     db, trade_id=t.id, user_id=user_id, kind="sl_trail",

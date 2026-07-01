@@ -1,106 +1,144 @@
 /**
  * Visual lifecycle timeline for a Futures-Risk position:
- *   Created → Order Executed → Target 1 → Break-Even → Target 2 → … → Closed
- * Nodes light up as each milestone is reached.
+ * Order Placed -> Stoploss -> Entry -> Target 1 -> Target 2 -> ... -> Closed.
+ * Targets are rendered from the per-trade snapshot created at order placement.
  */
-import { Check, Circle, Flag, Play, ShieldCheck, Target, X } from "lucide-react";
+import { Check, Circle, ClipboardCheck, Play, Shield, Target, X } from "lucide-react";
+
 import { cn } from "@/lib/utils";
 import type { FrTrade } from "@/types/futuresRisk";
 
 type StepState = "done" | "current" | "todo" | "failed";
+type StepTone = "neutral" | "red" | "blue" | "green" | "muted";
 
 interface Step {
   key: string;
   label: string;
   state: StepState;
+  tone: StepTone;
   icon: React.ReactNode;
-  sub?: string;
+  futures?: string;
+  option?: string;
 }
 
-function buildSteps(trade: FrTrade): Step[] {
+function fmt(value: number | null | undefined, digits = 2): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "--";
+  return value.toLocaleString("en-IN", { maximumFractionDigits: digits });
+}
+
+function optLine(liveOpt: number | undefined): string {
+  return `Opt LTP ${fmt(liveOpt)}`;
+}
+
+function initialSlPrice(trade: FrTrade): number {
+  return trade.entry_futures_price - trade.direction * trade.sl_points;
+}
+
+function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
   const steps: Step[] = [];
   const placed = trade.status !== "draft";
   const closed = ["completed", "stopped", "cancelled"].includes(trade.status);
   const stopped = trade.status === "stopped";
+  const t1Hit = trade.targets.some((t) => t.seq === 1 && t.status === "hit");
+  const nextPendingSeq = trade.targets.find((t) => t.status === "pending")?.seq ?? null;
 
-  steps.push({ key: "created", label: "Created", state: "done", icon: <Flag className="h-3.5 w-3.5" /> });
   steps.push({
-    key: "executed",
-    label: placed ? "Executed" : "Pending",
-    state: placed ? "done" : "current",
-    icon: <Play className="h-3.5 w-3.5" />,
-    sub: placed ? `@ ${trade.entry_futures_price}` : "draft",
+    key: "placed",
+    label: "Order Placed",
+    state: "done",
+    tone: "neutral",
+    icon: <ClipboardCheck className="h-3.5 w-3.5" />,
   });
 
-  // Break-even activates once the SL has trailed off its initial price.
-  const breakevenOn = trade.sl_basis !== "initial";
-  let breakevenInserted = false;
+  steps.push({
+    key: "initial-sl",
+    label: t1Hit ? "Initial SL" : "Stoploss",
+    state: t1Hit ? "done" : stopped ? "failed" : placed ? "current" : "todo",
+    tone: t1Hit ? "muted" : "red",
+    icon: <Shield className="h-3.5 w-3.5" />,
+    futures: `Fut ${fmt(t1Hit ? initialSlPrice(trade) : trade.sl_price)}`,
+    option: optLine(liveOpt),
+  });
 
-  trade.targets.forEach((t) => {
-    const hit = t.status === "hit";
+  steps.push({
+    key: "entry",
+    label: t1Hit ? "Stoploss" : placed ? "Entry" : "Entry Pending",
+    state: t1Hit && !closed ? "current" : placed ? "done" : "current",
+    tone: t1Hit ? "red" : "blue",
+    icon: <Play className="h-3.5 w-3.5" />,
+    futures: placed ? `Fut ${fmt(trade.entry_futures_price)}` : "Draft",
+    option: optLine(liveOpt),
+  });
+
+  trade.targets.forEach((target) => {
+    const hit = target.status === "hit";
     steps.push({
-      key: `t${t.seq}`,
-      label: `Target ${t.seq}`,
-      state: hit ? "done" : closed ? "todo" : "current",
+      key: `t${target.seq}`,
+      label: `Target ${target.seq}`,
+      state: hit ? "done" : closed ? "todo" : target.seq === nextPendingSeq ? "current" : "todo",
+      tone: "green",
       icon: <Target className="h-3.5 w-3.5" />,
-      sub: `${t.trigger_price}`,
+      futures: `Fut ${fmt(target.trigger_price)}`,
+      option: optLine(liveOpt),
     });
-    // Insert the Break-Even node right after Target 1.
-    if (t.seq === 1 && !breakevenInserted) {
-      breakevenInserted = true;
-      steps.push({
-        key: "breakeven",
-        label: "Break-Even",
-        state: breakevenOn ? "done" : hit ? "current" : "todo",
-        icon: <ShieldCheck className="h-3.5 w-3.5" />,
-        sub: breakevenOn ? `SL ${trade.sl_price}` : undefined,
-      });
-    }
   });
 
   steps.push({
     key: "closed",
     label: stopped ? "Stopped" : closed ? "Closed" : "Open",
     state: stopped ? "failed" : closed ? "done" : "todo",
-    icon: stopped ? <X className="h-3.5 w-3.5" /> : closed ? <Check className="h-3.5 w-3.5" /> : <Circle className="h-3.5 w-3.5" />,
+    tone: stopped ? "red" : closed ? "green" : "muted",
+    icon: stopped ? (
+      <X className="h-3.5 w-3.5" />
+    ) : closed ? (
+      <Check className="h-3.5 w-3.5" />
+    ) : (
+      <Circle className="h-3.5 w-3.5" />
+    ),
   });
 
   return steps;
 }
 
-const stateRing: Record<StepState, string> = {
-  done: "border-emerald-400/60 bg-emerald-400/15 text-emerald-600 dark:text-emerald-300",
-  current: "border-primary/60 bg-primary/15 text-primary",
-  todo: "border-border bg-muted/40 text-muted-foreground",
-  failed: "border-red-400/60 bg-red-400/15 text-red-600 dark:text-red-300",
+const toneRing: Record<StepTone, string> = {
+  neutral: "border-emerald-400/60 bg-emerald-400/15 text-emerald-600 dark:text-emerald-300",
+  red: "border-red-400/70 bg-red-400/15 text-red-600 dark:text-red-300",
+  blue: "border-sky-400/70 bg-sky-400/15 text-sky-600 dark:text-sky-300",
+  green: "border-emerald-400/70 bg-emerald-400/15 text-emerald-600 dark:text-emerald-300",
+  muted: "border-border bg-muted/40 text-muted-foreground",
 };
 
-export function PositionTimeline({ trade }: { trade: FrTrade }) {
-  const steps = buildSteps(trade);
+function connectorClass(left: Step, right: Step): string {
+  if (left.state === "failed" || right.state === "failed") return "bg-red-400/45";
+  if (left.state === "done" || right.state === "done") return "bg-emerald-400/50";
+  return "bg-border";
+}
+
+export function PositionTimeline({ trade, liveOpt }: { trade: FrTrade; liveOpt?: number }) {
+  const steps = buildSteps(trade, liveOpt);
+
   return (
     <div className="flex items-start gap-0 overflow-x-auto pb-1">
-      {steps.map((s, i) => (
-        <div key={s.key} className="flex min-w-0 items-start">
-          <div className="flex w-16 flex-col items-center text-center sm:w-[4.5rem]">
+      {steps.map((step, index) => (
+        <div key={step.key} className="flex min-w-0 items-start">
+          <div className="flex w-[5.25rem] flex-col items-center text-center sm:w-24">
             <div
               className={cn(
                 "flex h-7 w-7 items-center justify-center rounded-full border transition-colors",
-                stateRing[s.state],
-                s.state === "current" && "fr-dot-live",
+                step.state === "todo" ? toneRing.muted : toneRing[step.tone],
+                step.state === "current" && "fr-dot-live",
               )}
             >
-              {s.icon}
+              {step.icon}
             </div>
-            <span className="mt-1 line-clamp-1 text-[10px] font-medium text-foreground/80">{s.label}</span>
-            {s.sub && <span className="text-[9px] tabular-nums text-muted-foreground">{s.sub}</span>}
+            <span className="mt-1 line-clamp-2 min-h-6 text-[11px] font-semibold leading-tight text-foreground/85">
+              {step.label}
+            </span>
+            {step.futures && <span className="text-[10px] tabular-nums text-muted-foreground">{step.futures}</span>}
+            {step.option && <span className="text-[10px] tabular-nums text-muted-foreground">{step.option}</span>}
           </div>
-          {i < steps.length - 1 && (
-            <div
-              className={cn(
-                "mt-3.5 h-0.5 w-4 shrink-0 rounded-full sm:w-6",
-                steps[i + 1].state === "done" || s.state === "done" ? "bg-emerald-400/50" : "bg-border",
-              )}
-            />
+          {index < steps.length - 1 && (
+            <div className={cn("mt-3.5 h-0.5 w-4 shrink-0 rounded-full sm:w-6", connectorClass(step, steps[index + 1]))} />
           )}
         </div>
       ))}
