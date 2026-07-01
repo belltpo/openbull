@@ -251,9 +251,32 @@ html[data-trading-mode="sandbox"] {
     opacity: 0.8;
   }
   .fr-grid-bg {
+    background-color: color-mix(in oklch, var(--background) 96%, var(--card));
     background-image:
       radial-gradient(circle at 1px 1px, color-mix(in oklch, var(--foreground) 7%, transparent) 1px, transparent 0);
     background-size: 22px 22px;
+  }
+  .dark .fr-grid-bg {
+    background-color: oklch(0.105 0.004 255);
+    background-image:
+      radial-gradient(circle at 1px 1px, color-mix(in oklch, white 10%, transparent) 1px, transparent 0),
+      linear-gradient(180deg, color-mix(in oklch, var(--card) 38%, transparent), transparent 360px);
+  }
+  .dark .fr-glass {
+    background:
+      linear-gradient(180deg, color-mix(in oklch, white 5%, transparent), transparent 72%),
+      color-mix(in oklch, var(--card) 76%, black 24%);
+    border-color: color-mix(in oklch, white 14%, transparent);
+    box-shadow:
+      0 1px 0 0 color-mix(in oklch, white 8%, transparent) inset,
+      0 18px 42px -22px black,
+      0 0 0 1px color-mix(in oklch, black 35%, transparent);
+  }
+  .dark .fr-glass-strong {
+    background:
+      linear-gradient(180deg, color-mix(in oklch, white 7%, transparent), transparent 70%),
+      color-mix(in oklch, var(--card) 88%, black 12%);
+    border-color: color-mix(in oklch, white 16%, transparent);
   }
 }
 

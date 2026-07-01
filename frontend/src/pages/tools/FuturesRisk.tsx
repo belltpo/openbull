@@ -35,7 +35,7 @@ function HeroStat({
   accent?: string;
 }) {
   return (
-    <div className="fr-glass fr-edge-glow relative overflow-hidden rounded-2xl p-4">
+    <div className="fr-glass fr-edge-glow relative overflow-hidden rounded-2xl p-4 dark:bg-white/[0.045]">
       <div className="flex items-center justify-between">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
         <span className={cn("flex h-7 w-7 items-center justify-center rounded-lg bg-foreground/[0.05]", accent)}>{icon}</span>
@@ -65,7 +65,7 @@ function InstrumentStat({
   icon?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-card/55 p-3 text-right">
+    <div className="rounded-xl border border-border/60 bg-card/55 p-3 text-right dark:border-white/10 dark:bg-white/[0.04]">
       <div className="flex items-center justify-between gap-2 text-[11px] uppercase text-muted-foreground">
         <span className="flex items-center gap-1">{icon}{label}</span>
       </div>
@@ -322,7 +322,7 @@ export default function FuturesRisk() {
                 const pnlTone = instrumentPnl >= 0 ? "good" : "bad";
 
                 return (
-                  <section key={symbol} className="fr-glass h-fit rounded-2xl border border-border/70 p-4">
+                  <section key={symbol} className="fr-glass h-fit rounded-2xl border border-border/70 p-4 dark:border-white/[0.12] dark:bg-white/[0.035]">
                     <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                       <div className="min-w-0">
                         <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
