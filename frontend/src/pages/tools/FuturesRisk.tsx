@@ -15,7 +15,7 @@ import { PositionCard } from "@/components/futures-risk/PositionCard";
 import { ModifyPositionDialog } from "@/components/futures-risk/ModifyPositionDialog";
 import { ExitDialog } from "@/components/futures-risk/ExitDialog";
 import { PhaseHistory } from "@/components/futures-risk/PhaseHistory";
-import { fmt, livePnl } from "@/components/futures-risk/frFormat";
+import { fmt, livePnl, totalPnl } from "@/components/futures-risk/frFormat";
 import { makeFuturesRiskDemoData } from "@/components/futures-risk/demoData";
 
 const STATUS_FILTERS = ["active", "draft", "all", "completed", "stopped"] as const;
@@ -53,6 +53,35 @@ function HeroStat({
   );
 }
 
+function InstrumentStat({
+  label,
+  value,
+  tone,
+  icon,
+}: {
+  label: string;
+  value: string;
+  tone?: "good" | "bad";
+  icon?: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/55 p-3 text-right">
+      <div className="flex items-center justify-between gap-2 text-[11px] uppercase text-muted-foreground">
+        <span className="flex items-center gap-1">{icon}{label}</span>
+      </div>
+      <p
+        className={cn(
+          "mt-1.5 text-sm font-bold tabular-nums",
+          tone === "good" && "text-emerald-600 dark:text-emerald-400",
+          tone === "bad" && "text-red-600 dark:text-red-400",
+        )}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
 export default function FuturesRisk() {
   const { user } = useAuth();
   const qc = useQueryClient();
@@ -77,11 +106,20 @@ export default function FuturesRisk() {
     ? demoData.trades.filter((trade) => statusFilter === "all" || trade.status === statusFilter)
     : tradesQuery.data ?? [];
 
+  const allTradesQuery = useQuery({
+    queryKey: ["fr-trades", "all"],
+    queryFn: () => listTrades("all"),
+    refetchInterval: 4000,
+    enabled: !demoEnabled,
+  });
+  const allTrades = demoEnabled ? demoData.trades : allTradesQuery.data ?? (statusFilter === "all" ? trades : []);
+
   // Subscribe to every active trade's futures + option symbol.
   const subscriptionSymbols = useMemo(() => {
     const seen = new Set<string>();
     const out: Array<{ symbol: string; exchange: string }> = [];
-    for (const t of trades) {
+    const liveTrades = [...trades, ...allTrades].filter((t, index, arr) => arr.findIndex((item) => item.id === t.id) === index);
+    for (const t of liveTrades) {
       if (t.status !== "active" && t.status !== "draft") continue;
       for (const pair of [
         { symbol: t.futures_symbol, exchange: t.futures_exchange },
@@ -95,7 +133,7 @@ export default function FuturesRisk() {
       }
     }
     return out;
-  }, [trades]);
+  }, [trades, allTrades]);
 
   const { data: tickMap } = useMarketData({
     symbols: subscriptionSymbols,
@@ -139,6 +177,29 @@ export default function FuturesRisk() {
     [trades, tickMap],
   );
   const realizedTotal = useMemo(() => trades.reduce((a, t) => a + (t.realized_pnl ?? 0), 0), [trades]);
+  const positionGroups = useMemo(() => {
+    const map = new Map<string, FrTrade[]>();
+    for (const trade of trades) {
+      if (!map.has(trade.underlying)) map.set(trade.underlying, []);
+      map.get(trade.underlying)!.push(trade);
+    }
+    for (const group of map.values()) {
+      group.sort((a, b) => b.phase_no - a.phase_no || String(b.created_at).localeCompare(String(a.created_at)));
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+  }, [trades]);
+
+  const allByInstrument = useMemo(() => {
+    const map = new Map<string, FrTrade[]>();
+    for (const trade of allTrades) {
+      if (!map.has(trade.underlying)) map.set(trade.underlying, []);
+      map.get(trade.underlying)!.push(trade);
+    }
+    for (const group of map.values()) {
+      group.sort((a, b) => a.phase_no - b.phase_no || String(a.created_at).localeCompare(String(b.created_at)));
+    }
+    return map;
+  }, [allTrades]);
   const demoOnly = () => toast.info("Demo data only - no broker action sent");
   const toggleDemo = () => {
     const next = new URLSearchParams(searchParams);
@@ -242,36 +303,88 @@ export default function FuturesRisk() {
               </Button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-              {trades.map((t) => (
-                <PositionCard
-                  key={t.id}
-                  trade={t}
-                  liveFut={ltpOf(t.futures_symbol, t.futures_exchange)}
-                  liveOpt={ltpOf(t.option_symbol, t.option_exchange)}
-                  onModify={(tr) => (demoEnabled ? demoOnly() : setModifyTarget(tr))}
-                  enableRemoteDetail={!demoEnabled}
-                  onExit={(tr) => {
-                    if (demoEnabled) {
-                      demoOnly();
-                    } else {
-                      setExitMode("full");
-                      setExitTarget(tr);
-                    }
-                  }}
-                  onEmergency={(tr) => {
-                    if (demoEnabled) {
-                      demoOnly();
-                    } else {
-                      setExitMode("emergency");
-                      setExitTarget(tr);
-                    }
-                  }}
-                  onPlaceDraft={(id) => (demoEnabled ? demoOnly() : placeMutation.mutate(id))}
-                  onDelete={(id) => (demoEnabled ? demoOnly() : deleteMutation.mutate(id))}
-                  busy={placeMutation.isPending || deleteMutation.isPending}
-                />
-              ))}
+            <div className="space-y-4">
+              {positionGroups.map(([symbol, symbolTrades]) => {
+                const instrumentTrades = allByInstrument.get(symbol) ?? symbolTrades;
+                const phaseTrades = instrumentTrades.filter((trade) => trade.phase_no > 0);
+                const instrumentPnl = phaseTrades.reduce(
+                  (sum, trade) =>
+                    sum +
+                    (trade.status === "active"
+                      ? totalPnl(trade, ltpOf(trade.option_symbol, trade.option_exchange))
+                      : trade.realized_pnl ?? 0),
+                  0,
+                );
+                const bookedPnl = phaseTrades.reduce((sum, trade) => sum + (trade.realized_pnl ?? 0), 0);
+                const targetsHit = phaseTrades.reduce((sum, trade) => sum + trade.targets.filter((target) => target.status === "hit").length, 0);
+                const targetsTotal = phaseTrades.reduce((sum, trade) => sum + trade.targets.length, 0);
+                const activePhases = phaseTrades.filter((trade) => trade.status === "active").length;
+                const pnlTone = instrumentPnl >= 0 ? "good" : "bad";
+
+                return (
+                  <section key={symbol} className="fr-glass rounded-2xl border border-border/70 p-4">
+                    <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                      <div className="min-w-0">
+                        <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Showing {symbolTrades.length} of {instrumentTrades.length} position(s)
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] xl:items-start">
+                      <div className="grid min-w-0 grid-cols-1 gap-3">
+                        {symbolTrades.map((t) => {
+                          const previousTrades = phaseTrades.filter((item) => item.phase_no > 0 && item.phase_no < t.phase_no);
+                          return (
+                            <PositionCard
+                              key={t.id}
+                              trade={t}
+                              liveFut={ltpOf(t.futures_symbol, t.futures_exchange)}
+                              liveOpt={ltpOf(t.option_symbol, t.option_exchange)}
+                              previousTrades={previousTrades}
+                              liveOptFor={(item) => ltpOf(item.option_symbol, item.option_exchange)}
+                              onModify={(tr) => (demoEnabled ? demoOnly() : setModifyTarget(tr))}
+                              enableRemoteDetail={!demoEnabled}
+                              onExit={(tr) => {
+                                if (demoEnabled) {
+                                  demoOnly();
+                                } else {
+                                  setExitMode("full");
+                                  setExitTarget(tr);
+                                }
+                              }}
+                              onEmergency={(tr) => {
+                                if (demoEnabled) {
+                                  demoOnly();
+                                } else {
+                                  setExitMode("emergency");
+                                  setExitTarget(tr);
+                                }
+                              }}
+                              onPlaceDraft={(id) => (demoEnabled ? demoOnly() : placeMutation.mutate(id))}
+                              onDelete={(id) => (demoEnabled ? demoOnly() : deleteMutation.mutate(id))}
+                              busy={placeMutation.isPending || deleteMutation.isPending}
+                            />
+                          );
+                        })}
+                      </div>
+
+                      <aside className="grid grid-cols-2 gap-2 text-sm xl:grid-cols-1">
+                        <InstrumentStat
+                          icon={<TrendingUp className="h-3 w-3" />}
+                          label="Overall Instrument P&L"
+                          value={`Rs. ${fmt(instrumentPnl)}`}
+                          tone={pnlTone}
+                        />
+                        <InstrumentStat label="Booked P&L" value={`Rs. ${fmt(bookedPnl)}`} tone={bookedPnl >= 0 ? "good" : "bad"} />
+                        <InstrumentStat label="Targets" value={`${targetsHit}/${targetsTotal}`} />
+                        <InstrumentStat label="Active Phases" value={String(activePhases)} />
+                      </aside>
+                    </div>
+                  </section>
+                );
+              })}
             </div>
           )}
         </>

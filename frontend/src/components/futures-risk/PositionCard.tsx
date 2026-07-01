@@ -29,6 +29,8 @@ interface Props {
   trade: FrTrade;
   liveFut: number | undefined;
   liveOpt: number | undefined;
+  previousTrades?: FrTrade[];
+  liveOptFor?: (trade: FrTrade) => number | undefined;
   onModify: (t: FrTrade) => void;
   onExit: (t: FrTrade) => void;
   onEmergency: (t: FrTrade) => void;
@@ -52,6 +54,43 @@ function Metric({ label, value, tone, sub }: { label: string; value: React.React
         {value}
       </p>
       {sub && <p className="truncate text-[10px] tabular-nums text-muted-foreground">{sub}</p>}
+    </div>
+  );
+}
+
+function PreviousPhaseCard({ trade, liveOpt }: { trade: FrTrade; liveOpt: number | undefined }) {
+  const sm = statusMeta(trade.status);
+  const pnl = trade.status === "active" ? totalPnl(trade, liveOpt) : trade.realized_pnl;
+  const hitCount = trade.targets.filter((t) => t.status === "hit").length;
+
+  return (
+    <div className="min-w-0 rounded-xl border border-border/60 bg-background/45 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="flex items-center gap-1 text-sm font-semibold">
+              <Layers className="h-3.5 w-3.5" /> Phase {trade.phase_no}
+            </span>
+            <span className={cn("rounded-md border px-1.5 py-0.5 text-xs font-semibold", sm.pill)}>{sm.label}</span>
+          </div>
+          <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{trade.option_symbol}</p>
+        </div>
+        <p
+          className={cn(
+            "text-sm font-bold tabular-nums",
+            pnl >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+          )}
+        >
+          Rs. {fmt(pnl)}
+        </p>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <Metric label="Entry" value={fmt(trade.entry_futures_price)} sub={`Option Rs. ${fmt(trade.entry_option_price)}`} />
+        <Metric label="Stop-Loss" value={fmt(trade.sl_price)} sub={trade.sl_basis} />
+        <Metric label="Targets" value={`${hitCount}/${trade.targets.length}`} sub={`${trade.remaining_qty}/${trade.total_qty} qty`} />
+        <Metric label="Duration" value={durationFmt(trade.duration_sec)} sub={`${timeFmt(trade.created_at)} -> ${trade.closed_at ? timeFmt(trade.closed_at) : "open"}`} />
+      </div>
     </div>
   );
 }
@@ -104,6 +143,8 @@ export function PositionCard({
   trade,
   liveFut,
   liveOpt,
+  previousTrades = [],
+  liveOptFor,
   onModify,
   onExit,
   onEmergency,
@@ -278,6 +319,20 @@ export function PositionCard({
             <p className="text-muted-foreground">No events yet.</p>
           )}
         </div>
+      )}
+
+      {previousTrades.length > 0 && (
+        <details className="mt-3 rounded-xl border border-border/70 bg-background/30">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <span>Earlier phases for this instrument ({previousTrades.length})</span>
+            <ChevronDown className="h-3.5 w-3.5" />
+          </summary>
+          <div className="grid grid-cols-1 gap-2 border-t border-border/70 p-2 2xl:grid-cols-2">
+            {previousTrades.map((item) => (
+              <PreviousPhaseCard key={item.id} trade={item} liveOpt={liveOptFor?.(item)} />
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );
