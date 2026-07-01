@@ -3,7 +3,7 @@
  */
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, Clock, Layers, Shield, Target, TrendingUp } from "lucide-react";
+import { CalendarDays, ChevronDown, Clock, Layers, Shield, Target, TrendingUp } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { listPhases } from "@/api/futuresRisk";
@@ -70,7 +70,47 @@ function Metric({
   );
 }
 
-function PhaseCard({ phase, liveOpt }: { phase: FrPhase; liveOpt: number | undefined }) {
+function PreviousPhaseRow({ phase, liveOpt }: { phase: FrPhase; liveOpt: number | undefined }) {
+  const mtm = phaseMtm(phase, liveOpt);
+  const pnlTone = mtm >= 0 ? "text-emerald-500" : "text-red-500";
+  const completedTargets = phase.targets.filter((t) => t.status === "hit").length;
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-background/45 p-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1 text-xs font-semibold">
+            <Layers className="h-3 w-3" /> Phase {phase.phase_no}
+          </span>
+          <span className="rounded-md bg-foreground/10 px-1.5 py-0.5 text-[10px] font-semibold capitalize text-muted-foreground">
+            {phase.status}
+          </span>
+        </div>
+        <span className={cn("text-xs font-bold tabular-nums", pnlTone)}>Rs. {fmt(mtm)}</span>
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] lg:grid-cols-4">
+        <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} />
+        <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} />
+        <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={`${phase.remaining_qty}/${phase.total_qty} qty`} />
+        <Metric label="Duration" value={durationFmt(phase.duration_sec)} sub={`${timeFmt(phase.entry_time)} -> ${phase.exit_time ? timeFmt(phase.exit_time) : "open"}`} />
+      </div>
+    </div>
+  );
+}
+
+function PhaseCard({
+  phase,
+  liveOpt,
+  previousPhases = [],
+  liveOptFor,
+  className,
+}: {
+  phase: FrPhase;
+  liveOpt: number | undefined;
+  previousPhases?: FrPhase[];
+  liveOptFor?: (phase: FrPhase) => number | undefined;
+  className?: string;
+}) {
   const mtm = phaseMtm(phase, liveOpt);
   const pnlTone = mtm >= 0 ? "text-emerald-500" : "text-red-500";
   const statusTone =
@@ -82,7 +122,7 @@ function PhaseCard({ phase, liveOpt }: { phase: FrPhase; liveOpt: number | undef
   const completedTargets = phase.targets.filter((t) => t.status === "hit").length;
 
   return (
-    <div className="fr-glass rounded-xl border border-border/70 p-3">
+    <div className={cn("rounded-xl border border-border/70 bg-background/35 p-3", className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -130,6 +170,20 @@ function PhaseCard({ phase, liveOpt }: { phase: FrPhase; liveOpt: number | undef
             </div>
           ))}
         </div>
+      )}
+
+      {previousPhases.length > 0 && (
+        <details className="mt-3 rounded-lg border border-border/70 bg-background/30">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+            <span>Earlier phases for this instrument ({previousPhases.length})</span>
+            <ChevronDown className="h-3.5 w-3.5" />
+          </summary>
+          <div className="space-y-2 border-t border-border/70 p-2">
+            {previousPhases.map((p) => (
+              <PreviousPhaseRow key={p.trade_id} phase={p} liveOpt={liveOptFor?.(p)} />
+            ))}
+          </div>
+        </details>
       )}
     </div>
   );
@@ -189,6 +243,18 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filtered]);
 
+  const allBySymbol = useMemo(() => {
+    const map = new Map<string, FrPhase[]>();
+    for (const p of allPhases) {
+      if (!map.has(p.underlying)) map.set(p.underlying, []);
+      map.get(p.underlying)!.push(p);
+    }
+    for (const arr of map.values()) {
+      arr.sort((a, b) => a.phase_no - b.phase_no || String(a.entry_time).localeCompare(String(b.entry_time)));
+    }
+    return map;
+  }, [allPhases]);
+
   const liveOpt = (p: FrPhase): number | undefined => tickMap.get(`${p.option_exchange}:${p.option_symbol}`)?.data.ltp;
 
   return (
@@ -222,31 +288,44 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
         <p className="text-sm text-muted-foreground">No phase history for the selected date range.</p>
       ) : (
         groups.map(([symbol, phases]) => {
-          const totalMtm = phases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
-          const realized = phases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
-          const active = phases.filter((p) => p.status === "active").length;
-          const targetsHit = phases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
-          const targetsTotal = phases.reduce((sum, p) => sum + p.targets_total, 0);
+          const allInstrumentPhases = allBySymbol.get(symbol) ?? phases;
+          const totalMtm = allInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
+          const realized = allInstrumentPhases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
+          const active = allInstrumentPhases.filter((p) => p.status === "active").length;
+          const targetsHit = allInstrumentPhases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
+          const targetsTotal = allInstrumentPhases.reduce((sum, p) => sum + p.targets_total, 0);
           const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
 
           return (
-            <section key={symbol} className="space-y-3">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <section key={symbol} className="fr-glass space-y-4 rounded-2xl border border-border/70 p-4">
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(180px,0.45fr)_minmax(0,1fr)] xl:items-end">
                 <div>
-                  <h3 className="text-lg font-bold tracking-tight">{symbol}</h3>
-                  <p className="text-xs text-muted-foreground">{phases.length} phase(s) in selected range</p>
+                  <h3 className="text-xl font-bold tracking-tight">{symbol}</h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Showing {phases.length} of {allInstrumentPhases.length} phase(s)
+                  </p>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-right text-xs sm:grid-cols-4">
+                <div className="grid grid-cols-2 gap-2 text-right text-xs lg:grid-cols-4">
                   <Metric label="Overall Instrument MTM" value={`Rs. ${fmt(totalMtm)}`} icon={<TrendingUp className="h-3 w-3" />} valueClassName={totalTone} />
                   <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} />
                   <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} />
                   <Metric label="Active Phases" value={String(active)} />
                 </div>
               </div>
-              <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
-                {phases.map((p) => (
-                  <PhaseCard key={p.trade_id} phase={p} liveOpt={liveOpt(p)} />
-                ))}
+              <div className="grid grid-cols-1 gap-3">
+                {phases.map((p) => {
+                  const previousPhases = allInstrumentPhases.filter((item) => item.phase_no < p.phase_no);
+                  return (
+                    <PhaseCard
+                      key={p.trade_id}
+                      phase={p}
+                      liveOpt={liveOpt(p)}
+                      previousPhases={previousPhases}
+                      liveOptFor={liveOpt}
+                      className="bg-card/60"
+                    />
+                  );
+                })}
               </div>
             </section>
           );

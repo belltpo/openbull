@@ -1159,6 +1159,20 @@ def _event_to_dict(e: FrTradeEvent) -> dict[str, Any]:
     }
 
 
+def _phase_display_numbers(db, user_id: int) -> dict[int, int]:
+    rows = db.execute(
+        select(FrTrade)
+        .where(FrTrade.user_id == user_id, FrTrade.phase_no > 0)
+        .order_by(FrTrade.underlying, FrTrade.created_at, FrTrade.id)
+    ).scalars().all()
+    counters: dict[str, int] = {}
+    out: dict[int, int] = {}
+    for trade in rows:
+        counters[trade.underlying] = counters.get(trade.underlying, 0) + 1
+        out[trade.id] = counters[trade.underlying]
+    return out
+
+
 def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]:
     with session_scope() as db:
         q = select(FrTrade).where(FrTrade.user_id == user_id)
@@ -1166,9 +1180,13 @@ def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]
             q = q.where(FrTrade.status == status)
         q = q.order_by(FrTrade.created_at.desc())
         trades = db.execute(q).scalars().all()
+        display_phase = _phase_display_numbers(db, user_id)
         out = []
         for t in trades:
             d = _trade_to_dict(t)
+            if t.id in display_phase:
+                d["phase_group"] = t.phase_group or f"{user_id}:{t.underlying}"
+                d["phase_no"] = display_phase[t.id]
             tgts = db.execute(
                 select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
             ).scalars().all()
@@ -1183,6 +1201,10 @@ def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
         if t is None or t.user_id != user_id:
             return None
         d = _trade_to_dict(t)
+        display_phase = _phase_display_numbers(db, user_id)
+        if t.id in display_phase:
+            d["phase_group"] = t.phase_group or f"{user_id}:{t.underlying}"
+            d["phase_no"] = display_phase[t.id]
         tgts = db.execute(
             select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
         ).scalars().all()
@@ -1205,9 +1227,8 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
         q = q.order_by(FrTrade.underlying, FrTrade.created_at, FrTrade.id)
         trades = db.execute(q).scalars().all()
         out: list[dict[str, Any]] = []
-        display_phase_no: dict[str, int] = {}
+        display_phase = _phase_display_numbers(db, user_id)
         for t in trades:
-            display_phase_no[t.underlying] = display_phase_no.get(t.underlying, 0) + 1
             tgts = db.execute(
                 select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
             ).scalars().all()
@@ -1228,7 +1249,7 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
                 "trade_id": t.id,
                 "underlying": t.underlying,
                 "phase_group": t.phase_group or f"{user_id}:{t.underlying}",
-                "phase_no": display_phase_no[t.underlying],
+                "phase_no": display_phase.get(t.id, t.phase_no),
                 "status": t.status,
                 "option_symbol": t.option_symbol,
                 "option_exchange": t.option_exchange,

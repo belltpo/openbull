@@ -157,13 +157,21 @@ function buildTrade(index: number, baseDate: Date): FrTrade {
 
 export function makeFuturesRiskDemoData(baseDate = new Date()): DemoData {
   const trades = Array.from({ length: 18 }, (_, index) => buildTrade(index, baseDate));
+  const tradePhaseNoBySymbol = new Map<string, number>();
+  [...trades]
+    .filter((trade) => trade.status !== "draft")
+    .sort((a, b) => a.underlying.localeCompare(b.underlying) || String(a.created_at).localeCompare(String(b.created_at)))
+    .forEach((trade) => {
+      tradePhaseNoBySymbol.set(trade.underlying, (tradePhaseNoBySymbol.get(trade.underlying) ?? 0) + 1);
+      trade.phase_no = tradePhaseNoBySymbol.get(trade.underlying)!;
+      trade.phase_group = `demo:${trade.underlying}`;
+    });
   const prices = new Map<string, number>(
     trades.flatMap((trade, index) => [
       [`${trade.futures_exchange}:${trade.futures_symbol}`, trade.entry_futures_price + trade.direction * (18 + index * 3)],
       [`${trade.option_exchange}:${trade.option_symbol}`, Math.max(1, trade.entry_option_price + (trade.side === "BUY" ? 1 : -1) * (6 + index))],
     ]),
   );
-  const phaseNoBySymbol = new Map<string, number>();
   const phases: FrPhase[] = trades
     .filter((trade) => trade.status !== "draft")
     .sort((a, b) => a.underlying.localeCompare(b.underlying) || String(a.created_at).localeCompare(String(b.created_at)))
@@ -171,7 +179,7 @@ export function makeFuturesRiskDemoData(baseDate = new Date()): DemoData {
       trade_id: trade.id,
       underlying: trade.underlying,
       phase_group: trade.phase_group,
-      phase_no: (phaseNoBySymbol.set(trade.underlying, (phaseNoBySymbol.get(trade.underlying) ?? 0) + 1), phaseNoBySymbol.get(trade.underlying)!),
+      phase_no: trade.phase_no,
       status: trade.status,
       option_symbol: trade.option_symbol,
       option_exchange: trade.option_exchange,
