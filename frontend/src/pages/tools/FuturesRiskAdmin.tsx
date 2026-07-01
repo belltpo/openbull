@@ -126,6 +126,7 @@ function DefaultOrderSetup() {
     <AdminPanel
       title="Default Order Setup"
       description="Controls what opens by default in the quick options order card."
+      className="h-full"
       action={
         <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
           <Save className="mr-1.5 h-4 w-4" /> Save
@@ -230,6 +231,7 @@ function RiskSettings() {
     <AdminPanel
       title="Risk Engine"
       description="Automation, trailing stop-loss behavior, and polling cadence."
+      className="h-full"
       action={
         <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
           <Save className="mr-1.5 h-4 w-4" /> Save
@@ -653,15 +655,13 @@ export default function FuturesRiskAdmin() {
         </Card>
       ) : (
         <>
-          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-[380px_minmax(0,1fr)] 2xl:grid-cols-[400px_minmax(0,1fr)]">
-            <div className="space-y-4">
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 items-stretch gap-4 lg:grid-cols-2">
               <DefaultOrderSetup />
               <RiskSettings />
             </div>
-            <div className="space-y-4">
-              <TargetLevels />
-              <SymbolMaps />
-            </div>
+            <TargetLevels />
+            <SymbolMaps />
           </div>
         </>
       )}
