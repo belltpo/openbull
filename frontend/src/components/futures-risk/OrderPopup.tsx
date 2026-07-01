@@ -35,9 +35,27 @@ interface Props {
 }
 
 const QUICK_ORDER_SETTINGS_KEY = "openbull:futures-risk:quick-order-settings";
+const CONTRACT_ORDER_TEMPLATES_KEY = "contract_order_templates";
+
+type ContractOrderDefaults = {
+  lots?: string;
+  sl_points?: string;
+  product?: string;
+};
 
 function formatStrikeForSymbol(strike: number): string {
   return Number.isInteger(strike) ? String(strike) : String(strike).replace(/\.0+$/, "").replace(".", "");
+}
+
+function parseContractOrderDefaults(raw: string | undefined): Record<string, ContractOrderDefaults> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, ContractOrderDefaults>;
+  } catch {
+    return {};
+  }
 }
 
 export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
@@ -61,6 +79,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [overrideTargets, setOverrideTargets] = useState(false);
   const [targetRows, setTargetRows] = useState<{ points: number; exit_pct: number }[]>([]);
   const [asDraft, setAsDraft] = useState(false);
+  const [product, setProduct] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ceStrike, setCeStrike] = useState<number | "">("");
   const [peStrike, setPeStrike] = useState<number | "">("");
@@ -70,6 +89,13 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [settingsPosition, setSettingsPosition] = useState<{ x: number; y: number } | null>(null);
   const [draggingPanel, setDraggingPanel] = useState<"quick" | "settings" | null>(null);
   const dragOffsetRef = useRef({ x: 0, y: 0 });
+
+  const clearContractSelection = (clearExpiry = true) => {
+    if (clearExpiry) setExpiry("");
+    setStrike("");
+    setCeStrike("");
+    setPeStrike("");
+  };
 
   useEffect(() => {
     try {
@@ -86,6 +112,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
           overrideTargets: boolean;
           targetRows: { points: number; exit_pct: number }[];
           asDraft: boolean;
+          product: string;
         }>;
         if (saved.underlying) setUnderlying(saved.underlying);
         if (saved.expiry) setExpiry(saved.expiry);
@@ -97,6 +124,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
         if (typeof saved.overrideTargets === "boolean") setOverrideTargets(saved.overrideTargets);
         if (Array.isArray(saved.targetRows)) setTargetRows(saved.targetRows);
         if (typeof saved.asDraft === "boolean") setAsDraft(saved.asDraft);
+        if (saved.product) setProduct(saved.product);
         setHasSavedSettings(true);
       }
     } catch {
@@ -122,9 +150,10 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
         overrideTargets,
         targetRows,
         asDraft,
+        product,
       }),
     );
-  }, [asDraft, ceStrike, expiry, lots, overrideTargets, peStrike, settingsHydrated, slPoints, targetRows, targetTemplateId, underlying]);
+  }, [asDraft, ceStrike, expiry, lots, overrideTargets, peStrike, product, settingsHydrated, slPoints, targetRows, targetTemplateId, underlying]);
 
   const closeQuickOrder = () => {
     setSettingsOpen(false);
@@ -167,19 +196,34 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
 
-  // Pre-fill defaults from admin config once loaded.
+  const contractDefaults = useMemo(
+    () => parseContractOrderDefaults(configQuery.data?.[CONTRACT_ORDER_TEMPLATES_KEY]?.value),
+    [configQuery.data],
+  );
+  const selectedContractDefaults = underlying ? contractDefaults[underlying] : undefined;
+
+  // Pre-fill the setup saved for the selected contract.
   useEffect(() => {
-    if (configQuery.data && settingsHydrated && !hasSavedSettings) {
-      const configuredLots = Number(configQuery.data.default_lots?.value);
-      if (Number.isFinite(configuredLots) && configuredLots > 0) {
-        setLots((prev) => (prev === 1 ? configuredLots : prev));
-      }
-      const configuredSl = configQuery.data.default_sl_points?.value;
-      if (slPoints === "" && configuredSl != null) {
-        setSlPoints(String(configuredSl));
-      }
+    if (!configQuery.data || !settingsHydrated || !underlying) return;
+
+    const saved = selectedContractDefaults;
+    if (saved) {
+      const configuredLots = Number(saved.lots);
+      if (Number.isFinite(configuredLots) && configuredLots > 0) setLots(configuredLots);
+      if (saved.sl_points != null) setSlPoints(String(saved.sl_points));
+      if (saved.product) setProduct(saved.product.toUpperCase());
+      return;
     }
-  }, [configQuery.data, hasSavedSettings, settingsHydrated, slPoints]);
+
+    if (!hasSavedSettings) {
+      const configuredLots = Number(configQuery.data.default_lots?.value);
+      if (Number.isFinite(configuredLots) && configuredLots > 0) setLots((prev) => (prev === 1 ? configuredLots : prev));
+      const configuredSl = configQuery.data.default_sl_points?.value;
+      if (slPoints === "" && configuredSl != null) setSlPoints(String(configuredSl));
+      const configuredProduct = configQuery.data.default_product?.value;
+      if (!product && configuredProduct) setProduct(String(configuredProduct).toUpperCase());
+    }
+  }, [configQuery.data, hasSavedSettings, product, selectedContractDefaults, settingsHydrated, slPoints, underlying]);
 
   const templates = useMemo(
     () => (templatesQuery.data ?? []).filter((t) => t.enabled),
@@ -192,10 +236,14 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   useEffect(() => {
     if (templates.length === 0) return;
-    if (targetTemplateId && templates.some((t) => t.id === targetTemplateId)) return;
+    const hasValidSelected = targetTemplateId && templates.some((t) => t.id === targetTemplateId);
+
+    if (hasSavedSettings && hasValidSelected) return;
+    if (hasValidSelected) return;
+
     const next = templates.find((t) => t.is_default) ?? templates[0];
     setTargetTemplateId(next.id);
-  }, [templates, targetTemplateId]);
+  }, [hasSavedSettings, targetTemplateId, templates]);
 
   useEffect(() => {
     if (!selectedTemplate || overrideTargets) return;
@@ -229,9 +277,17 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   });
 
   useEffect(() => {
-    const list = expiriesQuery.data ?? [];
-    if (list.length > 0 && !list.some((e) => e.value === expiry)) setExpiry(list[0].value);
-  }, [expiriesQuery.data, expiry]);
+    if (!open || !underlying || expiriesQuery.isLoading || !expiriesQuery.data) return;
+    const list = expiriesQuery.data;
+    if (list.length === 0) {
+      clearContractSelection();
+      return;
+    }
+    if (!list.some((e) => e.value === expiry)) {
+      setExpiry(list[0].value);
+      clearContractSelection(false);
+    }
+  }, [expiriesQuery.data, expiriesQuery.isLoading, expiry, open, underlying]);
 
   const strikesQuery = useQuery({
     queryKey: ["fr-strikes", underlying, expiry, underlyingExchange],
@@ -300,6 +356,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
       option_type: optionType,
       side,
       lots,
+      product: product || undefined,
       strike: selectedStrike,
       sl_points: slPoints === "" ? null : Number(slPoints),
       targets: overrideTargets ? targetRows.filter((t) => t.points > 0) : null,
@@ -491,7 +548,13 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
               <SectionLabel>Contract</SectionLabel>
               <div className="grid grid-cols-1 gap-2.5 min-[480px]:grid-cols-2 min-[600px]:grid-cols-4">
                 <Field label="Instrument">
-                  <Select value={underlying} onValueChange={setUnderlying}>
+                  <Select
+                    value={underlying}
+                    onValueChange={(value) => {
+                      setUnderlying(value);
+                      clearContractSelection();
+                    }}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder={underlyings.length === 0 ? "No mappings" : "Select"} />
                     </SelectTrigger>
@@ -505,7 +568,14 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                   </Select>
                 </Field>
                 <Field label="Expiry">
-                  <Select value={expiry} onValueChange={setExpiry} disabled={expiryList.length === 0}>
+                  <Select
+                    value={expiry}
+                    onValueChange={(value) => {
+                      setExpiry(value);
+                      clearContractSelection(false);
+                    }}
+                    disabled={expiryList.length === 0}
+                  >
                     <SelectTrigger>
                       <SelectValue placeholder={expiriesQuery.isLoading ? "Loading..." : "Select"} />
                     </SelectTrigger>

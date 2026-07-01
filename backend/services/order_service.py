@@ -57,6 +57,37 @@ def validate_order_data(data: dict[str, Any]) -> tuple[bool, str | None]:
     return True, None
 
 
+def _broker_error_message(response_data: Any, fallback: str = "Failed to place order") -> str:
+    if not isinstance(response_data, dict):
+        return fallback
+
+    for key in ("message", "error", "errorMessage"):
+        value = response_data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    errors = response_data.get("errors")
+    if isinstance(errors, list) and errors:
+        parts: list[str] = []
+        for err in errors:
+            if not isinstance(err, dict):
+                continue
+            code = err.get("errorCode") or err.get("code")
+            msg = err.get("message") or err.get("errorMessage")
+            if code and msg:
+                parts.append(f"{code}: {msg}")
+            elif msg:
+                parts.append(str(msg))
+        if parts:
+            return "; ".join(parts)
+
+    data = response_data.get("data")
+    if isinstance(data, dict):
+        return _broker_error_message(data, fallback)
+
+    return fallback
+
+
 def place_order_with_auth(
     order_data: dict[str, Any],
     auth_token: str,
@@ -97,15 +128,13 @@ def place_order_with_auth(
         logger.exception("Error in broker_module.place_order_api: %s", e)
         return False, {"status": "error", "message": "Failed to place order due to internal error"}, 500
 
-    if res and res.status == 200:
+    status_code = getattr(res, "status", None) or getattr(res, "status_code", 500)
+
+    if res and status_code == 200:
         return True, {"status": "success", "orderid": order_id}, 200
     else:
-        message = (
-            response_data.get("message", "Failed to place order")
-            if isinstance(response_data, dict)
-            else "Failed to place order"
-        )
-        status = res.status if res and res.status != 200 else 500
+        message = _broker_error_message(response_data)
+        status = status_code if res and status_code != 200 else 500
         return False, {"status": "error", "message": message}, status
 
 

@@ -44,6 +44,49 @@ from backend.services.quotes_service import get_quotes_with_auth
 
 logger = logging.getLogger(__name__)
 
+_MCX_DEFAULT_LOTS: dict[str, int] = {
+    "SILVER": 30,
+    "SILVERM": 5,
+    "SILVERMIC": 1,
+    "SILVER100": 100,
+    "GOLD": 1,
+    "GOLDM": 100,
+    "GOLDPETAL": 1,
+    "CRUDEOIL": 100,
+    "CRUDEOILM": 10,
+    "NATURALGAS": 1250,
+    "NATGASMINI": 250,
+    "COPPER": 2500,
+    "ZINC": 5000,
+    "ALUMINIUM": 5000,
+    "LEAD": 5000,
+}
+
+
+def _is_mcx_underlying(underlying: str) -> bool:
+    base, _ = _parse_underlying(underlying)
+    return base.upper() in _MCX_DEFAULT_LOTS
+
+
+def _mcx_default_lot(underlying: str) -> int:
+    base, _ = _parse_underlying(underlying)
+    return _MCX_DEFAULT_LOTS.get(base.upper(), 0)
+
+
+def _normalise_symbol_map_fields(data: dict[str, Any]) -> dict[str, Any]:
+    out = dict(data)
+    underlying = str(out.get("underlying", "")).strip().upper()
+    if _is_mcx_underlying(underlying):
+        out["underlying_exchange"] = "MCX"
+        out["futures_exchange"] = "MCX"
+        if int(out.get("lot_size", 0) or 0) <= 0:
+            out["lot_size"] = _mcx_default_lot(underlying)
+    return out
+
+
+def _quote_exchange_for_fr(base: str, requested_exchange: str) -> str:
+    return "MCX" if _is_mcx_underlying(base) else _quote_exchange_for(base, requested_exchange)
+
 
 class FrError(Exception):
     """User-facing error with an HTTP status code."""
@@ -400,15 +443,20 @@ def delete_target(target_id: int) -> bool:
 # ---------------------------------------------------------------------------
 
 def _map_to_dict(r: FrSymbolMap) -> dict[str, Any]:
+    data = _normalise_symbol_map_fields(
+        {
+            "underlying": r.underlying,
+            "underlying_exchange": r.underlying_exchange,
+            "futures_symbol": r.futures_symbol,
+            "futures_exchange": r.futures_exchange,
+            "lot_size": r.lot_size,
+            "auto_resolve": r.auto_resolve,
+            "enabled": r.enabled,
+        }
+    )
     return {
         "id": r.id,
-        "underlying": r.underlying,
-        "underlying_exchange": r.underlying_exchange,
-        "futures_symbol": r.futures_symbol,
-        "futures_exchange": r.futures_exchange,
-        "lot_size": r.lot_size,
-        "auto_resolve": r.auto_resolve,
-        "enabled": r.enabled,
+        **data,
     }
 
 
@@ -419,6 +467,7 @@ def list_symbol_maps() -> list[dict[str, Any]]:
 
 
 def create_symbol_map(data: dict[str, Any]) -> dict[str, Any]:
+    data = _normalise_symbol_map_fields(data)
     underlying = str(data["underlying"]).strip().upper()
     with session_scope() as db:
         exists = db.execute(select(FrSymbolMap).where(FrSymbolMap.underlying == underlying)).scalar_one_or_none()
@@ -443,6 +492,7 @@ def update_symbol_map(map_id: int, data: dict[str, Any]) -> dict[str, Any] | Non
         row = db.get(FrSymbolMap, map_id)
         if row is None:
             return None
+        data = _normalise_symbol_map_fields({**_map_to_dict(row), **data})
         if "underlying" in data:
             row.underlying = str(data["underlying"]).strip().upper()
         if "underlying_exchange" in data:
@@ -487,8 +537,9 @@ def resolve_futures(underlying: str) -> dict[str, Any] | None:
         ).scalar_one_or_none()
         if row is None:
             return None
-        fexch = row.futures_exchange
-        lot = row.lot_size
+        normalised = _normalise_symbol_map_fields(_map_to_dict(row))
+        fexch = str(normalised["futures_exchange"])
+        lot = int(normalised["lot_size"] or 0)
         auto = row.auto_resolve
         fsym = row.futures_symbol
 
@@ -510,7 +561,7 @@ def list_expiries(underlying: str, underlying_exchange: str = "NSE_INDEX") -> li
     Returns ``[{"display": "28-AUG-25", "value": "28AUG25"}, ...]``.
     """
     base, _ = _parse_underlying(underlying)
-    options_exchange = _option_exchange_for(_quote_exchange_for(base, underlying_exchange))
+    options_exchange = _option_exchange_for(_quote_exchange_for_fr(base, underlying_exchange))
     with session_scope() as db:
         rows = db.execute(
             text(
@@ -554,7 +605,7 @@ def list_strikes(
 ) -> dict[str, Any]:
     """Available strikes for (underlying, expiry, type) + the ATM strike."""
     base, _ = _parse_underlying(underlying)
-    quote_exchange = _quote_exchange_for(base, underlying_exchange)
+    quote_exchange = _quote_exchange_for_fr(base, underlying_exchange)
     options_exchange = _option_exchange_for(quote_exchange)
     strikes = _fetch_available_strikes(base, expiry.upper(), option_type.upper(), options_exchange)
 
@@ -592,7 +643,7 @@ def _resolve_option(
     config: dict | None,
 ) -> dict[str, Any]:
     base, _ = _parse_underlying(underlying)
-    options_exchange = _option_exchange_for(_quote_exchange_for(base, underlying_exchange))
+    options_exchange = _option_exchange_for(_quote_exchange_for_fr(base, underlying_exchange))
 
     if strike is not None and strike > 0:
         symbol = f"{base}{expiry.upper()}{_format_strike(float(strike))}{option_type.upper()}"

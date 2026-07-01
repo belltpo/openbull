@@ -9,6 +9,7 @@ CONFIG_DEFAULTS: dict[str, tuple[str, str, bool]] = {
     "default_sl_points": ("30", "Default stop-loss distance in futures points (pre-fills popup)", True),
     "default_lots": ("1", "Default lots pre-filled in the order popup", True),
     "default_underlying": ("", "Default underlying selected in the quick order popup", True),
+    "contract_order_templates": ("{}", "Per-contract quick-order setup templates", True),
     "default_product": ("MIS", "Default product for new option trades (MIS/NRML)", True),
     "trailing_enabled": ("true", "Trail the stop-loss as targets are hit", True),
     "trailing_mode": (

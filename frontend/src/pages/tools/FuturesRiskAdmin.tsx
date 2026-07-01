@@ -37,6 +37,13 @@ const SETTINGS: { key: string; label: string; type: SettingType; options?: strin
   { key: "poll_interval_sec", label: "Poll interval (sec)", type: "number" },
 ];
 
+type ContractOrderDefaults = {
+  lots?: string;
+  sl_points?: string;
+  product?: string;
+};
+
+const CONTRACT_ORDER_TEMPLATES_KEY = "contract_order_templates";
 const DEFAULT_ORDER_KEYS = ["default_underlying", "default_lots", "default_sl_points", "default_product"] as const;
 const emptyDefaultOrder = {
   default_underlying: "",
@@ -44,6 +51,17 @@ const emptyDefaultOrder = {
   default_sl_points: "",
   default_product: "",
 } satisfies Record<(typeof DEFAULT_ORDER_KEYS)[number], string>;
+
+function parseContractOrderDefaults(raw: string | undefined): Record<string, ContractOrderDefaults> {
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, ContractOrderDefaults>;
+  } catch {
+    return {};
+  }
+}
 
 function AdminPanel({
   title,
@@ -86,16 +104,19 @@ function DefaultOrderSetup() {
     () => (mapsQuery.data ?? []).filter((m) => m.enabled),
     [mapsQuery.data],
   );
+  const contractDefaults = useMemo(
+    () => parseContractOrderDefaults(cfgQuery.data?.[CONTRACT_ORDER_TEMPLATES_KEY]?.value),
+    [cfgQuery.data],
+  );
   const [local, setLocal] = useState<Record<(typeof DEFAULT_ORDER_KEYS)[number], string>>(emptyDefaultOrder);
+  const selectedContract = local.default_underlying;
 
   useEffect(() => {
     if (!cfgQuery.data) return;
-    setLocal({
+    setLocal((prev) => ({
+      ...prev,
       default_underlying: String(cfgQuery.data.default_underlying?.value || "").toUpperCase(),
-      default_lots: cfgQuery.data.default_lots?.value ?? "",
-      default_sl_points: cfgQuery.data.default_sl_points?.value ?? "",
-      default_product: cfgQuery.data.default_product?.value ?? "",
-    });
+    }));
   }, [cfgQuery.data]);
 
   useEffect(() => {
@@ -106,14 +127,38 @@ function DefaultOrderSetup() {
     );
   }, [enabledMaps]);
 
+  useEffect(() => {
+    setLocal((prev) => {
+      if (!selectedContract) return prev;
+      const saved = contractDefaults[selectedContract] ?? {};
+      return {
+        ...prev,
+        default_lots: saved.lots ?? cfgQuery.data?.default_lots?.value ?? "",
+        default_sl_points: saved.sl_points ?? cfgQuery.data?.default_sl_points?.value ?? "",
+        default_product: saved.product ?? cfgQuery.data?.default_product?.value ?? "",
+      };
+    });
+  }, [cfgQuery.data, contractDefaults, selectedContract]);
+
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const changed = DEFAULT_ORDER_KEYS.filter((key) => local[key] !== (cfgQuery.data?.[key]?.value ?? ""));
-      await Promise.all(changed.map((key) => setFrConfig(key, local[key])));
-      return changed.length;
+      if (!local.default_underlying) throw new Error("Select a contract first");
+      const next = {
+        ...contractDefaults,
+        [local.default_underlying]: {
+          lots: local.default_lots,
+          sl_points: local.default_sl_points,
+          product: local.default_product.toUpperCase(),
+        },
+      };
+      await Promise.all([
+        setFrConfig("default_underlying", local.default_underlying),
+        setFrConfig(CONTRACT_ORDER_TEMPLATES_KEY, JSON.stringify(next)),
+      ]);
+      return local.default_underlying;
     },
-    onSuccess: (n) => {
-      toast.success(n ? `Saved ${n} default(s)` : "No changes");
+    onSuccess: (underlying) => {
+      toast.success(`Saved ${underlying} setup template`);
       qc.invalidateQueries({ queryKey: ["fr-config"] });
     },
     onError: (err: unknown) => {
@@ -121,21 +166,49 @@ function DefaultOrderSetup() {
       toast.error(String(err?.response?.data?.detail ?? "Save failed"));
     },
   });
+  const deleteMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedContract) throw new Error("Select a contract first");
+      const next = { ...contractDefaults };
+      delete next[selectedContract];
+      await setFrConfig(CONTRACT_ORDER_TEMPLATES_KEY, JSON.stringify(next));
+      return selectedContract;
+    },
+    onSuccess: (underlying) => {
+      toast.success(`Deleted ${underlying} setup template`);
+      qc.invalidateQueries({ queryKey: ["fr-config"] });
+    },
+    onError: (err: unknown) => {
+      // @ts-expect-error axios error shape
+      toast.error(String(err?.response?.data?.detail ?? "Delete failed"));
+    },
+  });
+  const hasSavedContractSetup = !!selectedContract && !!contractDefaults[selectedContract];
 
   return (
     <AdminPanel
       title="Default Order Setup"
-      description="Controls what opens by default in the quick options order card."
+      description="Save reusable quick-order setup templates per contract."
       className="h-full"
       action={
-        <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
-          <Save className="mr-1.5 h-4 w-4" /> Save
-        </Button>
+        <div className="flex gap-1.5">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => deleteMutation.mutate()}
+            disabled={!hasSavedContractSetup || deleteMutation.isPending}
+          >
+            <Trash2 className="mr-1.5 h-4 w-4" /> Delete
+          </Button>
+          <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+            <Save className="mr-1.5 h-4 w-4" /> Save
+          </Button>
+        </div>
       }
     >
       <div className="grid grid-cols-1 gap-3">
         <div className="space-y-1.5">
-          <Label className="text-xs font-medium text-muted-foreground">Default Contract</Label>
+          <Label className="text-xs font-medium text-muted-foreground">Contract Template</Label>
           <select
             className={inputCls}
             value={local.default_underlying}
@@ -152,7 +225,7 @@ function DefaultOrderSetup() {
 
         <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label className="text-xs font-medium text-muted-foreground">Default Lots</Label>
+          <Label className="text-xs font-medium text-muted-foreground">Lots</Label>
           <input
             type="number"
             min={1}
@@ -163,7 +236,7 @@ function DefaultOrderSetup() {
         </div>
 
         <div className="space-y-1.5">
-          <Label className="text-xs font-medium text-muted-foreground">Default SL Points</Label>
+          <Label className="text-xs font-medium text-muted-foreground">SL Points</Label>
           <input
             type="number"
             min={0}
@@ -176,7 +249,7 @@ function DefaultOrderSetup() {
         </div>
 
         <div className="space-y-1.5">
-          <Label className="text-xs font-medium text-muted-foreground">Default Product</Label>
+          <Label className="text-xs font-medium text-muted-foreground">Product</Label>
           <input
             className={cn(inputCls, "uppercase")}
             value={local.default_product}
@@ -188,7 +261,9 @@ function DefaultOrderSetup() {
         <span className="shrink-0">Auto-selected</span>
         <Badge variant="outline">Expiry: nearest listed</Badge>
         <Badge variant="outline">Strike: current ATM</Badge>
-        <Badge variant="outline">Targets: template</Badge>
+        <Badge variant={hasSavedContractSetup ? "outline" : "secondary"}>
+          {hasSavedContractSetup ? "Saved per contract" : "Using fallback defaults"}
+        </Badge>
       </div>
     </AdminPanel>
   );
