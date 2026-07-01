@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ArrowLeft, Minus, Plus, Settings, ShieldCheck, TrendingDown, TrendingUp } from "lucide-react";
@@ -31,6 +31,7 @@ import {
   listSymbolMaps,
   listTargetTemplates,
   placeTrade,
+  resolveFutures,
 } from "@/api/futuresRisk";
 import type { OptionType, PlaceTradePayload, Side } from "@/types/futuresRisk";
 
@@ -72,6 +73,9 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [peStrike, setPeStrike] = useState<number | "">("");
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [hasSavedSettings, setHasSavedSettings] = useState(false);
+  const [quickOrderPosition, setQuickOrderPosition] = useState<{ x: number; y: number } | null>(null);
+  const [draggingQuickOrder, setDraggingQuickOrder] = useState(false);
+  const dragOffsetRef = useRef({ x: 0, y: 0 });
 
   useEffect(() => {
     try {
@@ -128,6 +132,40 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     );
   }, [asDraft, ceStrike, expiry, lots, overrideTargets, peStrike, settingsHydrated, slPoints, targetRows, targetTemplateId, underlying]);
 
+  useEffect(() => {
+    if (!draggingQuickOrder) return;
+
+    const move = (event: PointerEvent) => {
+      const width = 354;
+      const height = 260;
+      const nextX = Math.max(8, Math.min(window.innerWidth - width - 8, event.clientX - dragOffsetRef.current.x));
+      const nextY = Math.max(8, Math.min(window.innerHeight - height - 8, event.clientY - dragOffsetRef.current.y));
+      setQuickOrderPosition({ x: nextX, y: nextY });
+    };
+    const stop = () => setDraggingQuickOrder(false);
+
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+  }, [draggingQuickOrder]);
+
+  const startQuickOrderDrag = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return;
+    const popup = event.currentTarget.closest('[data-slot="dialog-content"]') as HTMLElement | null;
+    if (!popup) return;
+    const rect = popup.getBoundingClientRect();
+    dragOffsetRef.current = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+    setQuickOrderPosition({ x: rect.left, y: rect.top });
+    setDraggingQuickOrder(true);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
   // Pre-fill defaults from admin config once loaded.
   useEffect(() => {
     if (configQuery.data && settingsHydrated && !hasSavedSettings) {
@@ -176,6 +214,12 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   const selectedMap = underlyings.find((m) => m.underlying === underlying);
   const underlyingExchange = selectedMap?.underlying_exchange ?? "NSE_INDEX";
+
+  const futuresQuery = useQuery({
+    queryKey: ["fr-resolve-futures", underlying],
+    queryFn: () => resolveFutures(underlying),
+    enabled: open && !!underlying,
+  });
 
   const expiriesQuery = useQuery({
     queryKey: ["fr-expiries", underlying, underlyingExchange],
@@ -271,6 +315,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const optionExchange = strikesQuery.data?.options_exchange ?? "NFO";
   const ceStrikeLabel = ceStrike === "" ? "--" : String(ceStrike);
   const peStrikeLabel = peStrike === "" ? "--" : String(peStrike);
+  const futuresSymbol = futuresQuery.data?.symbol ?? selectedMap?.futures_symbol ?? "";
+  const futuresExchange = futuresQuery.data?.exchange ?? selectedMap?.futures_exchange ?? "NFO";
   const ceSymbol = underlying && expiry && Number(ceStrike) > 0
     ? `${underlying}${expiry.toUpperCase()}${formatStrikeForSymbol(Number(ceStrike))}CE`
     : "";
@@ -279,15 +325,17 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     : "";
   const liveSymbols = useMemo(() => {
     const out: Array<{ symbol: string; exchange: string }> = [];
+    if (futuresSymbol) out.push({ symbol: futuresSymbol, exchange: futuresExchange });
     if (ceSymbol) out.push({ symbol: ceSymbol, exchange: optionExchange });
     if (peSymbol && peSymbol !== ceSymbol) out.push({ symbol: peSymbol, exchange: optionExchange });
     return out;
-  }, [ceSymbol, optionExchange, peSymbol]);
+  }, [ceSymbol, futuresExchange, futuresSymbol, optionExchange, peSymbol]);
   const { data: tickMap } = useMarketData({
     symbols: liveSymbols,
     mode: "LTP",
     enabled: open && liveSymbols.length > 0,
   });
+  const futuresLtp = futuresSymbol ? tickMap.get(`${futuresExchange}:${futuresSymbol}`)?.data.ltp : undefined;
   const ceLtp = ceSymbol ? tickMap.get(`${optionExchange}:${ceSymbol}`)?.data.ltp : undefined;
   const peLtp = peSymbol ? tickMap.get(`${optionExchange}:${peSymbol}`)?.data.ltp : undefined;
   const targetSummary =
@@ -300,10 +348,29 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="gap-2.5 overflow-hidden p-3 sm:max-w-[330px]">
-          <DialogHeader className="pr-16">
+        <DialogContent
+          className={cn(
+            "gap-2.5 overflow-hidden p-3 sm:max-w-[330px]",
+            quickOrderPosition && "left-0 top-0 translate-x-0 translate-y-0",
+          )}
+          style={quickOrderPosition ? { left: quickOrderPosition.x, top: quickOrderPosition.y, transform: "none" } : undefined}
+        >
+          <DialogHeader className="cursor-move select-none pr-16" onPointerDown={startQuickOrderDrag}>
             <DialogTitle className="text-base font-semibold tracking-tight">Quick Order</DialogTitle>
           </DialogHeader>
+          <div className="rounded-xl border border-border/70 bg-muted/35 px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Futures Live</p>
+                <p className="truncate font-mono text-[11px] text-muted-foreground">
+                  {futuresSymbol || futuresQuery.isLoading ? futuresSymbol || "Resolving..." : "No futures mapping"}
+                </p>
+              </div>
+              <p className="shrink-0 text-base font-bold tabular-nums">
+                {futuresLtp === undefined ? "--" : futuresLtp.toLocaleString("en-IN", { maximumFractionDigits: 2 })}
+              </p>
+            </div>
+          </div>
           <button
             type="button"
             className="absolute right-11 top-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
