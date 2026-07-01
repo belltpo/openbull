@@ -255,13 +255,13 @@ html[data-trading-mode="sandbox"] {
       radial-gradient(circle at 1px 1px, color-mix(in oklch, var(--foreground) 7%, transparent) 1px, transparent 0);
     background-size: 22px 22px;
   }
-  .dark .fr-grid-bg {
+  html.dark:not([data-trading-mode="sandbox"]) .fr-grid-bg {
     background-color: oklch(0.105 0.004 255);
     background-image:
       radial-gradient(circle at 1px 1px, color-mix(in oklch, white 10%, transparent) 1px, transparent 0),
       linear-gradient(180deg, color-mix(in oklch, var(--card) 38%, transparent), transparent 360px);
   }
-  .dark .fr-glass {
+  html.dark:not([data-trading-mode="sandbox"]) .fr-glass {
     background:
       linear-gradient(180deg, color-mix(in oklch, white 5%, transparent), transparent 72%),
       color-mix(in oklch, var(--card) 76%, black 24%);
@@ -271,11 +271,35 @@ html[data-trading-mode="sandbox"] {
       0 18px 42px -22px black,
       0 0 0 1px color-mix(in oklch, black 35%, transparent);
   }
-  .dark .fr-glass-strong {
+  html.dark:not([data-trading-mode="sandbox"]) .fr-glass-strong {
     background:
       linear-gradient(180deg, color-mix(in oklch, white 7%, transparent), transparent 70%),
       color-mix(in oklch, var(--card) 88%, black 12%);
     border-color: color-mix(in oklch, white 16%, transparent);
+  }
+  html.dark:not([data-trading-mode="sandbox"]) .fr-dark-surface {
+    background-color: color-mix(in oklch, white 3.5%, transparent);
+    border-color: color-mix(in oklch, white 10%, transparent);
+  }
+  html.dark:not([data-trading-mode="sandbox"]) .fr-dark-surface-strong {
+    background-color: color-mix(in oklch, white 4.5%, transparent);
+    border-color: color-mix(in oklch, white 12%, transparent);
+  }
+  html.dark:not([data-trading-mode="sandbox"]) .fr-dark-surface-hover:hover {
+    background-color: color-mix(in oklch, white 6%, transparent);
+  }
+  html.dark:not([data-trading-mode="sandbox"]) .fr-dark-dialog {
+    background-color: oklch(0.16 0.004 255);
+    border-color: color-mix(in oklch, white 10%, transparent);
+  }
+  html.dark:not([data-trading-mode="sandbox"]) .fr-dark-position-card {
+    background:
+      linear-gradient(180deg, color-mix(in oklch, white 2%, transparent), transparent 68%),
+      color-mix(in oklch, var(--card) 82%, black 18%);
+    border-color: color-mix(in oklch, white 11%, transparent);
+    box-shadow:
+      0 1px 0 0 color-mix(in oklch, white 6%, transparent) inset,
+      0 14px 34px -24px black;
   }
 }
 

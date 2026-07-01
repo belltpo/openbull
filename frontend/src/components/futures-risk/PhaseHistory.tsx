@@ -68,7 +68,7 @@ function Metric({
   className?: string;
 }) {
   return (
-    <div className={cn("rounded-lg border border-border/60 bg-background/40 p-3 dark:border-white/10 dark:bg-white/[0.035]", className)}>
+    <div className={cn("fr-dark-surface rounded-lg border border-border/60 bg-background/40 p-3", className)}>
       <div className="flex items-center gap-1 text-[11px] uppercase text-muted-foreground">
         {icon}
         {label}
@@ -85,7 +85,7 @@ function PreviousPhaseRow({ phase, liveOpt }: { phase: FrPhase; liveOpt: number 
   const completedTargets = phase.targets.filter((t) => t.status === "hit").length;
 
   return (
-    <div className="min-w-0 rounded-lg border border-border/60 bg-background/45 p-3 dark:border-white/10 dark:bg-white/[0.035]">
+    <div className="fr-dark-surface min-w-0 rounded-lg border border-border/60 bg-background/45 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="flex items-center gap-1 text-sm font-semibold">
@@ -138,7 +138,7 @@ function PhaseCard({
   const completedTargets = phase.targets.filter((t) => t.status === "hit").length;
 
   return (
-    <div className={cn("rounded-xl border border-border/70 bg-background/35 p-3 dark:border-white/10 dark:bg-white/[0.035]", className)}>
+    <div className={cn("fr-dark-surface rounded-xl border border-border/70 bg-background/35 p-3", className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -174,7 +174,7 @@ function PhaseCard({
                 "rounded-md border px-3 py-2 text-xs",
                 t.status === "hit"
                   ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
-                  : "border-border/60 bg-background/40 text-muted-foreground dark:border-white/10 dark:bg-white/[0.03]",
+                  : "fr-dark-surface border-border/60 bg-background/40 text-muted-foreground",
               )}
             >
               <div className="flex justify-between gap-2">
@@ -193,14 +193,14 @@ function PhaseCard({
           <button
             type="button"
             onClick={() => setShowPreviousDetail(true)}
-            className="mt-3 flex w-full items-center justify-between gap-3 rounded-lg border border-border/70 bg-background/30 px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground transition-colors hover:bg-background/55 hover:text-foreground dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
+            className="fr-dark-surface fr-dark-surface-hover mt-3 flex w-full items-center justify-between gap-3 rounded-lg border border-border/70 bg-background/30 px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground transition-colors hover:bg-background/55 hover:text-foreground"
           >
             <span>Earlier phases for this instrument ({previousPhases.length})</span>
             <ChevronDown className="h-3.5 w-3.5" />
           </button>
 
           <Dialog open={showPreviousDetail} onOpenChange={setShowPreviousDetail}>
-            <DialogContent className="max-h-[90vh] w-[calc(100vw-1rem)] overflow-hidden p-0 dark:border-white/10 dark:bg-[#151515] sm:max-w-[min(1100px,calc(100vw-2rem))]">
+            <DialogContent className="fr-dark-dialog max-h-[90vh] w-[calc(100vw-1rem)] overflow-hidden p-0 sm:max-w-[min(1100px,calc(100vw-2rem))]">
               <div className="scrollbar-hidden max-h-[90vh] space-y-4 overflow-y-auto overscroll-contain p-4 pr-5 sm:p-5 sm:pr-6">
                 <DialogHeader>
                   <DialogTitle className="text-xl font-semibold">
@@ -295,7 +295,7 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
 
   return (
     <div className="space-y-4">
-      <div className="fr-glass flex flex-col gap-3 rounded-xl border border-border/70 p-3 dark:border-white/10 dark:bg-white/[0.035] lg:flex-row lg:items-center lg:justify-between">
+      <div className="fr-glass fr-dark-surface flex flex-col gap-3 rounded-xl border border-border/70 p-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap gap-1.5">
           {(["today", "week", "month", "custom"] as DateFilter[]).map((f) => (
             <button
@@ -334,7 +334,7 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
             const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
 
             return (
-              <section key={symbol} className="fr-glass h-fit rounded-2xl border border-border/70 p-4 dark:border-white/[0.12] dark:bg-white/[0.035]">
+              <section key={symbol} className="fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4">
                 <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
                   <div className="min-w-0">
                     <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>

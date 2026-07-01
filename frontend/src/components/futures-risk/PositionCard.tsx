@@ -49,7 +49,7 @@ interface Props {
 
 function Metric({ label, value, tone, sub }: { label: string; value: React.ReactNode; tone?: "good" | "bad"; sub?: React.ReactNode }) {
   return (
-    <div className="min-w-0 rounded-lg border border-border/60 bg-background/45 px-2.5 py-2 dark:border-white/10 dark:bg-white/[0.035]">
+    <div className="fr-dark-surface min-w-0 rounded-lg border border-border/60 bg-background/45 px-2.5 py-2">
       <p className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p
         className={cn(
@@ -71,7 +71,7 @@ function PreviousPhaseCard({ trade, liveOpt }: { trade: FrTrade; liveOpt: number
   const hitCount = trade.targets.filter((t) => t.status === "hit").length;
 
   return (
-    <div className="min-w-0 rounded-xl border border-border/60 bg-background/45 p-3 dark:border-white/10 dark:bg-white/[0.035]">
+    <div className="fr-dark-surface min-w-0 rounded-xl border border-border/60 bg-background/45 p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -181,7 +181,7 @@ export function PositionCard({
   const buy = trade.side === "BUY";
 
   return (
-    <div className="fr-edge-glow fr-glass relative overflow-hidden rounded-2xl p-4 dark:bg-white/[0.04]">
+    <div className="fr-edge-glow fr-glass fr-dark-position-card relative overflow-hidden rounded-2xl p-4">
       {/* Header */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -214,7 +214,7 @@ export function PositionCard({
 
       {/* Futures vs Option live comparison */}
       <div className="mt-3 grid grid-cols-2 gap-2">
-        <div className="min-w-0 rounded-lg border border-border/60 bg-background/45 px-2.5 py-2 dark:border-white/10 dark:bg-white/[0.035]">
+        <div className="fr-dark-surface min-w-0 rounded-lg border border-border/60 bg-background/45 px-2.5 py-2">
           <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             {buy ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />} Futures
           </p>
@@ -223,7 +223,7 @@ export function PositionCard({
             {futDelta !== null ? <span className={futDelta >= 0 ? "text-emerald-600" : "text-red-600"}>{signed(futDelta)} vs entry</span> : `entry ${fmt(trade.entry_futures_price)}`}
           </p>
         </div>
-        <div className="min-w-0 rounded-lg border border-border/60 bg-background/45 px-2.5 py-2 dark:border-white/10 dark:bg-white/[0.035]">
+        <div className="fr-dark-surface min-w-0 rounded-lg border border-border/60 bg-background/45 px-2.5 py-2">
           <p className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
             <Activity className="h-3 w-3" /> Option premium
           </p>
@@ -332,14 +332,14 @@ export function PositionCard({
           <button
             type="button"
             onClick={() => setShowPreviousDetail(true)}
-            className="mt-3 flex w-full items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/30 px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground transition-colors hover:bg-background/55 hover:text-foreground dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
+            className="fr-dark-surface fr-dark-surface-hover mt-3 flex w-full items-center justify-between gap-3 rounded-xl border border-border/70 bg-background/30 px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground transition-colors hover:bg-background/55 hover:text-foreground"
           >
             <span>Earlier phases for this instrument ({previousTrades.length})</span>
             <ChevronDown className="h-3.5 w-3.5" />
           </button>
 
           <Dialog open={showPreviousDetail} onOpenChange={setShowPreviousDetail}>
-            <DialogContent className="max-h-[90vh] w-[calc(100vw-1rem)] overflow-hidden p-0 dark:border-white/10 dark:bg-[#151515] sm:max-w-[min(1100px,calc(100vw-2rem))]">
+            <DialogContent className="fr-dark-dialog max-h-[90vh] w-[calc(100vw-1rem)] overflow-hidden p-0 sm:max-w-[min(1100px,calc(100vw-2rem))]">
               <div className="scrollbar-hidden max-h-[90vh] space-y-4 overflow-y-auto overscroll-contain p-4 pr-5 sm:p-5 sm:pr-6">
                 <DialogHeader>
                   <DialogTitle className="text-xl font-semibold">
