@@ -51,21 +51,23 @@ function Metric({
   sub,
   icon,
   valueClassName,
+  className,
 }: {
   label: string;
   value: string;
   sub?: string;
   icon?: ReactNode;
   valueClassName?: string;
+  className?: string;
 }) {
   return (
-    <div className="rounded-lg border border-border/60 bg-background/40 p-2">
-      <div className="flex items-center gap-1 text-[10px] uppercase text-muted-foreground">
+    <div className={cn("rounded-lg border border-border/60 bg-background/40 p-3", className)}>
+      <div className="flex items-center gap-1 text-[11px] uppercase text-muted-foreground">
         {icon}
         {label}
       </div>
-      <div className={cn("mt-1 font-semibold tabular-nums", valueClassName)}>{value}</div>
-      {sub ? <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{sub}</div> : null}
+      <div className={cn("mt-1.5 text-sm font-semibold tabular-nums", valueClassName)}>{value}</div>
+      {sub ? <div className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</div> : null}
     </div>
   );
 }
@@ -76,23 +78,29 @@ function PreviousPhaseRow({ phase, liveOpt }: { phase: FrPhase; liveOpt: number 
   const completedTargets = phase.targets.filter((t) => t.status === "hit").length;
 
   return (
-    <div className="rounded-lg border border-border/60 bg-background/45 p-2.5">
+    <div className="min-w-0 rounded-lg border border-border/60 bg-background/45 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1 text-xs font-semibold">
-            <Layers className="h-3 w-3" /> Phase {phase.phase_no}
+          <span className="flex items-center gap-1 text-sm font-semibold">
+            <Layers className="h-3.5 w-3.5" /> Phase {phase.phase_no}
           </span>
-          <span className="rounded-md bg-foreground/10 px-1.5 py-0.5 text-[10px] font-semibold capitalize text-muted-foreground">
+          <span className="rounded-md bg-foreground/10 px-1.5 py-0.5 text-xs font-semibold capitalize text-muted-foreground">
             {phase.status}
           </span>
         </div>
-        <span className={cn("text-xs font-bold tabular-nums", pnlTone)}>Rs. {fmt(mtm)}</span>
+        <span className={cn("text-sm font-bold tabular-nums", pnlTone)}>Rs. {fmt(mtm)}</span>
       </div>
-      <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] lg:grid-cols-4">
+      <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+        <Metric label="Phase MTM" value={`Rs. ${fmt(mtm)}`} sub={phase.status === "active" ? "live + booked" : "booked"} valueClassName={pnlTone} />
         <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} />
         <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} />
         <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={`${phase.remaining_qty}/${phase.total_qty} qty`} />
-        <Metric label="Duration" value={durationFmt(phase.duration_sec)} sub={`${timeFmt(phase.entry_time)} -> ${phase.exit_time ? timeFmt(phase.exit_time) : "open"}`} />
+        <Metric
+          label="Duration"
+          value={durationFmt(phase.duration_sec)}
+          sub={`${timeFmt(phase.entry_time)} -> ${phase.exit_time ? timeFmt(phase.exit_time) : "open"}`}
+          className="sm:col-span-2"
+        />
       </div>
     </div>
   );
@@ -126,22 +134,22 @@ function PhaseCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="flex items-center gap-1 text-sm font-semibold">
-              <Layers className="h-3.5 w-3.5" /> Phase {phase.phase_no}
+            <span className="flex items-center gap-1 text-base font-semibold">
+              <Layers className="h-4 w-4" /> Phase {phase.phase_no}
             </span>
-            <span className={cn("rounded-md border px-1.5 py-0.5 text-[10px] font-semibold capitalize", statusTone)}>
+            <span className={cn("rounded-md border px-1.5 py-0.5 text-xs font-semibold capitalize", statusTone)}>
               {phase.status}
             </span>
           </div>
-          <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground">{phase.option_symbol}</p>
+          <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{phase.option_symbol}</p>
         </div>
         <div className="text-right">
-          <p className="text-[10px] uppercase text-muted-foreground">Phase MTM</p>
-          <p className={cn("text-sm font-bold tabular-nums", pnlTone)}>Rs. {fmt(mtm)}</p>
+          <p className="text-[11px] uppercase text-muted-foreground">Phase MTM</p>
+          <p className={cn("text-base font-bold tabular-nums", pnlTone)}>Rs. {fmt(mtm)}</p>
         </div>
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs lg:grid-cols-5">
+      <div className="mt-3 grid grid-cols-2 gap-2 text-sm lg:grid-cols-5">
         <Metric label="Phase MTM" value={`Rs. ${fmt(mtm)}`} sub={phase.status === "active" ? "live + booked" : "booked"} valueClassName={pnlTone} />
         <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} />
         <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} icon={<Shield className="h-3 w-3" />} />
@@ -155,7 +163,7 @@ function PhaseCard({
             <div
               key={t.seq}
               className={cn(
-                "rounded-md border px-2 py-1.5 text-[11px]",
+                "rounded-md border px-3 py-2 text-xs",
                 t.status === "hit"
                   ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
                   : "border-border/60 bg-background/40 text-muted-foreground",
@@ -166,7 +174,7 @@ function PhaseCard({
                 <span>{t.status}</span>
               </div>
               <div className="mt-0.5 tabular-nums">{fmt(t.trigger_price, 0)}</div>
-              <div className="mt-0.5 text-[10px] opacity-80">{fmt(t.points, 0)} pts / {fmt(t.exit_pct, 0)}%</div>
+              <div className="mt-0.5 text-[11px] opacity-80">{fmt(t.points, 0)} pts / {fmt(t.exit_pct, 0)}%</div>
             </div>
           ))}
         </div>
@@ -174,11 +182,11 @@ function PhaseCard({
 
       {previousPhases.length > 0 && (
         <details className="mt-3 rounded-lg border border-border/70 bg-background/30">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2 text-xs font-semibold text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-sm font-semibold text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
             <span>Earlier phases for this instrument ({previousPhases.length})</span>
             <ChevronDown className="h-3.5 w-3.5" />
           </summary>
-          <div className="space-y-2 border-t border-border/70 p-2">
+          <div className="grid grid-cols-1 gap-2 border-t border-border/70 p-2 2xl:grid-cols-2">
             {previousPhases.map((p) => (
               <PreviousPhaseRow key={p.trade_id} phase={p} liveOpt={liveOptFor?.(p)} />
             ))}
@@ -266,7 +274,7 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
               key={f}
               onClick={() => setFilter(f)}
               className={cn(
-                "rounded-full px-3 py-1 text-xs font-semibold capitalize transition-colors",
+                "rounded-full px-3.5 py-1.5 text-sm font-semibold capitalize transition-colors",
                 filter === f ? "bg-primary text-primary-foreground" : "bg-foreground/[0.05] text-muted-foreground hover:text-foreground",
               )}
             >
@@ -277,9 +285,9 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
         {filter === "custom" && (
           <div className="flex flex-wrap items-center gap-2">
             <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-xs dark:[color-scheme:dark]" />
-            <span className="text-xs text-muted-foreground">to</span>
-            <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-xs dark:[color-scheme:dark]" />
+            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="h-9 rounded-md border border-input bg-background px-2 text-sm dark:[color-scheme:dark]" />
+            <span className="text-sm text-muted-foreground">to</span>
+            <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="h-9 rounded-md border border-input bg-background px-2 text-sm dark:[color-scheme:dark]" />
           </div>
         )}
       </div>
@@ -297,35 +305,45 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
           const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
 
           return (
-            <section key={symbol} className="fr-glass space-y-4 rounded-2xl border border-border/70 p-4">
-              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(180px,0.45fr)_minmax(0,1fr)] xl:items-end">
-                <div>
-                  <h3 className="text-xl font-bold tracking-tight">{symbol}</h3>
-                  <p className="mt-1 text-xs text-muted-foreground">
+            <section key={symbol} className="fr-glass rounded-2xl border border-border/70 p-4">
+              <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                <div className="min-w-0">
+                  <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
                     Showing {phases.length} of {allInstrumentPhases.length} phase(s)
                   </p>
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-right text-xs lg:grid-cols-4">
-                  <Metric label="Overall Instrument MTM" value={`Rs. ${fmt(totalMtm)}`} icon={<TrendingUp className="h-3 w-3" />} valueClassName={totalTone} />
-                  <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} />
-                  <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} />
-                  <Metric label="Active Phases" value={String(active)} />
-                </div>
               </div>
-              <div className="grid grid-cols-1 gap-3">
-                {phases.map((p) => {
-                  const previousPhases = allInstrumentPhases.filter((item) => item.phase_no < p.phase_no);
-                  return (
-                    <PhaseCard
-                      key={p.trade_id}
-                      phase={p}
-                      liveOpt={liveOpt(p)}
-                      previousPhases={previousPhases}
-                      liveOptFor={liveOpt}
-                      className="bg-card/60"
-                    />
-                  );
-                })}
+
+              <div className="grid grid-cols-1 gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)] xl:items-start">
+                <div className="grid min-w-0 grid-cols-1 gap-3">
+                  {phases.map((p) => {
+                    const previousPhases = allInstrumentPhases.filter((item) => item.phase_no < p.phase_no);
+                    return (
+                      <PhaseCard
+                        key={p.trade_id}
+                        phase={p}
+                        liveOpt={liveOpt(p)}
+                        previousPhases={previousPhases}
+                        liveOptFor={liveOpt}
+                        className="bg-card/60"
+                      />
+                    );
+                  })}
+                </div>
+
+                <aside className="grid grid-cols-2 gap-2 text-right text-sm xl:grid-cols-1">
+                  <Metric
+                    label="Overall Instrument MTM"
+                    value={`Rs. ${fmt(totalMtm)}`}
+                    icon={<TrendingUp className="h-3 w-3" />}
+                    valueClassName={totalTone}
+                    className="min-h-16 bg-card/55"
+                  />
+                  <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} className="min-h-16 bg-card/55" />
+                  <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} className="min-h-16 bg-card/55" />
+                  <Metric label="Active Phases" value={String(active)} className="min-h-16 bg-card/55" />
+                </aside>
               </div>
             </section>
           );
