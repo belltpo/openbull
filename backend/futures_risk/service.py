@@ -1010,6 +1010,7 @@ def place_trade(
         "strategy": "FuturesRisk",
     }
     ok, resp, status = dispatch_order(mode, user_id, order_data, auth_token=auth_token, broker=broker, config=config)
+    entry_order_id = resp.get("orderid")
     if not ok:
         msg = resp.get("message", "Entry order failed")
         trade_id = _persist_failed_entry(
@@ -1021,7 +1022,16 @@ def place_trade(
             broker_status=status,
         )
         return get_trade(user_id, trade_id) or {}
-    entry_order_id = resp.get("orderid")
+    if mode != "sandbox" and not entry_order_id:
+        trade_id = _persist_failed_entry(
+            user_id=user_id,
+            mode=mode,
+            params=p,
+            plan=plan,
+            message="Broker did not return an order id",
+            broker_status=status,
+        )
+        return get_trade(user_id, trade_id) or {}
 
     with session_scope() as db:
         group, phase_no = _assign_phase(db, user_id, p["underlying"])
@@ -1182,6 +1192,7 @@ def place_draft(
         "strategy": "FuturesRisk",
     }
     ok, resp, status = dispatch_order(mode, user_id, order_data, auth_token=auth_token, broker=broker, config=config)
+    entry_order_id = resp.get("orderid")
     if not ok:
         msg = resp.get("message", "Entry order failed")
         failed_id = _persist_failed_entry(
@@ -1194,7 +1205,17 @@ def place_draft(
             existing_trade_id=trade_id,
         )
         return get_trade(user_id, failed_id) or {}
-    entry_order_id = resp.get("orderid")
+    if mode != "sandbox" and not entry_order_id:
+        failed_id = _persist_failed_entry(
+            user_id=user_id,
+            mode=mode,
+            params=p,
+            plan=plan,
+            message="Broker did not return an order id",
+            broker_status=status,
+            existing_trade_id=trade_id,
+        )
+        return get_trade(user_id, failed_id) or {}
 
     with session_scope() as db:
         t = db.get(FrTrade, trade_id)
@@ -1347,6 +1368,37 @@ def _target_row_to_dict(r: FrTradeTarget, exit_option_price: float | None = None
     }
 
 
+def _mark_missing_entry_order_ids_failed(db, user_id: int) -> None:
+    rows = db.execute(
+        select(FrTrade).where(
+            FrTrade.user_id == user_id,
+            FrTrade.mode == "live",
+            FrTrade.status == "active",
+            FrTrade.entry_order_id.is_(None),
+        )
+    ).scalars().all()
+    for trade in rows:
+        trade.status = "error"
+        trade.remaining_qty = 0
+        trade.closed_at = datetime.now(tz=timezone.utc)
+        meta = dict(trade.meta or {})
+        meta.setdefault("entry_error", "Broker order id missing; marking as failed")
+        trade.meta = meta
+        log_event(
+            db,
+            trade_id=trade.id,
+            user_id=user_id,
+            kind="error",
+            severity="error",
+            message="Entry order failed: broker order id missing",
+            payload={
+                "entry_futures_price": trade.entry_futures_price,
+                "entry_option_price": trade.entry_option_price,
+                "sl_price": trade.sl_price,
+            },
+        )
+
+
 def _event_to_dict(e: FrTradeEvent) -> dict[str, Any]:
     return {
         "id": e.id,
@@ -1375,6 +1427,7 @@ def _phase_display_numbers(db, user_id: int) -> dict[int, int]:
 
 def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]:
     with session_scope() as db:
+        _mark_missing_entry_order_ids_failed(db, user_id)
         q = select(FrTrade).where(FrTrade.user_id == user_id)
         if status and status != "all":
             q = q.where(FrTrade.status == status)
@@ -1399,6 +1452,7 @@ def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]
 
 def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
     with session_scope() as db:
+        _mark_missing_entry_order_ids_failed(db, user_id)
         t = db.get(FrTrade, trade_id)
         if t is None or t.user_id != user_id:
             return None

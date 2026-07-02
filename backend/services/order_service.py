@@ -130,12 +130,16 @@ def place_order_with_auth(
 
     status_code = getattr(res, "status", None) or getattr(res, "status_code", 500)
 
-    if res and status_code == 200:
+    broker_success = isinstance(response_data, dict) and response_data.get("status") == "success"
+    if res and status_code == 200 and broker_success and order_id:
         return True, {"status": "success", "orderid": order_id}, 200
+
+    if res and status_code == 200 and broker_success and not order_id:
+        message = "Broker accepted the order response but did not return an order id"
     else:
         message = _broker_error_message(response_data)
-        status = status_code if res and status_code != 200 else 500
-        return False, {"status": "error", "message": message}, status
+    status = status_code if res and status_code != 200 else 500
+    return False, {"status": "error", "message": message}, status
 
 
 def place_order(
