@@ -78,9 +78,11 @@ def _futures_price(symbol: str, exchange: str, ctx: dict | None) -> float | None
 # Exit placement
 # ---------------------------------------------------------------------------
 
-def _place_exit(trade: FrTrade, qty: int, reason: str) -> tuple[bool, str | None, str]:
+def _place_exit(trade: FrTrade, qty: int, reason: str, ctx: dict | None = None) -> tuple[bool, str | None, str]:
     if qty <= 0:
         return True, None, "nothing to exit"
+    if trade.mode != "sandbox" and ctx is None:
+        return False, None, "No active broker session"
     exit_action = "SELL" if trade.side == "BUY" else "BUY"
     order_data = {
         "symbol": trade.option_symbol,
@@ -93,10 +95,31 @@ def _place_exit(trade: FrTrade, qty: int, reason: str) -> tuple[bool, str | None
         "trigger_price": "0",
         "strategy": f"FuturesRisk-{reason}",
     }
-    ok, resp, _status = dispatch_order(trade.mode, trade.user_id, order_data)
-    if ok:
-        return True, resp.get("orderid"), "ok"
-    return False, None, resp.get("message", "exit failed")
+    ok, resp, _status = dispatch_order(
+        trade.mode,
+        trade.user_id,
+        order_data,
+        auth_token=ctx["auth_token"] if ctx else None,
+        broker=ctx["broker"] if ctx else None,
+        config=ctx.get("config") if ctx else None,
+    )
+    if not ok:
+        return False, None, resp.get("message", "exit failed")
+
+    order_id = resp.get("orderid")
+    if trade.mode == "sandbox":
+        return True, order_id, "ok"
+    if not order_id:
+        return False, None, "Broker did not return an exit order id"
+    confirmed, confirm_message = fr_service._confirm_entry_order(
+        str(order_id),
+        ctx["auth_token"],
+        ctx["broker"],
+        ctx.get("config"),
+    )
+    if not confirmed:
+        return False, str(order_id), confirm_message or "Broker exit order was not completed"
+    return True, str(order_id), "ok"
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +187,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
             qty = t.remaining_qty
             if not auto_exit:
                 return
-            ok, oid, msg = _place_exit(t, qty, "sl") if qty > 0 else (True, None, "ok")
+            ok, oid, msg = _place_exit(t, qty, "sl", ctx) if qty > 0 else (True, None, "ok")
             if ok:
                 exit_px = fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
                 pnl_inc = fr_service._leg_exit_pnl(t.side, t.entry_option_price, exit_px, qty)
@@ -198,7 +221,31 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
             if is_final_pending_target:
                 planned_qty = max(planned_qty, t.remaining_qty)
             qty = min(planned_qty, t.remaining_qty)
-            ok, oid, msg = _place_exit(t, qty, f"t{tgt.seq}") if qty > 0 else (True, None, "ok")
+            if qty <= 0:
+                tgt.status = "hit"
+                tgt.hit_futures_price = fut
+                tgt.hit_at = datetime.now(tz=timezone.utc)
+                fired_any = True
+                log_event(
+                    db, trade_id=t.id, user_id=user_id, kind="target_hit",
+                    message=(
+                        f"Target {tgt.seq} reached at futures {fut} "
+                        f"(trigger {tgt.trigger_price}); no quantity exited because "
+                        "the configured exit percentage is below one executable lot"
+                    ),
+                    payload={"futures_price": fut, "seq": tgt.seq, "exit_order_id": None, "qty": 0, "pnl": 0.0},
+                )
+                prev_sl = t.sl_price
+                _apply_trailing(t, tgt.seq)
+                if t.sl_price != prev_sl:
+                    log_event(
+                        db, trade_id=t.id, user_id=user_id, kind="sl_trail",
+                        message=f"Stop-loss trailed to {t.sl_price} ({t.sl_basis}) after target {tgt.seq}",
+                        payload={"sl_price": t.sl_price, "basis": t.sl_basis},
+                    )
+                continue
+
+            ok, oid, msg = _place_exit(t, qty, f"t{tgt.seq}", ctx)
             if not ok:
                 log_event(
                     db, trade_id=t.id, user_id=user_id, kind="error", severity="error",

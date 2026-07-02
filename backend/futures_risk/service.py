@@ -685,13 +685,23 @@ def _build_targets(
     lot_size: int,
     template: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Snapshot target rows: trigger price + whole-lot exit qty per target."""
+    """Snapshot target rows: trigger price + whole-lot exit qty per target.
+
+    Percentages are converted to whole lots because F&O exits must be lot-sized.
+    The final target always carries any remaining lots, so the target snapshot
+    fully accounts for the position quantity even when earlier percentages are
+    too small to become one executable lot.
+    """
     out: list[dict[str, Any]] = []
     lots_used = 0
-    for t in template:
+    active_targets = list(template)
+    for idx, t in enumerate(active_targets):
         points = float(t["points"])
         pct = float(t.get("exit_pct", 0))
         lots_i = int((lots * pct) // 100)  # floor to whole lots
+        is_final_target = idx == len(active_targets) - 1
+        if is_final_target:
+            lots_i = max(lots_i, lots - lots_used)
         if lots_used + lots_i > lots:
             lots_i = max(0, lots - lots_used)
         lots_used += lots_i
@@ -1599,6 +1609,8 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
     position (phase) with its lifecycle summary: entry/exit, P&L, duration,
     achieved targets, and how it closed."""
     with session_scope() as db:
+        _mark_missing_entry_order_ids_failed(db, user_id)
+        _sync_active_entry_order_statuses(db, user_id)
         q = select(FrTrade).where(FrTrade.user_id == user_id, FrTrade.phase_no > 0)
         if underlying:
             q = q.where(FrTrade.underlying == underlying.strip().upper())
@@ -1704,10 +1716,31 @@ def manual_exit(
             "trigger_price": "0",
             "strategy": "FuturesRisk-exit",
         }
-        ok, resp, status = dispatch_order(mode, user_id, order_data)
+        ctx = load_broker_context_sync(user_id) if mode != "sandbox" else None
+        if mode != "sandbox" and not ctx:
+            raise FrError("No active broker session", 403)
+        ok, resp, status = dispatch_order(
+            mode,
+            user_id,
+            order_data,
+            auth_token=ctx["auth_token"] if ctx else None,
+            broker=ctx["broker"] if ctx else None,
+            config=ctx.get("config") if ctx else None,
+        )
         if not ok:
             raise FrError(resp.get("message", "Exit order failed"), status)
         exit_order_id = resp.get("orderid")
+        if mode != "sandbox":
+            if not exit_order_id:
+                raise FrError("Broker did not return an exit order id", 502)
+            confirmed, confirm_message = _confirm_entry_order(
+                str(exit_order_id),
+                ctx["auth_token"],
+                ctx["broker"],
+                ctx.get("config"),
+            )
+            if not confirmed:
+                raise FrError(confirm_message or "Broker exit order was not completed", 409)
 
     exit_px = _option_exit_price(option_symbol, option_exchange, fallback=entry_opt)
     pnl_inc = _leg_exit_pnl(side, entry_opt, exit_px, exit_qty)
