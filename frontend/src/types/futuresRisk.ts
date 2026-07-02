@@ -15,6 +15,7 @@ export interface FrTradeTarget {
   status: TargetStatus;
   hit_futures_price: number | null;
   exit_order_id: string | null;
+  exit_option_price: number | null;
   hit_at: string | null;
 }
 
@@ -62,6 +63,7 @@ export interface FrTrade {
   phase_no: number;
   closed_at: string | null;
   duration_sec: number | null;
+  sl_exit_option_price?: number | null;
   created_at: string | null;
   updated_at: string | null;
   targets: FrTradeTarget[];
@@ -87,6 +89,7 @@ export interface FrPhase {
   entry_option_price: number;
   sl_price: number;
   sl_basis: string;
+  sl_exit_option_price?: number | null;
   targets_total: number;
   targets_achieved: number[];
   targets: FrTradeTarget[];

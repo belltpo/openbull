@@ -47,6 +47,7 @@ function buildTargets(entry: number, direction: number, lotSize: number, status:
       status: hit ? "hit" : status === "stopped" && index === hitCount ? "skipped" : "pending",
       hit_futures_price: hit ? entry + direction * (targetPoints + 4) : null,
       exit_order_id: hit ? `DEMO-T${index + 1}` : null,
+      exit_option_price: hit ? 0 : null,
       hit_at: null,
     };
   });

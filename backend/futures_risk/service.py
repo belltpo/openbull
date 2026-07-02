@@ -1193,7 +1193,45 @@ def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
     }
 
 
-def _target_row_to_dict(r: FrTradeTarget) -> dict[str, Any]:
+def _trade_exit_option_prices(db, trade_id: int) -> tuple[dict[int, float], float | None]:
+    """Extract option execution prices recorded in trade events.
+
+    The target table stores futures trigger levels, while option exit prices are
+    logged in event payloads at execution time. Keep this helper read-only so
+    existing rows do not need a schema migration.
+    """
+    rows = db.execute(
+        select(FrTradeEvent.kind, FrTradeEvent.payload)
+        .where(
+            FrTradeEvent.trade_id == trade_id,
+            FrTradeEvent.kind.in_(("target_hit", "sl_hit")),
+        )
+        .order_by(FrTradeEvent.ts)
+    ).all()
+    target_prices: dict[int, float] = {}
+    sl_price: float | None = None
+    for kind, payload in rows:
+        if not isinstance(payload, dict):
+            continue
+        raw_price = payload.get("exit_option_price")
+        if raw_price is None:
+            continue
+        try:
+            price = float(raw_price)
+        except (TypeError, ValueError):
+            continue
+        if kind == "target_hit":
+            try:
+                seq = int(payload.get("seq"))
+            except (TypeError, ValueError):
+                continue
+            target_prices[seq] = price
+        elif kind == "sl_hit":
+            sl_price = price
+    return target_prices, sl_price
+
+
+def _target_row_to_dict(r: FrTradeTarget, exit_option_price: float | None = None) -> dict[str, Any]:
     return {
         "seq": r.seq,
         "points": r.points,
@@ -1203,6 +1241,7 @@ def _target_row_to_dict(r: FrTradeTarget) -> dict[str, Any]:
         "status": r.status,
         "hit_futures_price": r.hit_futures_price,
         "exit_order_id": r.exit_order_id,
+        "exit_option_price": exit_option_price,
         "hit_at": r.hit_at.isoformat() if r.hit_at else None,
     }
 
@@ -1244,13 +1283,15 @@ def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]
         out = []
         for t in trades:
             d = _trade_to_dict(t)
+            target_exit_prices, sl_exit_option_price = _trade_exit_option_prices(db, t.id)
+            d["sl_exit_option_price"] = sl_exit_option_price
             if t.id in display_phase:
                 d["phase_group"] = t.phase_group or f"{user_id}:{t.underlying}"
                 d["phase_no"] = display_phase[t.id]
             tgts = db.execute(
                 select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
             ).scalars().all()
-            d["targets"] = [_target_row_to_dict(r) for r in tgts]
+            d["targets"] = [_target_row_to_dict(r, target_exit_prices.get(r.seq)) for r in tgts]
             out.append(d)
         return out
 
@@ -1261,6 +1302,8 @@ def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
         if t is None or t.user_id != user_id:
             return None
         d = _trade_to_dict(t)
+        target_exit_prices, sl_exit_option_price = _trade_exit_option_prices(db, t.id)
+        d["sl_exit_option_price"] = sl_exit_option_price
         display_phase = _phase_display_numbers(db, user_id)
         if t.id in display_phase:
             d["phase_group"] = t.phase_group or f"{user_id}:{t.underlying}"
@@ -1268,7 +1311,7 @@ def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
         tgts = db.execute(
             select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
         ).scalars().all()
-        d["targets"] = [_target_row_to_dict(r) for r in tgts]
+        d["targets"] = [_target_row_to_dict(r, target_exit_prices.get(r.seq)) for r in tgts]
         events = db.execute(
             select(FrTradeEvent).where(FrTradeEvent.trade_id == t.id).order_by(FrTradeEvent.ts.desc()).limit(100)
         ).scalars().all()
@@ -1289,6 +1332,7 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
         out: list[dict[str, Any]] = []
         display_phase = _phase_display_numbers(db, user_id)
         for t in trades:
+            target_exit_prices, sl_exit_option_price = _trade_exit_option_prices(db, t.id)
             tgts = db.execute(
                 select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
             ).scalars().all()
@@ -1324,9 +1368,10 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
                 "entry_option_price": t.entry_option_price,
                 "sl_price": t.sl_price,
                 "sl_basis": t.sl_basis,
+                "sl_exit_option_price": sl_exit_option_price,
                 "targets_total": len(tgts),
                 "targets_achieved": achieved,
-                "targets": [_target_row_to_dict(r) for r in tgts],
+                "targets": [_target_row_to_dict(r, target_exit_prices.get(r.seq)) for r in tgts],
                 "realized_pnl": t.realized_pnl,
                 "remaining_qty": t.remaining_qty,
                 "duration_sec": (

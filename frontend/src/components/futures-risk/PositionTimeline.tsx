@@ -26,8 +26,9 @@ function fmt(value: number | null | undefined, digits = 2): string {
   return value.toLocaleString("en-IN", { maximumFractionDigits: digits });
 }
 
-function optLine(liveOpt: number | undefined): string {
-  return `O ${fmt(liveOpt)}`;
+function optLine(value: number | null | undefined, label = "O"): string | undefined {
+  if (value === null || value === undefined || Number.isNaN(value) || value <= 0) return undefined;
+  return `${label} ${fmt(value)}`;
 }
 
 function initialSlPrice(trade: FrTrade): number {
@@ -41,6 +42,7 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
   const stopped = trade.status === "stopped";
   const t1Hit = trade.targets.some((t) => t.seq === 1 && t.status === "hit");
   const nextPendingSeq = trade.targets.find((t) => t.status === "pending")?.seq ?? null;
+  const entryOptionLine = optLine(trade.entry_option_price);
 
   steps.push({
     key: "placed",
@@ -57,7 +59,7 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
     tone: t1Hit ? "muted" : "red",
     icon: <Shield className="h-3.5 w-3.5" />,
     futures: `F ${fmt(t1Hit ? initialSlPrice(trade) : trade.sl_price)}`,
-    option: optLine(liveOpt),
+    option: stopped && !t1Hit ? optLine(trade.sl_exit_option_price) : undefined,
   });
 
   steps.push({
@@ -67,19 +69,20 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
     tone: t1Hit ? "red" : "blue",
     icon: <Play className="h-3.5 w-3.5" />,
     futures: placed ? `F ${fmt(trade.entry_futures_price)}` : "Draft",
-    option: optLine(liveOpt),
+    option: entryOptionLine,
   });
 
   trade.targets.forEach((target) => {
     const hit = target.status === "hit";
+    const current = !closed && target.seq === nextPendingSeq;
     steps.push({
       key: `t${target.seq}`,
       label: `T${target.seq}`,
-      state: hit ? "done" : closed ? "todo" : target.seq === nextPendingSeq ? "current" : "todo",
+      state: hit ? "done" : closed ? "todo" : current ? "current" : "todo",
       tone: "green",
       icon: <Target className="h-3.5 w-3.5" />,
       futures: `F ${fmt(target.trigger_price)}`,
-      option: optLine(liveOpt),
+      option: hit ? optLine(target.exit_option_price) : current ? optLine(liveOpt, "Live") : undefined,
     });
   });
 
