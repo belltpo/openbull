@@ -9,6 +9,7 @@ by the OpenBull quick-order popup.
 from __future__ import annotations
 
 import logging
+import json
 import threading
 import time
 from typing import Any
@@ -62,6 +63,26 @@ class FuturesRiskQuickOrderPreview(BaseModel):
     pe_strike: float | None = None
 
 
+class FuturesRiskQuickOrderOptions(BaseModel):
+    apikey: str | None = None
+    underlying: str | None = None
+    underlying_exchange: str | None = None
+    expiry: str | None = None
+
+
+class FuturesRiskQuickOrderSettings(BaseModel):
+    apikey: str | None = None
+    underlying: str = Field(..., min_length=1)
+    underlying_exchange: str | None = None
+    expiry: str | None = None
+    ce_strike: float | None = None
+    pe_strike: float | None = None
+    lots: int = Field(..., ge=1)
+    sl_points: float = Field(..., gt=0)
+    product: str | None = "NRML"
+    target_template_id: int | None = None
+
+
 async def _resolve_api_user(request: Request) -> tuple[int, str, str, dict]:
     from backend.dependencies import get_api_user, get_db
 
@@ -99,6 +120,132 @@ def _remember_client_order(client_order_id: str | None) -> bool:
             return False
         _recent_client_orders[client_order_id] = now + _DEDUP_TTL_SECONDS
     return True
+
+
+def _contract_templates() -> dict[str, Any]:
+    raw = fr.get_config_map().get("contract_order_templates", {}).get("value") or "{}"
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _save_contract_templates(data: dict[str, Any]) -> None:
+    if not fr.set_config("contract_order_templates", json.dumps(data)):
+        raise FrError("Unable to save contract quick-order settings", 500)
+
+
+@router.post("/futures-risk/quick-order/options")
+async def api_futures_risk_quick_order_options(request: Request):
+    """Return dropdown data and saved per-contract quick-order settings."""
+    try:
+        _user_id, auth_token, broker_name, config = await _resolve_api_user(request)
+        body = await _request_json(request)
+        payload = FuturesRiskQuickOrderOptions.model_validate(body)
+    except ValidationError as exc:
+        return JSONResponse(
+            content={"status": "error", "message": exc.errors()[0].get("msg", "Invalid request")},
+            status_code=422,
+        )
+    except Exception as exc:
+        return _error_response(exc)
+
+    maps = [m for m in fr.list_symbol_maps() if m.get("enabled")]
+    underlyings = [str(m["underlying"]) for m in maps]
+    selected = (payload.underlying or (underlyings[0] if underlyings else "")).upper()
+    selected_map = next((m for m in maps if str(m.get("underlying", "")).upper() == selected), None)
+    underlying_exchange = str((selected_map or {}).get("underlying_exchange") or payload.underlying_exchange or "NSE_INDEX")
+    expiries = fr.list_expiries(selected, underlying_exchange) if selected else []
+    selected_expiry = payload.expiry or (expiries[0]["value"] if expiries else "")
+    strikes: list[float] = []
+    options_exchange = "NFO"
+    if selected and selected_expiry:
+        try:
+            strike_data = fr.list_strikes(selected, underlying_exchange, selected_expiry, "CE", auth_token, broker_name, config)
+            strikes = strike_data.get("strikes") or []
+            options_exchange = strike_data.get("options_exchange") or options_exchange
+        except Exception:
+            logger.debug("NT quick-order strike lookup failed", exc_info=True)
+
+    templates = [
+        {"id": t["id"], "name": t["name"], "is_default": t.get("is_default", False)}
+        for t in fr.list_target_templates(enabled_only=True)
+    ]
+    saved = _contract_templates().get(selected) if selected else None
+    config_map = fr.get_config_map()
+    defaults = {
+        "underlying_exchange": underlying_exchange,
+        "expiry": saved.get("expiry") if isinstance(saved, dict) else selected_expiry,
+        "ce_strike": saved.get("ce_strike") if isinstance(saved, dict) else None,
+        "pe_strike": saved.get("pe_strike") if isinstance(saved, dict) else None,
+        "lots": saved.get("lots") if isinstance(saved, dict) else config_map.get("default_lots", {}).get("value", "1"),
+        "sl_points": saved.get("sl_points") if isinstance(saved, dict) else config_map.get("default_sl_points", {}).get("value", "5"),
+        "product": saved.get("product") if isinstance(saved, dict) else config_map.get("default_product", {}).get("value", "NRML"),
+        "target_template_id": saved.get("target_template_id") if isinstance(saved, dict) else None,
+    }
+    return JSONResponse(
+        content={
+            "status": "success",
+            "data": {
+                "underlyings": underlyings,
+                "underlying_exchange": underlying_exchange,
+                "expiries": expiries,
+                "strikes": strikes,
+                "options_exchange": options_exchange,
+                "templates": templates,
+                "saved": defaults,
+            },
+        },
+        status_code=200,
+    )
+
+
+@router.post("/futures-risk/quick-order/settings")
+async def api_futures_risk_quick_order_settings(request: Request):
+    """Create/update saved quick-order defaults for one contract."""
+    try:
+        await _resolve_api_user(request)
+        body = await _request_json(request)
+        payload = FuturesRiskQuickOrderSettings.model_validate(body)
+    except ValidationError as exc:
+        return JSONResponse(
+            content={"status": "error", "message": exc.errors()[0].get("msg", "Invalid request")},
+            status_code=422,
+        )
+    except Exception as exc:
+        return _error_response(exc)
+
+    data = _contract_templates()
+    data[payload.underlying.upper()] = {
+        "underlying_exchange": (payload.underlying_exchange or "").upper(),
+        "expiry": (payload.expiry or "").upper(),
+        "ce_strike": payload.ce_strike,
+        "pe_strike": payload.pe_strike,
+        "lots": str(payload.lots),
+        "sl_points": str(payload.sl_points),
+        "product": (payload.product or "NRML").upper(),
+        "target_template_id": payload.target_template_id,
+    }
+    _save_contract_templates(data)
+    return JSONResponse(content={"status": "success", "data": data[payload.underlying.upper()]}, status_code=200)
+
+
+@router.post("/futures-risk/quick-order/settings/delete")
+async def api_futures_risk_quick_order_settings_delete(request: Request):
+    """Delete saved quick-order defaults for one contract."""
+    try:
+        await _resolve_api_user(request)
+        body = await _request_json(request)
+        underlying = str(body.get("underlying", "")).strip().upper()
+    except Exception as exc:
+        return _error_response(exc)
+    if not underlying:
+        return JSONResponse(content={"status": "error", "message": "underlying is required"}, status_code=400)
+    data = _contract_templates()
+    data.pop(underlying, None)
+    _save_contract_templates(data)
+    return JSONResponse(content={"status": "success"}, status_code=200)
 
 
 def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str, config: dict) -> dict[str, Any]:

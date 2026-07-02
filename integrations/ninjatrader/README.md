@@ -19,6 +19,15 @@ The indicator posts to:
 POST /api/v1/futures-risk/quick-order
 ```
 
+It also uses these API-key endpoints for live preview and settings sync:
+
+```text
+POST /api/v1/futures-risk/quick-order/preview
+POST /api/v1/futures-risk/quick-order/options
+POST /api/v1/futures-risk/quick-order/settings
+POST /api/v1/futures-risk/quick-order/settings/delete
+```
+
 Required auth:
 
 ```text
@@ -62,6 +71,17 @@ to the OpenBull target template id you want this chart to use.
 - `X` collapses the quick-order popup into a small `OB` restore button.
 - Click `OB` to show the quick-order popup again; you do not need to remove and
   add the indicator.
+- Drag the top handle/header or the minimized `OB` button to move the widget
+  anywhere on the chart.
+- The settings card uses editable dropdowns for instrument, expiry, CE strike,
+  PE strike, target template id, and product. If OpenBull cannot return a list
+  yet, the current value is still editable manually.
+- `Refresh` reloads dropdown values from OpenBull.
+- `Save` creates or updates the selected contract quick-order setup in
+  OpenBull's per-contract settings store.
+- `Delete` removes the selected contract quick-order setup from OpenBull.
+- While the settings card is open, dropdown/default values are refreshed from
+  OpenBull about every 10 seconds.
 - Futures, CE, and PE LTP values are polled from OpenBull every two seconds via
   `/api/v1/futures-risk/quick-order/preview`.
 

@@ -1,5 +1,6 @@
 #region Using declarations
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Globalization;
@@ -32,11 +33,24 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Button sellCeButton;
         private Button buyPeButton;
         private Button sellPeButton;
+        private ComboBox instrumentCombo;
+        private ComboBox expiryCombo;
+        private ComboBox ceCombo;
+        private ComboBox peCombo;
+        private ComboBox templateCombo;
+        private ComboBox productCombo;
+        private TextBox urlBox;
+        private TextBox lotsBox;
+        private TextBox slBox;
+        private PasswordBox apiBox;
         private DispatcherTimer liveTimer;
         private bool controlsAdded;
         private bool isBusy;
+        private bool settingsHydrating;
         private bool wasDragged;
         private bool isDragging;
+        private bool dragMoved;
+        private int optionsPollTick;
         private Point dragStart;
         private Thickness dragStartMargin;
         private double futuresLtp;
@@ -155,9 +169,19 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             StopLiveTimer();
             liveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
-            liveTimer.Tick += async (s, e) => await FetchLiveAsync();
+            liveTimer.Tick += async (s, e) =>
+            {
+                await FetchLiveAsync();
+                optionsPollTick++;
+                if (settingsPanel != null && settingsPanel.Visibility == Visibility.Visible && optionsPollTick % 5 == 0)
+                    await FetchOptionsAsync();
+            };
             liveTimer.Start();
-            Task.Run(async () => await FetchLiveAsync());
+            Task.Run(async () =>
+            {
+                await FetchOptionsAsync();
+                await FetchLiveAsync();
+            });
         }
 
         private void StopLiveTimer()
@@ -274,14 +298,22 @@ namespace NinjaTrader.NinjaScript.Indicators
                 FontSize = 12,
                 FontWeight = FontWeights.Bold
             };
+            ApplyRoundedButton(button, 9);
             button.Click += (s, e) =>
             {
+                if (dragMoved)
+                {
+                    dragMoved = false;
+                    return;
+                }
+                if (root != null)
+                    root.Width = 580;
                 popup.Visibility = Visibility.Visible;
                 restoreButton.Visibility = Visibility.Collapsed;
             };
-            button.MouseLeftButtonDown += StartDrag;
-            button.MouseMove += DragMove;
-            button.MouseLeftButtonUp += StopDrag;
+            button.PreviewMouseLeftButtonDown += StartDrag;
+            button.PreviewMouseMove += DragMove;
+            button.PreviewMouseLeftButtonUp += StopDrag;
             return button;
         }
 
@@ -351,7 +383,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private Button IconButton(string text)
         {
-            return new Button
+            Button button = new Button
             {
                 Content = text,
                 Width = 22,
@@ -363,6 +395,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 BorderBrush = Brushes.Transparent,
                 FontSize = 12
             };
+            ApplyRoundedButton(button, 7);
+            return button;
         }
 
         private Button TradeButton(string text, bool isBuy)
@@ -377,7 +411,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 LineHeight = 10
             };
 
-            return new Button
+            Button button = new Button
             {
                 Content = content,
                 Height = 46,
@@ -389,6 +423,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 BorderBrush = Brushes.Transparent,
                 Foreground = Brushes.White
             };
+            ApplyRoundedButton(button, 9);
+            return button;
         }
 
         private static void AddButton(Grid grid, Button button, int row, int column)
@@ -422,15 +458,86 @@ namespace NinjaTrader.NinjaScript.Indicators
             header.Children.Add(title);
             header.Children.Add(close);
             stack.Children.Add(header);
-            stack.Children.Add(Field("URL", OpenBullUrl, value => OpenBullUrl = value));
-            stack.Children.Add(PasswordField("API Key", value => ApiKey = value));
-            stack.Children.Add(Field("Instrument", Underlying, value => Underlying = value.ToUpperInvariant()));
-            stack.Children.Add(Field("Expiry", Expiry, value => Expiry = value.ToUpperInvariant()));
-            stack.Children.Add(Field("CE", CeStrike.ToString(CultureInfo.InvariantCulture), value => CeStrike = ParseDouble(value, CeStrike)));
-            stack.Children.Add(Field("PE", PeStrike.ToString(CultureInfo.InvariantCulture), value => PeStrike = ParseDouble(value, PeStrike)));
-            stack.Children.Add(Field("Lots", Lots.ToString(CultureInfo.InvariantCulture), value => Lots = Math.Max(1, ParseInt(value, Lots))));
-            stack.Children.Add(Field("SL pts", SlPoints.ToString(CultureInfo.InvariantCulture), value => SlPoints = ParseDouble(value, SlPoints)));
-            stack.Children.Add(Field("Template", TargetTemplateId.ToString(CultureInfo.InvariantCulture), value => TargetTemplateId = Math.Max(0, ParseInt(value, TargetTemplateId))));
+            stack.Children.Add(Field("URL", OpenBullUrl, value =>
+            {
+                OpenBullUrl = value;
+                Task.Run(async () => await FetchOptionsAsync());
+            }, out urlBox));
+            stack.Children.Add(PasswordField("API Key", value =>
+            {
+                ApiKey = value;
+                Task.Run(async () =>
+                {
+                    await FetchOptionsAsync();
+                    await FetchLiveAsync();
+                });
+            }));
+            instrumentCombo = ComboRow(stack, "Instrument", value =>
+            {
+                Underlying = value.ToUpperInvariant();
+                Task.Run(async () => await FetchOptionsAsync());
+                Task.Run(async () => await SaveSettingsAsync());
+            });
+            expiryCombo = ComboRow(stack, "Expiry", value =>
+            {
+                Expiry = value.ToUpperInvariant();
+                Task.Run(async () => await FetchOptionsAsync());
+            });
+            ceCombo = ComboRow(stack, "CE", value =>
+            {
+                CeStrike = ParseDouble(value, CeStrike);
+                RefreshButtonText();
+            });
+            peCombo = ComboRow(stack, "PE", value =>
+            {
+                PeStrike = ParseDouble(value, PeStrike);
+                RefreshButtonText();
+            });
+            stack.Children.Add(Field("Lots", Lots.ToString(CultureInfo.InvariantCulture), value =>
+            {
+                Lots = Math.Max(1, ParseInt(value, Lots));
+                Task.Run(async () => await SaveSettingsAsync());
+            }, out lotsBox));
+            stack.Children.Add(Field("SL pts", SlPoints.ToString(CultureInfo.InvariantCulture), value =>
+            {
+                SlPoints = ParseDouble(value, SlPoints);
+                Task.Run(async () => await SaveSettingsAsync());
+            }, out slBox));
+            templateCombo = ComboRow(stack, "Template", value =>
+            {
+                TargetTemplateId = Math.Max(0, ParseInt(value, TargetTemplateId));
+                Task.Run(async () => await SaveSettingsAsync());
+            });
+            productCombo = ComboRow(stack, "Product", value =>
+            {
+                Product = string.IsNullOrWhiteSpace(value) ? "NRML" : value.ToUpperInvariant();
+                Task.Run(async () => await SaveSettingsAsync());
+            });
+
+            SeedCombo(instrumentCombo, Underlying);
+            SeedCombo(expiryCombo, Expiry);
+            SeedCombo(ceCombo, CeStrike.ToString("0", CultureInfo.InvariantCulture));
+            SeedCombo(peCombo, PeStrike.ToString("0", CultureInfo.InvariantCulture));
+            SeedCombo(templateCombo, TargetTemplateId.ToString(CultureInfo.InvariantCulture));
+            FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
+
+            Grid actions = new Grid { Margin = new Thickness(0, 6, 0, 0) };
+            actions.ColumnDefinitions.Add(new ColumnDefinition());
+            actions.ColumnDefinitions.Add(new ColumnDefinition());
+            actions.ColumnDefinitions.Add(new ColumnDefinition());
+            Button refresh = SmallAction("Refresh");
+            Button save = SmallAction("Save");
+            Button delete = SmallAction("Delete");
+            refresh.Click += async (s, e) => await FetchOptionsAsync();
+            save.Click += async (s, e) => await SaveSettingsAsync();
+            delete.Click += async (s, e) => await DeleteSettingsAsync();
+            Grid.SetColumn(refresh, 0);
+            Grid.SetColumn(save, 1);
+            Grid.SetColumn(delete, 2);
+            actions.Children.Add(refresh);
+            actions.Children.Add(save);
+            actions.Children.Add(delete);
+            stack.Children.Add(actions);
 
             return new Border
             {
@@ -457,13 +564,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Background = new SolidColorBrush(Color.FromRgb(10, 10, 10)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 65))
             };
+            apiBox = box;
             box.PasswordChanged += (s, e) => onChanged(box.Password);
             Grid.SetColumn(box, 1);
             row.Children.Add(box);
             return row;
         }
 
-        private UIElement Field(string label, string value, Action<string> onChanged)
+        private UIElement Field(string label, string value, Action<string> onChanged, out TextBox outBox)
         {
             Grid row = FieldRow(label);
             TextBox box = new TextBox
@@ -476,14 +584,94 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Background = new SolidColorBrush(Color.FromRgb(10, 10, 10)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 65))
             };
+            outBox = box;
             box.TextChanged += (s, e) =>
             {
+                if (settingsHydrating)
+                    return;
                 onChanged(box.Text);
                 RefreshButtonText();
             };
             Grid.SetColumn(box, 1);
             row.Children.Add(box);
             return row;
+        }
+
+        private ComboBox ComboRow(StackPanel stack, string label, Action<string> onChanged)
+        {
+            Grid row = FieldRow(label);
+            ComboBox combo = new ComboBox
+            {
+                FontSize = 10,
+                Height = 24,
+                IsEditable = true,
+                IsTextSearchEnabled = true,
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(10, 10, 10)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 65))
+            };
+            combo.SelectionChanged += (s, e) =>
+            {
+                if (settingsHydrating || combo.SelectedItem == null)
+                    return;
+                onChanged(combo.SelectedItem.ToString());
+                RefreshButtonText();
+            };
+            combo.LostKeyboardFocus += (s, e) =>
+            {
+                if (settingsHydrating || string.IsNullOrWhiteSpace(combo.Text))
+                    return;
+                onChanged(combo.Text.Trim());
+                SeedCombo(combo, combo.Text.Trim());
+                RefreshButtonText();
+            };
+            Grid.SetColumn(combo, 1);
+            row.Children.Add(combo);
+            stack.Children.Add(row);
+            return combo;
+        }
+
+        private Button SmallAction(string text)
+        {
+            Button button = new Button
+            {
+                Content = text,
+                Height = 24,
+                Margin = new Thickness(2),
+                Padding = new Thickness(4, 0, 4, 0),
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(35, 35, 35)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(70, 70, 70)),
+                FontSize = 10
+            };
+            ApplyRoundedButton(button, 7);
+            return button;
+        }
+
+        private static void ApplyRoundedButton(Button button, double radius)
+        {
+            Style style = new Style(typeof(Button));
+            ControlTemplate template = new ControlTemplate(typeof(Button));
+            FrameworkElementFactory border = new FrameworkElementFactory(typeof(Border));
+            border.Name = "buttonBorder";
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(radius));
+            border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Button.BackgroundProperty));
+            border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Button.BorderBrushProperty));
+            border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Button.BorderThicknessProperty));
+
+            FrameworkElementFactory presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+            presenter.SetValue(ContentPresenter.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            presenter.SetValue(ContentPresenter.MarginProperty, new TemplateBindingExtension(Button.PaddingProperty));
+            border.AppendChild(presenter);
+            template.VisualTree = border;
+
+            Trigger disabled = new Trigger { Property = Button.IsEnabledProperty, Value = false };
+            disabled.Setters.Add(new Setter(UIElement.OpacityProperty, 0.55, "buttonBorder"));
+            template.Triggers.Add(disabled);
+
+            style.Setters.Add(new Setter(Button.TemplateProperty, template));
+            button.Style = style;
         }
 
         private Grid FieldRow(string label)
@@ -511,6 +699,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             settingsPanel.Visibility = settingsPanel.Visibility == Visibility.Visible
                 ? Visibility.Collapsed
                 : Visibility.Visible;
+            if (settingsPanel.Visibility == Visibility.Visible)
+                Task.Run(async () => await FetchOptionsAsync());
         }
 
         private void CollapseQuickPopup()
@@ -521,6 +711,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 settingsPanel.Visibility = Visibility.Collapsed;
             if (restoreButton != null)
                 restoreButton.Visibility = Visibility.Visible;
+            if (root != null)
+                root.Width = 42;
         }
 
         private void RefreshButtonText()
@@ -585,6 +777,161 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        private async Task FetchOptionsAsync()
+        {
+            if (string.IsNullOrWhiteSpace(ApiKey) || string.IsNullOrWhiteSpace(OpenBullUrl))
+                return;
+
+            try
+            {
+                string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/quick-order/options";
+                using (StringContent content = new StringContent(BuildOptionsJson(), Encoding.UTF8, "application/json"))
+                {
+                    HttpResponseMessage response = await Http.PostAsync(url, content);
+                    string body = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode || body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        SetStatus(TrimForStatus(body), false);
+                        return;
+                    }
+
+                    ChartControl.Dispatcher.InvokeAsync(() =>
+                    {
+                        settingsHydrating = true;
+                        try
+                        {
+                            FillCombo(instrumentCombo, ParseStringArray(body, "underlyings"), Underlying);
+                            FillCombo(expiryCombo, ParseExpiryValues(body), Expiry);
+                            List<string> strikes = ParseNumberArray(body, "strikes");
+                            FillCombo(ceCombo, strikes, CeStrike.ToString("0", CultureInfo.InvariantCulture));
+                            FillCombo(peCombo, strikes, PeStrike.ToString("0", CultureInfo.InvariantCulture));
+                            FillCombo(templateCombo, ParseTemplates(body), TargetTemplateId.ToString(CultureInfo.InvariantCulture));
+                            FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
+                            string mappedExchange = ExtractJsonValue(body, "underlying_exchange");
+                            if (!string.IsNullOrWhiteSpace(mappedExchange))
+                                UnderlyingExchange = mappedExchange.ToUpperInvariant();
+
+                            string saved = ExtractBlock(body, "saved");
+                            if (!string.IsNullOrEmpty(saved))
+                            {
+                                string lots = ExtractJsonValue(saved, "lots");
+                                string sl = ExtractJsonValue(saved, "sl_points");
+                                string product = ExtractJsonValue(saved, "product");
+                                string template = ExtractJsonValue(saved, "target_template_id");
+                                string savedExchange = ExtractJsonValue(saved, "underlying_exchange");
+                                string savedExpiry = ExtractJsonValue(saved, "expiry");
+                                string savedCe = ExtractJsonValue(saved, "ce_strike");
+                                string savedPe = ExtractJsonValue(saved, "pe_strike");
+                                if (!string.IsNullOrEmpty(savedExchange) && savedExchange != "null")
+                                    UnderlyingExchange = savedExchange.ToUpperInvariant();
+                                if (!string.IsNullOrEmpty(savedExpiry) && savedExpiry != "null")
+                                {
+                                    Expiry = savedExpiry.ToUpperInvariant();
+                                    SeedCombo(expiryCombo, Expiry);
+                                    SelectCombo(expiryCombo, Expiry);
+                                }
+                                if (!string.IsNullOrEmpty(savedCe) && savedCe != "null")
+                                {
+                                    CeStrike = ParseDouble(savedCe, CeStrike);
+                                    SeedCombo(ceCombo, CeStrike.ToString("0", CultureInfo.InvariantCulture));
+                                    SelectCombo(ceCombo, CeStrike.ToString("0", CultureInfo.InvariantCulture));
+                                }
+                                if (!string.IsNullOrEmpty(savedPe) && savedPe != "null")
+                                {
+                                    PeStrike = ParseDouble(savedPe, PeStrike);
+                                    SeedCombo(peCombo, PeStrike.ToString("0", CultureInfo.InvariantCulture));
+                                    SelectCombo(peCombo, PeStrike.ToString("0", CultureInfo.InvariantCulture));
+                                }
+                                if (!string.IsNullOrEmpty(lots))
+                                {
+                                    Lots = Math.Max(1, ParseInt(lots, Lots));
+                                    if (lotsBox != null) lotsBox.Text = Lots.ToString(CultureInfo.InvariantCulture);
+                                }
+                                if (!string.IsNullOrEmpty(sl))
+                                {
+                                    SlPoints = ParseDouble(sl, SlPoints);
+                                    if (slBox != null) slBox.Text = SlPoints.ToString(CultureInfo.InvariantCulture);
+                                }
+                                if (!string.IsNullOrEmpty(product))
+                                {
+                                    Product = product.ToUpperInvariant();
+                                    SelectCombo(productCombo, Product);
+                                }
+                                if (!string.IsNullOrEmpty(template) && template != "null")
+                                {
+                                    TargetTemplateId = Math.Max(0, ParseInt(template, TargetTemplateId));
+                                    SelectCombo(templateCombo, TargetTemplateId.ToString(CultureInfo.InvariantCulture));
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            settingsHydrating = false;
+                        }
+                        RefreshButtonText();
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, false);
+            }
+        }
+
+        private async Task SaveSettingsAsync()
+        {
+            if (settingsHydrating || string.IsNullOrWhiteSpace(ApiKey) || string.IsNullOrWhiteSpace(OpenBullUrl) || string.IsNullOrWhiteSpace(Underlying))
+                return;
+            try
+            {
+                string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/quick-order/settings";
+                using (StringContent content = new StringContent(BuildSettingsJson(), Encoding.UTF8, "application/json"))
+                {
+                    HttpResponseMessage response = await Http.PostAsync(url, content);
+                    string body = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode || body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) < 0)
+                        SetStatus(TrimForStatus(body), false);
+                    else
+                        SetStatus("Settings saved", true);
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, false);
+            }
+        }
+
+        private async Task DeleteSettingsAsync()
+        {
+            if (string.IsNullOrWhiteSpace(ApiKey) || string.IsNullOrWhiteSpace(OpenBullUrl) || string.IsNullOrWhiteSpace(Underlying))
+                return;
+            try
+            {
+                string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/quick-order/settings/delete";
+                StringBuilder sb = new StringBuilder();
+                sb.Append("{");
+                JsonString(sb, "apikey", ApiKey, true);
+                JsonString(sb, "underlying", Underlying, false);
+                sb.Append("}");
+                using (StringContent content = new StringContent(sb.ToString(), Encoding.UTF8, "application/json"))
+                {
+                    HttpResponseMessage response = await Http.PostAsync(url, content);
+                    string body = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode || body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) < 0)
+                        SetStatus(TrimForStatus(body), false);
+                    else
+                    {
+                        SetStatus("Settings deleted", true);
+                        await FetchOptionsAsync();
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, false);
+            }
+        }
+
         private async Task SendQuickOrderAsync(string side, string optionType)
         {
             if (isBusy)
@@ -633,6 +980,36 @@ namespace NinjaTrader.NinjaScript.Indicators
             JsonString(sb, "expiry", Expiry, false);
             JsonNumber(sb, "ce_strike", CeStrike, false);
             JsonNumber(sb, "pe_strike", PeStrike, false);
+            sb.Append("}");
+            return sb.ToString();
+        }
+
+        private string BuildOptionsJson()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("{");
+            JsonString(sb, "apikey", ApiKey, true);
+            JsonString(sb, "underlying", Underlying, false);
+            JsonString(sb, "underlying_exchange", UnderlyingExchange, false);
+            JsonString(sb, "expiry", Expiry, false);
+            sb.Append("}");
+            return sb.ToString();
+        }
+
+        private string BuildSettingsJson()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("{");
+            JsonString(sb, "apikey", ApiKey, true);
+            JsonString(sb, "underlying", Underlying, false);
+            JsonString(sb, "underlying_exchange", UnderlyingExchange, false);
+            JsonString(sb, "expiry", Expiry, false);
+            JsonNumber(sb, "ce_strike", CeStrike, false);
+            JsonNumber(sb, "pe_strike", PeStrike, false);
+            JsonNumber(sb, "lots", Lots, false);
+            JsonNumber(sb, "sl_points", SlPoints, false);
+            JsonString(sb, "product", Product, false);
+            JsonNumber(sb, "target_template_id", TargetTemplateId, false);
             sb.Append("}");
             return sb.ToString();
         }
@@ -756,6 +1133,132 @@ namespace NinjaTrader.NinjaScript.Indicators
             return double.TryParse(ltp.Groups["ltp"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
         }
 
+        private static string ExtractBlock(string body, string blockName)
+        {
+            Match block = Regex.Match(
+                body,
+                "\"" + Regex.Escape(blockName) + "\"\\s*:\\s*\\{(?<body>.*?)\\}",
+                RegexOptions.Singleline | RegexOptions.IgnoreCase
+            );
+            return block.Success ? block.Groups["body"].Value : "";
+        }
+
+        private static string ExtractJsonValue(string body, string key)
+        {
+            Match m = Regex.Match(
+                body,
+                "\"" + Regex.Escape(key) + "\"\\s*:\\s*(?:\"(?<str>[^\"]*)\"|(?<num>-?\\d+(?:\\.\\d+)?)|(?<null>null))",
+                RegexOptions.IgnoreCase
+            );
+            if (!m.Success)
+                return "";
+            if (m.Groups["str"].Success)
+                return Unescape(m.Groups["str"].Value);
+            if (m.Groups["num"].Success)
+                return m.Groups["num"].Value;
+            return "null";
+        }
+
+        private static List<string> ParseStringArray(string body, string key)
+        {
+            List<string> result = new List<string>();
+            Match array = Regex.Match(body, "\"" + Regex.Escape(key) + "\"\\s*:\\s*\\[(?<body>.*?)\\]", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+            if (!array.Success)
+                return result;
+            foreach (Match m in Regex.Matches(array.Groups["body"].Value, "\"(?<v>[^\"]+)\""))
+                result.Add(Unescape(m.Groups["v"].Value));
+            return result;
+        }
+
+        private static List<string> ParseNumberArray(string body, string key)
+        {
+            List<string> result = new List<string>();
+            Match array = Regex.Match(body, "\"" + Regex.Escape(key) + "\"\\s*:\\s*\\[(?<body>.*?)\\]", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+            if (!array.Success)
+                return result;
+            foreach (Match m in Regex.Matches(array.Groups["body"].Value, "-?\\d+(?:\\.\\d+)?"))
+                result.Add(m.Value);
+            return result;
+        }
+
+        private static List<string> ParseExpiryValues(string body)
+        {
+            List<string> result = new List<string>();
+            Match array = Regex.Match(body, "\"expiries\"\\s*:\\s*\\[(?<body>.*?)\\]", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+            if (!array.Success)
+                return result;
+            foreach (Match m in Regex.Matches(array.Groups["body"].Value, "\"value\"\\s*:\\s*\"(?<v>[^\"]+)\"", RegexOptions.IgnoreCase))
+                result.Add(Unescape(m.Groups["v"].Value));
+            return result;
+        }
+
+        private static List<string> ParseTemplates(string body)
+        {
+            List<string> result = new List<string>();
+            result.Add("0");
+            Match array = Regex.Match(body, "\"templates\"\\s*:\\s*\\[(?<body>.*?)\\]", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+            if (!array.Success)
+                return result;
+            foreach (Match m in Regex.Matches(array.Groups["body"].Value, "\"id\"\\s*:\\s*(?<id>\\d+)", RegexOptions.IgnoreCase))
+                result.Add(m.Groups["id"].Value);
+            return result;
+        }
+
+        private static string Unescape(string value)
+        {
+            return (value ?? "").Replace("\\\"", "\"").Replace("\\\\", "\\");
+        }
+
+        private void FillCombo(ComboBox combo, List<string> values, string selected)
+        {
+            if (combo == null)
+                return;
+            combo.Items.Clear();
+            foreach (string value in values)
+                if (!string.IsNullOrWhiteSpace(value))
+                    combo.Items.Add(value);
+            SeedCombo(combo, selected);
+            SelectCombo(combo, selected);
+        }
+
+        private void SeedCombo(ComboBox combo, string selected)
+        {
+            if (combo == null || string.IsNullOrWhiteSpace(selected))
+                return;
+            bool exists = false;
+            foreach (object item in combo.Items)
+            {
+                if (string.Equals(item.ToString(), selected, StringComparison.OrdinalIgnoreCase))
+                {
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists)
+                combo.Items.Add(selected);
+            combo.Text = selected;
+        }
+
+        private void SelectCombo(ComboBox combo, string selected)
+        {
+            if (combo == null || string.IsNullOrEmpty(selected))
+                return;
+            foreach (object item in combo.Items)
+            {
+                if (string.Equals(item.ToString(), selected, StringComparison.OrdinalIgnoreCase))
+                {
+                    combo.SelectedItem = item;
+                    combo.Text = item.ToString();
+                    return;
+                }
+            }
+            if (combo.Items.Count > 0 && combo.SelectedItem == null)
+            {
+                combo.SelectedIndex = 0;
+                combo.Text = combo.SelectedItem == null ? selected : combo.SelectedItem.ToString();
+            }
+        }
+
         private void SetStatus(string message, bool ok)
         {
             if (ChartControl == null)
@@ -798,6 +1301,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             isDragging = true;
             wasDragged = true;
+            dragMoved = false;
             dragStart = e.GetPosition(ChartControl);
             dragStartMargin = root.Margin;
             Mouse.Capture(sender as IInputElement);
@@ -808,8 +1312,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (!isDragging || root == null || ChartControl == null)
                 return;
             Point pos = e.GetPosition(ChartControl);
-            double nextLeft = Math.Max(4, dragStartMargin.Left + pos.X - dragStart.X);
-            double nextTop = Math.Max(4, dragStartMargin.Top + pos.Y - dragStart.Y);
+            double dx = pos.X - dragStart.X;
+            double dy = pos.Y - dragStart.Y;
+            if (Math.Abs(dx) > 2 || Math.Abs(dy) > 2)
+                dragMoved = true;
+            double nextLeft = Math.Max(4, dragStartMargin.Left + dx);
+            double nextTop = Math.Max(4, dragStartMargin.Top + dy);
             root.Margin = new Thickness(nextLeft, nextTop, 0, 0);
         }
 
