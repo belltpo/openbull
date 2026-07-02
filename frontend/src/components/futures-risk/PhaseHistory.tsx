@@ -5,6 +5,13 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, ChevronDown, Clock, Layers, Shield, Target, TrendingUp } from "lucide-react";
 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { listPhases } from "@/api/futuresRisk";
 import { useMarketData } from "@/hooks/useMarketData";
@@ -192,20 +199,33 @@ function PhaseCard({
         <>
           <button
             type="button"
-            onClick={() => setShowPreviousDetail((value) => !value)}
+            onClick={() => setShowPreviousDetail(true)}
             className="fr-dark-surface fr-dark-surface-hover mt-3 flex w-full items-center justify-between gap-3 rounded-lg border border-border/70 bg-background/30 px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground transition-colors hover:bg-background/55 hover:text-foreground"
           >
             <span>Earlier phases for this instrument ({previousPhases.length})</span>
             <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showPreviousDetail && "rotate-180")} />
           </button>
 
-          {showPreviousDetail && (
-            <div className="scrollbar-hidden mt-2 max-h-[32rem] space-y-2 overflow-y-auto rounded-xl border border-border/60 bg-background/20 p-2">
-              {previousPhases.map((p) => (
-                <PreviousPhaseRow key={p.trade_id} phase={p} liveOpt={liveOptFor?.(p)} />
-              ))}
-            </div>
-          )}
+          <Dialog open={showPreviousDetail} onOpenChange={setShowPreviousDetail}>
+            <DialogContent className="fr-dark-dialog max-h-[90vh] w-[calc(100vw-1rem)] overflow-hidden p-0 sm:max-w-[min(980px,calc(100vw-2rem))]">
+              <div className="scrollbar-hidden max-h-[90vh] space-y-4 overflow-y-auto overscroll-contain p-4 pr-5 sm:p-5 sm:pr-6">
+                <DialogHeader>
+                  <DialogTitle className="text-xl font-semibold">
+                    {phase.underlying} phase history
+                  </DialogTitle>
+                  <DialogDescription>
+                    Earlier phases before current Phase {phase.phase_no}. Review MTM, entry, stop-loss, targets, and duration.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="grid justify-center gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),380px))]">
+                  {previousPhases.map((p) => (
+                    <PreviousPhaseRow key={p.trade_id} phase={p} liveOpt={liveOptFor?.(p)} />
+                  ))}
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
         </>
       )}
     </div>
