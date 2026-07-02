@@ -26,10 +26,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Grid root;
         private Border popup;
         private Border settingsPanel;
+        private Border modeBadge;
         private Button restoreButton;
         private TextBlock liveText;
         private TextBlock mtmText;
         private TextBlock restoreMtmText;
+        private TextBlock modeBadgeText;
         private TextBlock statusText;
         private Button buyCeButton;
         private Button sellCeButton;
@@ -59,6 +61,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double ceLtp;
         private double peLtp;
         private double mtmValue;
+        private string tradingMode = "--";
 
         public override string DisplayName
         {
@@ -236,6 +239,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.MouseLeftButtonDown += StartDrag;
             header.MouseMove += DragMove;
             header.MouseLeftButtonUp += StopDrag;
@@ -251,14 +255,39 @@ namespace NinjaTrader.NinjaScript.Indicators
             Grid.SetColumn(title, 0);
             header.Children.Add(title);
 
+            modeBadge = new Border
+            {
+                CornerRadius = new CornerRadius(7),
+                Width = 76,
+                Padding = new Thickness(4, 2, 4, 2),
+                Margin = new Thickness(4, 0, 2, 0),
+                Background = new SolidColorBrush(Color.FromRgb(36, 36, 36)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(70, 70, 70)),
+                BorderThickness = new Thickness(1),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            modeBadgeText = new TextBlock
+            {
+                Text = "--",
+                Foreground = Brushes.White,
+                FontSize = 9,
+                FontWeight = FontWeights.Bold,
+                TextAlignment = TextAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            modeBadge.Child = modeBadgeText;
+            Grid.SetColumn(modeBadge, 1);
+            header.Children.Add(modeBadge);
+
             Button settingsButton = IconButton("\u2699");
             settingsButton.Click += (s, e) => ToggleSettings();
-            Grid.SetColumn(settingsButton, 1);
+            Grid.SetColumn(settingsButton, 2);
             header.Children.Add(settingsButton);
 
             Button closeButton = IconButton("X");
             closeButton.Click += (s, e) => CollapseQuickPopup();
-            Grid.SetColumn(closeButton, 2);
+            Grid.SetColumn(closeButton, 3);
             header.Children.Add(closeButton);
             stack.Children.Add(header);
 
@@ -307,9 +336,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             });
             restoreMtmText = new TextBlock
             {
-                Text = "--",
+                Text = "MTM --",
                 Foreground = new SolidColorBrush(Color.FromRgb(20, 220, 150)),
-                FontSize = 8,
+                FontSize = 7,
                 FontWeight = FontWeights.SemiBold,
                 TextAlignment = TextAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center
@@ -319,7 +348,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             Button button = new Button
             {
                 Content = content,
-                Width = 42,
+                Width = 88,
                 Height = 36,
                 Padding = new Thickness(0),
                 Foreground = Brushes.White,
@@ -649,7 +678,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 FontSize = 10,
                 Height = 24,
-                IsEditable = true,
+                IsEditable = false,
                 IsTextSearchEnabled = true,
                 Foreground = Brushes.White,
                 Background = new SolidColorBrush(Color.FromRgb(10, 10, 10)),
@@ -660,10 +689,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             combo.Resources[SystemColors.ControlTextBrushKey] = Brushes.White;
             combo.Resources[SystemColors.HighlightBrushKey] = new SolidColorBrush(Color.FromRgb(45, 86, 160));
             combo.Resources[SystemColors.HighlightTextBrushKey] = Brushes.White;
+            combo.Resources[typeof(TextBox)] = BuildComboTextBoxStyle();
             combo.ItemTemplate = BuildComboItemTemplate();
             combo.ItemContainerStyle = BuildComboItemStyle();
-            combo.Loaded += (s, e) => ApplyComboTextColors(combo);
-            combo.DropDownOpened += (s, e) => ApplyComboTextColors(combo);
+            combo.Loaded += (s, e) => combo.Dispatcher.BeginInvoke(new Action(() => ApplyComboTextColors(combo)));
+            combo.DropDownOpened += (s, e) => combo.Dispatcher.BeginInvoke(new Action(() => ApplyComboTextColors(combo)));
             combo.SelectionChanged += (s, e) =>
             {
                 if (settingsHydrating || combo.SelectedItem == null)
@@ -679,8 +709,22 @@ namespace NinjaTrader.NinjaScript.Indicators
                 SeedCombo(combo, combo.Text.Trim());
                 RefreshButtonText();
             };
-            Grid.SetColumn(combo, 1);
-            row.Children.Add(combo);
+            Grid comboShell = new Grid();
+            comboShell.Children.Add(combo);
+            TextBlock arrow = new TextBlock
+            {
+                Text = "\u25BE",
+                Foreground = Brushes.White,
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 7, 0),
+                IsHitTestVisible = false
+            };
+            comboShell.Children.Add(arrow);
+            Grid.SetColumn(comboShell, 1);
+            row.Children.Add(comboShell);
             stack.Children.Add(row);
             return combo;
         }
@@ -697,6 +741,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             highlighted.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
             highlighted.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(45, 86, 160))));
             style.Triggers.Add(highlighted);
+            return style;
+        }
+
+        private static Style BuildComboTextBoxStyle()
+        {
+            Style style = new Style(typeof(TextBox));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(10, 10, 10))));
+            style.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(65, 65, 65))));
+            style.Setters.Add(new Setter(TextBox.CaretBrushProperty, Brushes.White));
             return style;
         }
 
@@ -822,7 +876,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (restoreButton != null)
                 restoreButton.Visibility = Visibility.Visible;
             if (root != null)
-                root.Width = 42;
+                root.Width = 88;
         }
 
         private void RefreshButtonText()
@@ -866,6 +920,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     double nextCe = ExtractLtp(body, "ce");
                     double nextPe = ExtractLtp(body, "pe");
                     double nextMtm = ExtractNestedNumber(body, "mtm", "total");
+                    string nextMode = ExtractJsonValue(body, "mode");
 
                     ChartControl.Dispatcher.InvokeAsync(() =>
                     {
@@ -873,12 +928,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                         ceLtp = nextCe > 0 ? nextCe : ceLtp;
                         peLtp = nextPe > 0 ? nextPe : peLtp;
                         mtmValue = nextMtm;
+                        if (!string.IsNullOrWhiteSpace(nextMode) && nextMode != "null")
+                            tradingMode = nextMode.ToUpperInvariant();
                         if (liveText != null)
                         {
                             string futText = futuresLtp > 0 ? futuresLtp.ToString("N2", CultureInfo.InvariantCulture) : "--";
                             liveText.Text = Underlying + " FUT " + futText;
                         }
                         UpdateMtmText();
+                        UpdateModeBadge();
                         RefreshButtonText();
                     });
                 }
@@ -923,6 +981,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                             string mappedExchange = ExtractJsonValue(body, "underlying_exchange");
                             if (!string.IsNullOrWhiteSpace(mappedExchange))
                                 UnderlyingExchange = mappedExchange.ToUpperInvariant();
+                            string optionsMode = ExtractJsonValue(body, "mode");
+                            if (!string.IsNullOrWhiteSpace(optionsMode) && optionsMode != "null")
+                            {
+                                tradingMode = optionsMode.ToUpperInvariant();
+                                UpdateModeBadge();
+                            }
 
                             string saved = ExtractBlock(body, "saved");
                             if (!string.IsNullOrEmpty(saved))
@@ -1387,7 +1451,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void UpdateMtmText()
         {
             string value = (mtmValue >= 0 ? "+" : "") + mtmValue.ToString("N2", CultureInfo.InvariantCulture);
-            string compactValue = FormatCompactMtm(mtmValue);
             Brush brush = mtmValue >= 0
                 ? new SolidColorBrush(Color.FromRgb(20, 220, 150))
                 : new SolidColorBrush(Color.FromRgb(255, 95, 95));
@@ -1398,20 +1461,30 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             if (restoreMtmText != null)
             {
-                restoreMtmText.Text = compactValue;
+                restoreMtmText.Text = "MTM " + value;
                 restoreMtmText.Foreground = brush;
             }
         }
 
-        private static string FormatCompactMtm(double value)
+        private void UpdateModeBadge()
         {
-            double abs = Math.Abs(value);
-            string sign = value >= 0 ? "+" : "-";
-            if (abs >= 100000)
-                return sign + (abs / 100000.0).ToString("0.#", CultureInfo.InvariantCulture) + "L";
-            if (abs >= 1000)
-                return sign + (abs / 1000.0).ToString("0.#", CultureInfo.InvariantCulture) + "K";
-            return sign + abs.ToString("0", CultureInfo.InvariantCulture);
+            if (modeBadgeText == null)
+                return;
+            string mode = string.IsNullOrWhiteSpace(tradingMode) ? "--" : tradingMode.ToUpperInvariant();
+            bool live = string.Equals(mode, "LIVE", StringComparison.OrdinalIgnoreCase);
+            modeBadgeText.Text = live ? "LIVE" : (mode == "--" ? "--" : "SANDBOX");
+            modeBadgeText.Foreground = live
+                ? new SolidColorBrush(Color.FromRgb(255, 255, 255))
+                : new SolidColorBrush(Color.FromRgb(210, 200, 255));
+            if (modeBadge != null)
+            {
+                modeBadge.Background = live
+                    ? new SolidColorBrush(Color.FromRgb(18, 110, 72))
+                    : new SolidColorBrush(Color.FromRgb(56, 44, 118));
+                modeBadge.BorderBrush = live
+                    ? new SolidColorBrush(Color.FromRgb(30, 170, 110))
+                    : new SolidColorBrush(Color.FromRgb(96, 80, 190));
+            }
         }
 
         private void SetStatus(string message, bool ok)
@@ -1434,6 +1507,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (string.IsNullOrWhiteSpace(value))
                 return "No response";
             value = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            string message = ExtractJsonValue(value, "message");
+            if (!string.IsNullOrWhiteSpace(message) && message != "null")
+                value = message;
+            else
+            {
+                string detail = ExtractJsonValue(value, "detail");
+                if (!string.IsNullOrWhiteSpace(detail) && detail != "null")
+                    value = detail;
+            }
             return value.Length > 72 ? value.Substring(0, 72) + "..." : value;
         }
 

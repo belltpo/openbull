@@ -188,6 +188,7 @@ async def api_futures_risk_quick_order_options(request: Request):
         content={
             "status": "success",
             "data": {
+                "mode": await _get_trading_mode(),
                 "underlyings": underlyings,
                 "underlying_exchange": underlying_exchange,
                 "expiries": expiries,
@@ -288,6 +289,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
         return _error_response(exc)
 
     try:
+        mode = await _get_trading_mode()
         maps = [m for m in fr.list_symbol_maps() if m.get("enabled")]
         selected_map = next(
             (m for m in maps if str(m.get("underlying", "")).upper() == payload.underlying.upper()),
@@ -302,6 +304,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
             )
 
         data: dict[str, Any] = {
+            "mode": mode,
             "futures": _quote_payload(fut["symbol"], fut["exchange"], auth_token, broker_name, config),
             "ce": None,
             "pe": None,
