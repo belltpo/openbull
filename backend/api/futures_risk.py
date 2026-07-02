@@ -276,7 +276,7 @@ def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str
 async def api_futures_risk_quick_order_preview(request: Request):
     """Resolve the current quick-order symbols and return live quote snapshots."""
     try:
-        _user_id, auth_token, broker_name, config = await _resolve_api_user(request)
+        user_id, auth_token, broker_name, config = await _resolve_api_user(request)
         body = await _request_json(request)
         payload = FuturesRiskQuickOrderPreview.model_validate(body)
     except ValidationError as exc:
@@ -288,6 +288,12 @@ async def api_futures_risk_quick_order_preview(request: Request):
         return _error_response(exc)
 
     try:
+        maps = [m for m in fr.list_symbol_maps() if m.get("enabled")]
+        selected_map = next(
+            (m for m in maps if str(m.get("underlying", "")).upper() == payload.underlying.upper()),
+            None,
+        )
+        underlying_exchange = str((selected_map or {}).get("underlying_exchange") or payload.underlying_exchange)
         fut = fr.resolve_futures(payload.underlying)
         if fut is None:
             return JSONResponse(
@@ -303,7 +309,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
         if payload.ce_strike:
             ce = fr._resolve_option(  # type: ignore[attr-defined]
                 payload.underlying,
-                payload.underlying_exchange,
+                underlying_exchange,
                 payload.expiry,
                 "CE",
                 "BUY",
@@ -317,7 +323,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
         if payload.pe_strike:
             pe = fr._resolve_option(  # type: ignore[attr-defined]
                 payload.underlying,
-                payload.underlying_exchange,
+                underlying_exchange,
                 payload.expiry,
                 "PE",
                 "BUY",
@@ -328,6 +334,33 @@ async def api_futures_risk_quick_order_preview(request: Request):
                 config,
             )
             data["pe"] = _quote_payload(pe["symbol"], pe["exchange"], auth_token, broker_name, config)
+        quotes_by_symbol = {
+            (data["ce"] or {}).get("symbol"): (data["ce"] or {}).get("ltp"),
+            (data["pe"] or {}).get("symbol"): (data["pe"] or {}).get("ltp"),
+        }
+        booked_pnl = 0.0
+        open_pnl = 0.0
+        active_count = 0
+        for trade in fr.list_trades(user_id, status="all"):
+            if str(trade.get("underlying", "")).upper() != payload.underlying.upper():
+                continue
+            booked_pnl += float(trade.get("realized_pnl") or 0)
+            if trade.get("status") != "active":
+                continue
+            active_count += 1
+            live_opt = quotes_by_symbol.get(trade.get("option_symbol"))
+            if live_opt is None:
+                continue
+            entry_opt = float(trade.get("entry_option_price") or 0)
+            remaining_qty = int(trade.get("remaining_qty") or 0)
+            direction = 1 if trade.get("side") == "BUY" else -1
+            open_pnl += (float(live_opt) - entry_opt) * remaining_qty * direction
+        data["mtm"] = {
+            "booked": round(booked_pnl, 2),
+            "open": round(open_pnl, 2),
+            "total": round(booked_pnl + open_pnl, 2),
+            "active_count": active_count,
+        }
     except FrError as exc:
         return JSONResponse(content={"status": "error", "message": exc.message}, status_code=exc.status)
     except Exception:
