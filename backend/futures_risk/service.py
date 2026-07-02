@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -979,6 +980,54 @@ def _persist_failed_entry(
         return trade.id
 
 
+_ENTRY_SUCCESS_STATUSES = {"complete", "completed", "traded", "filled", "success"}
+_ENTRY_FAILURE_STATUSES = {"rejected", "cancelled", "canceled", "failed"}
+
+
+def _broker_order_status(order_id: str, auth_token: str, broker: str, config: dict | None) -> tuple[str | None, str | None]:
+    try:
+        from backend.services.orderstatus_service import get_orderstatus_with_auth
+
+        ok, resp, _ = get_orderstatus_with_auth(order_id, auth_token, broker, config)
+    except Exception as exc:
+        logger.debug("Entry order status check failed for %s: %s", order_id, exc)
+        return None, None
+    if not ok:
+        return None, resp.get("message") if isinstance(resp, dict) else None
+    data = resp.get("data") if isinstance(resp, dict) else None
+    if not isinstance(data, dict):
+        return None, None
+    raw_status = data.get("order_status") or data.get("status")
+    status = str(raw_status).strip().lower() if raw_status is not None else None
+    return status, None
+
+
+def _confirm_entry_order(
+    order_id: str,
+    auth_token: str,
+    broker: str,
+    config: dict | None,
+    *,
+    attempts: int = 6,
+    delay_sec: float = 0.35,
+) -> tuple[bool, str | None]:
+    last_status: str | None = None
+    last_error: str | None = None
+    for attempt in range(attempts):
+        status, err = _broker_order_status(order_id, auth_token, broker, config)
+        last_status = status or last_status
+        last_error = err or last_error
+        if status in _ENTRY_SUCCESS_STATUSES:
+            return True, None
+        if status in _ENTRY_FAILURE_STATUSES:
+            return False, f"Broker order {order_id} was {status}"
+        if attempt < attempts - 1:
+            time.sleep(delay_sec)
+    if last_status:
+        return False, f"Broker order {order_id} did not complete; current status is {last_status}"
+    return False, last_error or f"Broker order {order_id} status could not be confirmed"
+
+
 def place_trade(
     user_id: int,
     mode: str,
@@ -1032,6 +1081,18 @@ def place_trade(
             broker_status=status,
         )
         return get_trade(user_id, trade_id) or {}
+    if mode != "sandbox":
+        confirmed, confirm_message = _confirm_entry_order(str(entry_order_id), auth_token, broker, config)
+        if not confirmed:
+            trade_id = _persist_failed_entry(
+                user_id=user_id,
+                mode=mode,
+                params=p,
+                plan=plan,
+                message=confirm_message or "Broker entry order was not completed",
+                broker_status=status,
+            )
+            return get_trade(user_id, trade_id) or {}
 
     with session_scope() as db:
         group, phase_no = _assign_phase(db, user_id, p["underlying"])
@@ -1216,6 +1277,19 @@ def place_draft(
             existing_trade_id=trade_id,
         )
         return get_trade(user_id, failed_id) or {}
+    if mode != "sandbox":
+        confirmed, confirm_message = _confirm_entry_order(str(entry_order_id), auth_token, broker, config)
+        if not confirmed:
+            failed_id = _persist_failed_entry(
+                user_id=user_id,
+                mode=mode,
+                params=p,
+                plan=plan,
+                message=confirm_message or "Broker entry order was not completed",
+                broker_status=status,
+                existing_trade_id=trade_id,
+            )
+            return get_trade(user_id, failed_id) or {}
 
     with session_scope() as db:
         t = db.get(FrTrade, trade_id)
@@ -1399,6 +1473,50 @@ def _mark_missing_entry_order_ids_failed(db, user_id: int) -> None:
         )
 
 
+def _sync_active_entry_order_statuses(db, user_id: int) -> None:
+    ctx = load_broker_context_sync(user_id)
+    if not ctx:
+        return
+    rows = db.execute(
+        select(FrTrade).where(
+            FrTrade.user_id == user_id,
+            FrTrade.mode == "live",
+            FrTrade.status == "active",
+            FrTrade.entry_order_id.is_not(None),
+        )
+    ).scalars().all()
+    for trade in rows:
+        status, _ = _broker_order_status(
+            str(trade.entry_order_id),
+            ctx["auth_token"],
+            ctx["broker"],
+            ctx.get("config"),
+        )
+        if status not in _ENTRY_FAILURE_STATUSES:
+            continue
+        trade.status = "error"
+        trade.remaining_qty = 0
+        trade.closed_at = datetime.now(tz=timezone.utc)
+        meta = dict(trade.meta or {})
+        meta["entry_error"] = f"Broker entry order {trade.entry_order_id} was {status}"
+        trade.meta = meta
+        log_event(
+            db,
+            trade_id=trade.id,
+            user_id=user_id,
+            kind="error",
+            severity="error",
+            message=f"Entry order failed: broker order {trade.entry_order_id} was {status}",
+            payload={
+                "entry_order_id": trade.entry_order_id,
+                "broker_status": status,
+                "entry_futures_price": trade.entry_futures_price,
+                "entry_option_price": trade.entry_option_price,
+                "sl_price": trade.sl_price,
+            },
+        )
+
+
 def _event_to_dict(e: FrTradeEvent) -> dict[str, Any]:
     return {
         "id": e.id,
@@ -1428,6 +1546,7 @@ def _phase_display_numbers(db, user_id: int) -> dict[int, int]:
 def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]:
     with session_scope() as db:
         _mark_missing_entry_order_ids_failed(db, user_id)
+        _sync_active_entry_order_statuses(db, user_id)
         q = select(FrTrade).where(FrTrade.user_id == user_id)
         if status and status != "all":
             q = q.where(FrTrade.status == status)
@@ -1453,6 +1572,7 @@ def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]
 def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
     with session_scope() as db:
         _mark_missing_entry_order_ids_failed(db, user_id)
+        _sync_active_entry_order_statuses(db, user_id)
         t = db.get(FrTrade, trade_id)
         if t is None or t.user_id != user_id:
             return None
