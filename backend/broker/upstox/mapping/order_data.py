@@ -181,6 +181,7 @@ def transform_order_data(orders) -> list[dict]:
             "action": order.get("transaction_type", ""),
             "quantity": order.get("quantity", 0),
             "price": order.get("price", 0.0),
+            "average_price": order.get("average_price", 0.0),
             "trigger_price": order.get("trigger_price", 0.0),
             "pricetype": order.get("order_type", ""),
             "product": order.get("product", ""),

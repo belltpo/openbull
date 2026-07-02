@@ -78,11 +78,11 @@ def _futures_price(symbol: str, exchange: str, ctx: dict | None) -> float | None
 # Exit placement
 # ---------------------------------------------------------------------------
 
-def _place_exit(trade: FrTrade, qty: int, reason: str, ctx: dict | None = None) -> tuple[bool, str | None, str]:
+def _place_exit(trade: FrTrade, qty: int, reason: str, ctx: dict | None = None) -> tuple[bool, str | None, str, float | None]:
     if qty <= 0:
-        return True, None, "nothing to exit"
+        return True, None, "nothing to exit", None
     if trade.mode != "sandbox" and ctx is None:
-        return False, None, "No active broker session"
+        return False, None, "No active broker session", None
     exit_action = "SELL" if trade.side == "BUY" else "BUY"
     order_data = {
         "symbol": trade.option_symbol,
@@ -104,34 +104,47 @@ def _place_exit(trade: FrTrade, qty: int, reason: str, ctx: dict | None = None) 
         config=ctx.get("config") if ctx else None,
     )
     if not ok:
-        return False, None, resp.get("message", "exit failed")
+        return False, None, resp.get("message", "exit failed"), None
 
     order_id = resp.get("orderid")
     if trade.mode == "sandbox":
-        return True, order_id, "ok"
+        return True, order_id, "ok", None
     if not order_id:
-        return False, None, "Broker did not return an exit order id"
-    confirmed, confirm_message = fr_service._confirm_entry_order(
+        return False, None, "Broker did not return an exit order id", None
+    confirmed, confirm_message, fill_price = fr_service._confirm_entry_order(
         str(order_id),
         ctx["auth_token"],
         ctx["broker"],
         ctx.get("config"),
     )
     if not confirmed:
-        return False, str(order_id), confirm_message or "Broker exit order was not completed"
-    return True, str(order_id), "ok"
+        return False, str(order_id), confirm_message or "Broker exit order was not completed", fill_price
+    return True, str(order_id), "ok", fill_price
 
 
 # ---------------------------------------------------------------------------
 # Trailing
 # ---------------------------------------------------------------------------
 
-def _apply_trailing(trade: FrTrade, hit_seq: int) -> None:
-    """After the first target, entry is the stop-loss for remaining quantity."""
-    if hit_seq < 1:
+def _trade_trailing_mode(trade: FrTrade) -> str:
+    raw = (trade.meta or {}).get("trailing_mode") or fr_service.get_config_value("trailing_mode", "entry_after_t1")
+    mode = str(raw or "entry_after_t1").strip()
+    return mode if mode in {"entry_after_t1", "prev_target", "off"} else "entry_after_t1"
+
+
+def _apply_trailing(trade: FrTrade, hit_seq: int, targets: list[FrTradeTarget]) -> None:
+    if hit_seq < 1 or not fr_service._bool_cfg("trailing_enabled", True):
         return
-    new_price = trade.entry_futures_price
-    basis = "entry"
+    mode = _trade_trailing_mode(trade)
+    if mode == "off":
+        return
+    if mode == "prev_target" and hit_seq > 1:
+        prev_target = next((target for target in targets if target.seq == hit_seq - 1), None)
+        new_price = prev_target.trigger_price if prev_target is not None else trade.entry_futures_price
+        basis = f"target{hit_seq - 1}" if prev_target is not None else "entry"
+    else:
+        new_price = trade.entry_futures_price
+        basis = "entry"
     # Only ever tighten in the favourable direction (never loosen the SL).
     improved = (
         (trade.direction == 1 and new_price > trade.sl_price)
@@ -187,9 +200,9 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
             qty = t.remaining_qty
             if not auto_exit:
                 return
-            ok, oid, msg = _place_exit(t, qty, "sl", ctx) if qty > 0 else (True, None, "ok")
+            ok, oid, msg, fill_price = _place_exit(t, qty, "sl", ctx) if qty > 0 else (True, None, "ok", None)
             if ok:
-                exit_px = fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
+                exit_px = fill_price or fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
                 pnl_inc = fr_service._leg_exit_pnl(t.side, t.entry_option_price, exit_px, qty)
                 t.remaining_qty = 0
                 t.realized_pnl = round((t.realized_pnl or 0.0) + pnl_inc, 2)
@@ -236,7 +249,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                     payload={"futures_price": fut, "seq": tgt.seq, "exit_order_id": None, "qty": 0, "pnl": 0.0},
                 )
                 prev_sl = t.sl_price
-                _apply_trailing(t, tgt.seq)
+                _apply_trailing(t, tgt.seq, all_targets)
                 if t.sl_price != prev_sl:
                     log_event(
                         db, trade_id=t.id, user_id=user_id, kind="sl_trail",
@@ -245,7 +258,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                     )
                 continue
 
-            ok, oid, msg = _place_exit(t, qty, f"t{tgt.seq}", ctx)
+            ok, oid, msg, fill_price = _place_exit(t, qty, f"t{tgt.seq}", ctx)
             if not ok:
                 log_event(
                     db, trade_id=t.id, user_id=user_id, kind="error", severity="error",
@@ -253,7 +266,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                     payload={"futures_price": fut, "seq": tgt.seq},
                 )
                 continue
-            exit_px = fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
+            exit_px = fill_price or fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
             pnl_inc = fr_service._leg_exit_pnl(t.side, t.entry_option_price, exit_px, qty)
             tgt.status = "hit"
             tgt.hit_futures_price = fut
@@ -268,7 +281,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                 payload={"futures_price": fut, "seq": tgt.seq, "exit_order_id": oid, "qty": qty, "exit_option_price": exit_px, "pnl": pnl_inc},
             )
             prev_sl = t.sl_price
-            _apply_trailing(t, tgt.seq)
+            _apply_trailing(t, tgt.seq, all_targets)
             if t.sl_price != prev_sl:
                 log_event(
                     db, trade_id=t.id, user_id=user_id, kind="sl_trail",

@@ -994,22 +994,53 @@ _ENTRY_SUCCESS_STATUSES = {"complete", "completed", "traded", "filled", "success
 _ENTRY_FAILURE_STATUSES = {"rejected", "cancelled", "canceled", "failed"}
 
 
-def _broker_order_status(order_id: str, auth_token: str, broker: str, config: dict | None) -> tuple[str | None, str | None]:
+def _coerce_positive_float(value: Any) -> float | None:
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    return num if num > 0 else None
+
+
+def _extract_order_fill_price(data: dict[str, Any]) -> float | None:
+    for key in (
+        "average_price",
+        "avg_price",
+        "averagePrice",
+        "avgPrice",
+        "filled_price",
+        "fill_price",
+        "traded_price",
+        "tradedPrice",
+        "execution_price",
+    ):
+        price = _coerce_positive_float(data.get(key))
+        if price is not None:
+            return price
+    return None
+
+
+def _broker_order_status(
+    order_id: str,
+    auth_token: str,
+    broker: str,
+    config: dict | None,
+) -> tuple[str | None, str | None, float | None]:
     try:
         from backend.services.orderstatus_service import get_orderstatus_with_auth
 
         ok, resp, _ = get_orderstatus_with_auth(order_id, auth_token, broker, config)
     except Exception as exc:
         logger.debug("Entry order status check failed for %s: %s", order_id, exc)
-        return None, None
+        return None, None, None
     if not ok:
-        return None, resp.get("message") if isinstance(resp, dict) else None
+        return None, resp.get("message") if isinstance(resp, dict) else None, None
     data = resp.get("data") if isinstance(resp, dict) else None
     if not isinstance(data, dict):
-        return None, None
+        return None, None, None
     raw_status = data.get("order_status") or data.get("status")
     status = str(raw_status).strip().lower() if raw_status is not None else None
-    return status, None
+    return status, None, _extract_order_fill_price(data)
 
 
 def _confirm_entry_order(
@@ -1020,22 +1051,24 @@ def _confirm_entry_order(
     *,
     attempts: int = 6,
     delay_sec: float = 0.35,
-) -> tuple[bool, str | None]:
+) -> tuple[bool, str | None, float | None]:
     last_status: str | None = None
     last_error: str | None = None
+    fill_price: float | None = None
     for attempt in range(attempts):
-        status, err = _broker_order_status(order_id, auth_token, broker, config)
+        status, err, price = _broker_order_status(order_id, auth_token, broker, config)
         last_status = status or last_status
         last_error = err or last_error
+        fill_price = price or fill_price
         if status in _ENTRY_SUCCESS_STATUSES:
-            return True, None
+            return True, None, fill_price
         if status in _ENTRY_FAILURE_STATUSES:
-            return False, f"Broker order {order_id} was {status}"
+            return False, f"Broker order {order_id} was {status}", fill_price
         if attempt < attempts - 1:
             time.sleep(delay_sec)
     if last_status:
-        return False, f"Broker order {order_id} did not complete; current status is {last_status}"
-    return False, last_error or f"Broker order {order_id} status could not be confirmed"
+        return False, f"Broker order {order_id} did not complete; current status is {last_status}", fill_price
+    return False, last_error or f"Broker order {order_id} status could not be confirmed", fill_price
 
 
 def place_trade(
@@ -1092,7 +1125,7 @@ def place_trade(
         )
         return get_trade(user_id, trade_id) or {}
     if mode != "sandbox":
-        confirmed, confirm_message = _confirm_entry_order(str(entry_order_id), auth_token, broker, config)
+        confirmed, confirm_message, fill_price = _confirm_entry_order(str(entry_order_id), auth_token, broker, config)
         if not confirmed:
             trade_id = _persist_failed_entry(
                 user_id=user_id,
@@ -1103,6 +1136,8 @@ def place_trade(
                 broker_status=status,
             )
             return get_trade(user_id, trade_id) or {}
+        if fill_price is not None:
+            plan["entry_opt"] = fill_price
 
     with session_scope() as db:
         group, phase_no = _assign_phase(db, user_id, p["underlying"])
@@ -1288,7 +1323,7 @@ def place_draft(
         )
         return get_trade(user_id, failed_id) or {}
     if mode != "sandbox":
-        confirmed, confirm_message = _confirm_entry_order(str(entry_order_id), auth_token, broker, config)
+        confirmed, confirm_message, fill_price = _confirm_entry_order(str(entry_order_id), auth_token, broker, config)
         if not confirmed:
             failed_id = _persist_failed_entry(
                 user_id=user_id,
@@ -1300,6 +1335,8 @@ def place_draft(
                 existing_trade_id=trade_id,
             )
             return get_trade(user_id, failed_id) or {}
+        if fill_price is not None:
+            plan["entry_opt"] = fill_price
 
     with session_scope() as db:
         t = db.get(FrTrade, trade_id)
@@ -1703,6 +1740,7 @@ def manual_exit(
             raise FrError("qty must be between 1 and the remaining quantity", 400)
 
     exit_order_id = None
+    exit_fill_price: float | None = None
     if exit_qty > 0:
         exit_action = "SELL" if side == "BUY" else "BUY"
         order_data = {
@@ -1733,7 +1771,7 @@ def manual_exit(
         if mode != "sandbox":
             if not exit_order_id:
                 raise FrError("Broker did not return an exit order id", 502)
-            confirmed, confirm_message = _confirm_entry_order(
+            confirmed, confirm_message, fill_price = _confirm_entry_order(
                 str(exit_order_id),
                 ctx["auth_token"],
                 ctx["broker"],
@@ -1741,8 +1779,10 @@ def manual_exit(
             )
             if not confirmed:
                 raise FrError(confirm_message or "Broker exit order was not completed", 409)
+            if fill_price is not None:
+                exit_fill_price = fill_price
 
-    exit_px = _option_exit_price(option_symbol, option_exchange, fallback=entry_opt)
+    exit_px = exit_fill_price or _option_exit_price(option_symbol, option_exchange, fallback=entry_opt)
     pnl_inc = _leg_exit_pnl(side, entry_opt, exit_px, exit_qty)
 
     with session_scope() as db:
