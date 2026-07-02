@@ -39,6 +39,7 @@ from backend.api.volsurface import router as volsurface_router
 from backend.api.straddle import router as straddle_router
 from backend.api.gex import router as gex_router
 from backend.api.analyzer import router as analyzer_router
+from backend.api.futures_risk import router as futures_risk_router
 
 api_v1_router = APIRouter(prefix="/api/v1", tags=["api-v1"])
 
@@ -76,3 +77,4 @@ api_v1_router.include_router(volsurface_router)
 api_v1_router.include_router(straddle_router)
 api_v1_router.include_router(gex_router)
 api_v1_router.include_router(analyzer_router)
+api_v1_router.include_router(futures_risk_router)
