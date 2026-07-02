@@ -5,13 +5,6 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, ChevronDown, Clock, Layers, Shield, Target, TrendingUp } from "lucide-react";
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { listPhases } from "@/api/futuresRisk";
 import { useMarketData } from "@/hooks/useMarketData";
@@ -19,6 +12,13 @@ import type { FrPhase } from "@/types/futuresRisk";
 import { durationFmt, fmt, timeFmt } from "./frFormat";
 
 type DateFilter = "today" | "week" | "month" | "custom";
+
+const DATE_FILTER_LABELS: Record<DateFilter, string> = {
+  today: "Today",
+  week: "Week",
+  month: "Month",
+  custom: "Custom",
+};
 
 function localDateKey(d: Date): string {
   const y = d.getFullYear();
@@ -192,33 +192,20 @@ function PhaseCard({
         <>
           <button
             type="button"
-            onClick={() => setShowPreviousDetail(true)}
+            onClick={() => setShowPreviousDetail((value) => !value)}
             className="fr-dark-surface fr-dark-surface-hover mt-3 flex w-full items-center justify-between gap-3 rounded-lg border border-border/70 bg-background/30 px-3 py-2.5 text-left text-sm font-semibold text-muted-foreground transition-colors hover:bg-background/55 hover:text-foreground"
           >
             <span>Earlier phases for this instrument ({previousPhases.length})</span>
-            <ChevronDown className="h-3.5 w-3.5" />
+            <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", showPreviousDetail && "rotate-180")} />
           </button>
 
-          <Dialog open={showPreviousDetail} onOpenChange={setShowPreviousDetail}>
-            <DialogContent className="fr-dark-dialog max-h-[90vh] w-[calc(100vw-1rem)] overflow-hidden p-0 sm:max-w-[min(1100px,calc(100vw-2rem))]">
-              <div className="scrollbar-hidden max-h-[90vh] space-y-4 overflow-y-auto overscroll-contain p-4 pr-5 sm:p-5 sm:pr-6">
-                <DialogHeader>
-                  <DialogTitle className="text-xl font-semibold">
-                    {phase.underlying} phase history
-                  </DialogTitle>
-                  <DialogDescription>
-                    Earlier phases before current Phase {phase.phase_no}. Review phase MTM, entry, stoploss, targets, and duration in one detail view.
-                  </DialogDescription>
-                </DialogHeader>
-
-                <div className="grid justify-center gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),420px))]">
-                  {previousPhases.map((p) => (
-                    <PreviousPhaseRow key={p.trade_id} phase={p} liveOpt={liveOptFor?.(p)} />
-                  ))}
-                </div>
-              </div>
-            </DialogContent>
-          </Dialog>
+          {showPreviousDetail && (
+            <div className="scrollbar-hidden mt-2 max-h-[32rem] space-y-2 overflow-y-auto rounded-xl border border-border/60 bg-background/20 p-2">
+              {previousPhases.map((p) => (
+                <PreviousPhaseRow key={p.trade_id} phase={p} liveOpt={liveOptFor?.(p)} />
+              ))}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -295,27 +282,46 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex flex-wrap gap-1.5">
-          {(["today", "week", "month", "custom"] as DateFilter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={cn(
-                "rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors",
-                filter === f ? "bg-primary text-primary-foreground shadow" : "bg-foreground/[0.05] text-muted-foreground hover:bg-foreground/10",
-              )}
+      <div className="fr-glass fr-dark-surface flex w-full flex-col gap-3 rounded-xl border border-border/70 p-3 lg:w-fit lg:min-w-[22rem]">
+        <div className="grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto] sm:items-end">
+          <div className="space-y-1.5">
+            <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Phase History Filter
+            </label>
+            <select
+              value={filter}
+              onChange={(event) => setFilter(event.target.value as DateFilter)}
+              className="h-10 w-full rounded-lg border border-border/70 bg-background/80 px-3 text-sm font-semibold text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:bg-background/70"
             >
-              {f === "week" ? "Week" : f === "month" ? "Month" : f}
-            </button>
-          ))}
+              {(["today", "week", "month", "custom"] as DateFilter[]).map((f) => (
+                <option key={f} value={f}>
+                  {DATE_FILTER_LABELS[f]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-background/45 px-3 py-2 text-xs text-muted-foreground">
+            <CalendarDays className="h-4 w-4" />
+            <span>{range.from}</span>
+            <span>to</span>
+            <span>{range.to}</span>
+          </div>
         </div>
         {filter === "custom" && (
-          <div className="flex flex-wrap items-center gap-2">
-            <CalendarDays className="h-4 w-4 text-muted-foreground" />
-            <input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="h-9 rounded-md border border-input bg-background px-2 text-sm dark:[color-scheme:dark]" />
-            <span className="text-sm text-muted-foreground">to</span>
-            <input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="h-9 rounded-md border border-input bg-background px-2 text-sm dark:[color-scheme:dark]" />
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+            <input
+              type="date"
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              className="h-10 rounded-lg border border-border/70 bg-background/80 px-3 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:[color-scheme:dark]"
+            />
+            <span className="text-center text-sm text-muted-foreground">to</span>
+            <input
+              type="date"
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              className="h-10 rounded-lg border border-border/70 bg-background/80 px-3 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:[color-scheme:dark]"
+            />
           </div>
         )}
       </div>
@@ -326,6 +332,7 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {groups.map(([symbol, phases]) => {
             const allInstrumentPhases = allBySymbol.get(symbol) ?? phases;
+            const latestPhase = phases[phases.length - 1];
             const totalMtm = allInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
             const realized = allInstrumentPhases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
             const active = allInstrumentPhases.filter((p) => p.status === "active").length;
@@ -339,7 +346,7 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
                   <div className="min-w-0">
                     <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Showing {phases.length} of {allInstrumentPhases.length} phase(s)
+                      Showing latest of {allInstrumentPhases.length} phase(s)
                     </p>
                   </div>
                 </div>
@@ -358,19 +365,16 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
                 </aside>
 
                 <div className="grid min-w-0 grid-cols-1 gap-3">
-                  {phases.map((p) => {
-                    const previousPhases = allInstrumentPhases.filter((item) => item.phase_no < p.phase_no);
-                    return (
-                      <PhaseCard
-                        key={p.trade_id}
-                        phase={p}
-                        liveOpt={liveOpt(p)}
-                        previousPhases={previousPhases}
-                        liveOptFor={liveOpt}
-                        className="bg-card/60"
-                      />
-                    );
-                  })}
+                  {latestPhase && (
+                    <PhaseCard
+                      key={latestPhase.trade_id}
+                      phase={latestPhase}
+                      liveOpt={liveOpt(latestPhase)}
+                      previousPhases={allInstrumentPhases.filter((item) => item.phase_no > 0 && item.phase_no < latestPhase.phase_no)}
+                      liveOptFor={liveOpt}
+                      className="bg-card/60"
+                    />
+                  )}
                 </div>
               </section>
             );

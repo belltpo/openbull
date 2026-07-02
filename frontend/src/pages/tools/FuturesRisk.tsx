@@ -295,19 +295,21 @@ export default function FuturesRisk() {
       {tab === "positions" ? (
         <>
           {/* Filters */}
-          <div className="flex flex-wrap gap-1.5">
-            {STATUS_FILTERS.map((s) => (
-              <button
-                key={s}
-                onClick={() => setStatusFilter(s)}
-                className={cn(
-                  "rounded-full px-3 py-1 text-xs font-medium capitalize transition-colors",
-                  statusFilter === s ? "bg-primary text-primary-foreground shadow" : "bg-foreground/[0.05] text-muted-foreground hover:bg-foreground/10",
-                )}
-              >
-                {STATUS_FILTER_LABELS[s]}
-              </button>
-            ))}
+          <div className="fr-glass fr-dark-surface flex w-full flex-col gap-2 rounded-xl border border-border/70 p-3 sm:w-fit sm:min-w-72">
+            <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Position Filter
+            </label>
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+              className="h-10 rounded-lg border border-border/70 bg-background/80 px-3 text-sm font-semibold text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:bg-background/70"
+            >
+              {STATUS_FILTERS.map((s) => (
+                <option key={s} value={s}>
+                  {STATUS_FILTER_LABELS[s]}
+                </option>
+              ))}
+            </select>
           </div>
 
           {trades.length === 0 ? (
@@ -322,6 +324,7 @@ export default function FuturesRisk() {
               {positionGroups.map(([symbol, symbolTrades]) => {
                 const instrumentTrades = allByInstrument.get(symbol) ?? symbolTrades;
                 const phaseTrades = instrumentTrades.filter((trade) => trade.phase_no > 0);
+                const latestTrade = symbolTrades[0];
                 const instrumentPnl = phaseTrades.reduce(
                   (sum, trade) =>
                     sum +
@@ -342,7 +345,7 @@ export default function FuturesRisk() {
                       <div className="min-w-0">
                         <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          Showing {symbolTrades.length} of {instrumentTrades.length} position(s)
+                          Showing latest of {instrumentTrades.length} position(s)
                         </p>
                       </div>
                     </div>
@@ -361,40 +364,37 @@ export default function FuturesRisk() {
 
                     <div className="grid grid-cols-1 gap-3">
                       <div className="grid min-w-0 grid-cols-1 gap-3">
-                        {symbolTrades.map((t) => {
-                          const previousTrades = phaseTrades.filter((item) => item.phase_no > 0 && item.phase_no < t.phase_no);
-                          return (
-                            <PositionCard
-                              key={t.id}
-                              trade={t}
-                              liveFut={ltpOf(t.futures_symbol, t.futures_exchange)}
-                              liveOpt={ltpOf(t.option_symbol, t.option_exchange)}
-                              previousTrades={previousTrades}
-                              liveOptFor={(item) => ltpOf(item.option_symbol, item.option_exchange)}
-                              onModify={(tr) => (demoEnabled ? demoOnly() : setModifyTarget(tr))}
-                              enableRemoteDetail={!demoEnabled}
-                              onExit={(tr) => {
-                                if (demoEnabled) {
-                                  demoOnly();
-                                } else {
-                                  setExitMode("full");
-                                  setExitTarget(tr);
-                                }
-                              }}
-                              onEmergency={(tr) => {
-                                if (demoEnabled) {
-                                  demoOnly();
-                                } else {
-                                  setExitMode("emergency");
-                                  setExitTarget(tr);
-                                }
-                              }}
-                              onPlaceDraft={(id) => (demoEnabled ? demoOnly() : placeMutation.mutate(id))}
-                              onDelete={(id) => (demoEnabled ? demoOnly() : deleteMutation.mutate(id))}
-                              busy={placeMutation.isPending || deleteMutation.isPending}
-                            />
-                          );
-                        })}
+                        {latestTrade && (
+                          <PositionCard
+                            key={latestTrade.id}
+                            trade={latestTrade}
+                            liveFut={ltpOf(latestTrade.futures_symbol, latestTrade.futures_exchange)}
+                            liveOpt={ltpOf(latestTrade.option_symbol, latestTrade.option_exchange)}
+                            previousTrades={phaseTrades.filter((item) => item.phase_no > 0 && item.phase_no < latestTrade.phase_no)}
+                            liveOptFor={(item) => ltpOf(item.option_symbol, item.option_exchange)}
+                            onModify={(tr) => (demoEnabled ? demoOnly() : setModifyTarget(tr))}
+                            enableRemoteDetail={!demoEnabled}
+                            onExit={(tr) => {
+                              if (demoEnabled) {
+                                demoOnly();
+                              } else {
+                                setExitMode("full");
+                                setExitTarget(tr);
+                              }
+                            }}
+                            onEmergency={(tr) => {
+                              if (demoEnabled) {
+                                demoOnly();
+                              } else {
+                                setExitMode("emergency");
+                                setExitTarget(tr);
+                              }
+                            }}
+                            onPlaceDraft={(id) => (demoEnabled ? demoOnly() : placeMutation.mutate(id))}
+                            onDelete={(id) => (demoEnabled ? demoOnly() : deleteMutation.mutate(id))}
+                            busy={placeMutation.isPending || deleteMutation.isPending}
+                          />
+                        )}
                       </div>
                     </div>
                   </section>
