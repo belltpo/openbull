@@ -187,6 +187,13 @@ def transform_order_data(orders) -> list[dict]:
             "product": order.get("product", ""),
             "orderid": order.get("order_id", ""),
             "order_status": order.get("status", ""),
+            "reject_reason": (
+                order.get("status_message")
+                or order.get("status_message_raw")
+                or order.get("rejection_reason")
+                or order.get("message")
+                or ""
+            ),
             "timestamp": order.get("order_timestamp", ""),
         })
 

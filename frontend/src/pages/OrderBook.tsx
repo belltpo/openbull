@@ -39,6 +39,7 @@ type OrderSortKey =
   | "quantity"
   | "price"
   | "order_status"
+  | "reject_reason"
   | "orderid";
 
 const ORDER_NUMERIC_KEYS = new Set<OrderSortKey>(["timestamp", "quantity", "price"]);
@@ -63,6 +64,8 @@ function orderSortValue(row: OrderbookItem, key: OrderSortKey): string | number 
       return row.price;
     case "order_status":
       return row.order_status;
+    case "reject_reason":
+      return row.reject_reason ?? "";
     case "orderid":
       return row.orderid;
   }
@@ -232,6 +235,7 @@ export default function OrderBook() {
       { header: "Price", value: (r) => r.price.toFixed(2) },
       { header: "Trigger Price", value: (r) => r.trigger_price.toFixed(2) },
       { header: "Status", value: (r) => r.order_status },
+      { header: "Reject Reason", value: (r) => r.reject_reason ?? "" },
     ];
     downloadCsv({ filename: "orderbook", columns, rows });
   };
@@ -332,6 +336,13 @@ export default function OrderBook() {
                     Status
                   </SortableHead>
                   <SortableHead
+                    sortKey="reject_reason"
+                    current={sort}
+                    onSort={handleSort}
+                  >
+                    Reason
+                  </SortableHead>
+                  <SortableHead
                     sortKey="orderid"
                     current={sort}
                     onSort={handleSort}
@@ -377,6 +388,18 @@ export default function OrderBook() {
                         <Badge variant={getStatusVariant(order.order_status)}>
                           {order.order_status}
                         </Badge>
+                      </TableCell>
+                      <TableCell className="max-w-[280px]">
+                        {order.reject_reason ? (
+                          <span
+                            className="block truncate text-xs text-muted-foreground"
+                            title={order.reject_reason}
+                          >
+                            {order.reject_reason}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">-</span>
+                        )}
                       </TableCell>
                       <TableCell>
                         {order.orderid ? (
