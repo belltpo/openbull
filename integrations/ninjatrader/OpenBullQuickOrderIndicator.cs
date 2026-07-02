@@ -102,6 +102,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Target2ExitPct = 25;
                 Target3ExitPct = 25;
                 Target4ExitPct = 25;
+                NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
             }
             else if (State == State.Historical)
             {
@@ -129,6 +130,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     return;
 
                 BuildControls();
+                NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
                 UserControlCollection.Add(root);
                 controlsAdded = true;
                 CenterPopup();
@@ -535,11 +537,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             stack.Children.Add(Field("URL", OpenBullUrl, value =>
             {
                 OpenBullUrl = value;
+                NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
                 Task.Run(async () => await FetchOptionsAsync());
             }, out urlBox));
             stack.Children.Add(PasswordField("API Key", value =>
             {
                 ApiKey = value;
+                NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
                 Task.Run(async () =>
                 {
                     await FetchOptionsAsync();

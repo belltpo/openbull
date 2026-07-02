@@ -83,6 +83,18 @@ class FuturesRiskQuickOrderSettings(BaseModel):
     target_template_id: int | None = None
 
 
+class FuturesRiskLevelTarget(BaseModel):
+    seq: int | None = Field(None, ge=1)
+    price: float = Field(..., gt=0)
+    exit_pct: float | None = Field(None, ge=0, le=100)
+
+
+class FuturesRiskTradeLevels(BaseModel):
+    apikey: str | None = None
+    sl_price: float | None = Field(None, gt=0)
+    targets: list[FuturesRiskLevelTarget] | None = None
+
+
 async def _resolve_api_user(request: Request) -> tuple[int, str, str, dict]:
     from backend.dependencies import get_api_user, get_db
 
@@ -442,6 +454,116 @@ async def api_futures_risk_quick_order(request: Request):
         content={"status": "success", "message": "Quick order placed", "data": trade},
         status_code=200,
     )
+
+
+@router.get("/futures-risk/trades/{trade_id}")
+async def api_futures_risk_trade_detail(trade_id: int, request: Request):
+    """Return one Futures-Risk trade for API-key clients."""
+    try:
+        user_id, _auth_token, _broker_name, _config = await _resolve_api_user(request)
+    except Exception as exc:
+        return _error_response(exc)
+
+    trade = fr.get_trade(user_id, trade_id)
+    if trade is None:
+        return JSONResponse(content={"status": "error", "message": "Trade not found"}, status_code=404)
+    return JSONResponse(content={"status": "success", "data": trade}, status_code=200)
+
+
+@router.put("/futures-risk/trades/{trade_id}/levels")
+async def api_futures_risk_trade_levels(trade_id: int, request: Request):
+    """Update active trade SL/target levels from chart-dragged futures prices.
+
+    NT drawing tools work in absolute futures prices. OpenBull stores live
+    edits as SL/target point distances from the immutable filled futures entry,
+    so this endpoint performs that conversion and then delegates to the shared
+    Futures-Risk modify service.
+    """
+    try:
+        user_id, auth_token, broker_name, config = await _resolve_api_user(request)
+        body = await _request_json(request)
+        payload = FuturesRiskTradeLevels.model_validate(body)
+    except ValidationError as exc:
+        return JSONResponse(
+            content={"status": "error", "message": exc.errors()[0].get("msg", "Invalid request")},
+            status_code=422,
+        )
+    except Exception as exc:
+        return _error_response(exc)
+
+    trade = fr.get_trade(user_id, trade_id)
+    if trade is None:
+        return JSONResponse(content={"status": "error", "message": "Trade not found"}, status_code=404)
+
+    try:
+        entry = float(trade.get("entry_futures_price") or 0)
+        direction = int(trade.get("direction") or 0)
+    except (TypeError, ValueError):
+        entry, direction = 0.0, 0
+    if entry <= 0 or direction not in (-1, 1):
+        return JSONResponse(
+            content={"status": "error", "message": "Trade entry/direction is not available for level sync"},
+            status_code=409,
+        )
+
+    fields: dict[str, Any] = {}
+    if payload.sl_price is not None:
+        sl_points = round((entry - float(payload.sl_price)) * direction, 2)
+        if sl_points <= 0:
+            return JSONResponse(
+                content={"status": "error", "message": "SL must remain on the risk side of entry"},
+                status_code=400,
+            )
+        fields["sl_points"] = sl_points
+
+    if payload.targets is not None:
+        existing_by_seq = {
+            int(t.get("seq")): t
+            for t in (trade.get("targets") or [])
+            if t.get("seq") is not None
+        }
+        active_targets: list[dict[str, Any]] = []
+        for idx, target in enumerate(payload.targets, start=1):
+            seq = int(target.seq or idx)
+            target_points = round((float(target.price) - entry) * direction, 2)
+            if target_points <= 0:
+                return JSONResponse(
+                    content={"status": "error", "message": f"Target {seq} must remain on the profit side of entry"},
+                    status_code=400,
+                )
+            existing = existing_by_seq.get(seq, {})
+            if str(existing.get("status") or "pending").lower() != "pending":
+                return JSONResponse(
+                    content={"status": "error", "message": f"Target {seq} is already {existing.get('status')} and cannot be edited"},
+                    status_code=409,
+                )
+            active_targets.append(
+                {
+                    "points": target_points,
+                    "exit_pct": float(target.exit_pct if target.exit_pct is not None else existing.get("exit_pct") or 0),
+                }
+            )
+        fields["targets"] = active_targets
+
+    if not fields:
+        return JSONResponse(content={"status": "error", "message": "No level changes provided"}, status_code=400)
+
+    try:
+        updated = fr.modify_trade(
+            user_id,
+            trade_id,
+            fields,
+            auth_token=auth_token,
+            broker=broker_name,
+            config=config,
+        )
+    except FrError as exc:
+        return JSONResponse(content={"status": "error", "message": exc.message}, status_code=exc.status)
+    except Exception:
+        logger.exception("Unexpected error in Futures-Risk level sync API")
+        return JSONResponse(content={"status": "error", "message": "An unexpected error occurred"}, status_code=500)
+
+    return JSONResponse(content={"status": "success", "message": "Trade levels updated", "data": updated}, status_code=200)
 
 
 def _error_response(exc: Exception) -> JSONResponse:

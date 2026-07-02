@@ -732,18 +732,47 @@ def _build_targets(
     """Snapshot target rows: trigger price + whole-lot exit qty per target.
 
     Percentages are converted to whole lots because F&O exits must be lot-sized.
-    The final target always carries any remaining lots, so the target snapshot
-    fully accounts for the position quantity even when earlier percentages are
-    too small to become one executable lot.
+    A trade cannot have more executable targets than lots. For example, 2 lots
+    with a 4-target template creates only T1/T2, with each target receiving an
+    executable lot allocation.
     """
     out: list[dict[str, Any]] = []
+    lots = max(0, int(lots or 0))
+    if lots <= 0:
+        return out
+
+    active_targets = [dict(t) for t in template if float(t.get("points", 0) or 0) > 0]
+    if len(active_targets) > lots:
+        active_targets = active_targets[:lots]
+        total_pct = round(sum(float(t.get("exit_pct", 0) or 0) for t in active_targets), 2)
+        if total_pct <= 0:
+            base_pct = round(100.0 / len(active_targets), 2)
+            used_pct = 0.0
+            for idx, target in enumerate(active_targets):
+                target["exit_pct"] = round(100.0 - used_pct, 2) if idx == len(active_targets) - 1 else base_pct
+                used_pct += float(target["exit_pct"])
+        else:
+            used_pct = 0.0
+            for idx, target in enumerate(active_targets):
+                pct = round((float(target.get("exit_pct", 0) or 0) / total_pct) * 100.0, 2)
+                target["exit_pct"] = round(100.0 - used_pct, 2) if idx == len(active_targets) - 1 else pct
+                used_pct += float(target["exit_pct"])
+
     lots_used = 0
-    active_targets = list(template)
     for idx, t in enumerate(active_targets):
         points = float(t["points"])
         pct = float(t.get("exit_pct", 0))
         lots_i = int((lots * pct) // 100)  # floor to whole lots
         is_final_target = idx == len(active_targets) - 1
+        remaining_targets = len(active_targets) - idx
+        remaining_lots = lots - lots_used
+        if remaining_lots <= 0:
+            break
+        if lots_i < 1:
+            lots_i = 1
+        max_lots_for_this_target = max(1, remaining_lots - (remaining_targets - 1))
+        if lots_i > max_lots_for_this_target and not is_final_target:
+            lots_i = max_lots_for_this_target
         if is_final_target:
             lots_i = max(lots_i, lots - lots_used)
         if lots_used + lots_i > lots:
