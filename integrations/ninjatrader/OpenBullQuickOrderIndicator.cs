@@ -661,6 +661,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             combo.Resources[SystemColors.HighlightBrushKey] = new SolidColorBrush(Color.FromRgb(45, 86, 160));
             combo.Resources[SystemColors.HighlightTextBrushKey] = Brushes.White;
             combo.ItemTemplate = BuildComboItemTemplate();
+            combo.ItemContainerStyle = BuildComboItemStyle();
+            combo.Loaded += (s, e) => ApplyComboTextColors(combo);
+            combo.DropDownOpened += (s, e) => ApplyComboTextColors(combo);
             combo.SelectionChanged += (s, e) =>
             {
                 if (settingsHydrating || combo.SelectedItem == null)
@@ -682,6 +685,21 @@ namespace NinjaTrader.NinjaScript.Indicators
             return combo;
         }
 
+        private static Style BuildComboItemStyle()
+        {
+            Style style = new Style(typeof(ComboBoxItem));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(10, 10, 10))));
+            style.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(65, 65, 65))));
+            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(6, 3, 6, 3)));
+
+            Trigger highlighted = new Trigger { Property = ComboBoxItem.IsHighlightedProperty, Value = true };
+            highlighted.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+            highlighted.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(45, 86, 160))));
+            style.Triggers.Add(highlighted);
+            return style;
+        }
+
         private static DataTemplate BuildComboItemTemplate()
         {
             DataTemplate template = new DataTemplate();
@@ -692,6 +710,35 @@ namespace NinjaTrader.NinjaScript.Indicators
             text.SetValue(TextBlock.PaddingProperty, new Thickness(3, 1, 3, 1));
             template.VisualTree = text;
             return template;
+        }
+
+        private static void ApplyComboTextColors(ComboBox combo)
+        {
+            TextBox editable = FindVisualChild<TextBox>(combo);
+            if (editable == null)
+                return;
+            editable.Foreground = Brushes.White;
+            editable.Background = new SolidColorBrush(Color.FromRgb(10, 10, 10));
+            editable.BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 65));
+            editable.CaretBrush = Brushes.White;
+        }
+
+        private static T FindVisualChild<T>(DependencyObject parent) where T : DependencyObject
+        {
+            if (parent == null)
+                return null;
+            int count = VisualTreeHelper.GetChildrenCount(parent);
+            for (int i = 0; i < count; i++)
+            {
+                DependencyObject child = VisualTreeHelper.GetChild(parent, i);
+                T typed = child as T;
+                if (typed != null)
+                    return typed;
+                T nested = FindVisualChild<T>(child);
+                if (nested != null)
+                    return nested;
+            }
+            return null;
         }
 
         private Button SmallAction(string text)
