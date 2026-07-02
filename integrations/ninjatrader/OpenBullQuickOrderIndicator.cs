@@ -176,7 +176,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void StartLiveTimer()
         {
             StopLiveTimer();
-            liveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            liveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
             liveTimer.Tick += async (s, e) =>
             {
                 await FetchLiveAsync();

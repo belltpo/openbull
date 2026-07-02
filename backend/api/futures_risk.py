@@ -27,8 +27,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _DEDUP_TTL_SECONDS = 10.0
+_QUOTE_CACHE_TTL_SECONDS = 3.0
 _dedup_lock = threading.Lock()
+_quote_cache_lock = threading.Lock()
 _recent_client_orders: dict[str, float] = {}
+_recent_quotes: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 
 
 class QuickOrderTarget(BaseModel):
@@ -262,7 +265,32 @@ async def api_futures_risk_quick_order_settings_delete(request: Request):
 
 
 def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str, config: dict) -> dict[str, Any]:
+    from backend.services.market_data_cache import get_ltp_value
     from backend.services.quotes_service import get_quotes_with_auth
+
+    key = (str(symbol).upper(), str(exchange).upper())
+    now = time.monotonic()
+    try:
+        cached_ltp = get_ltp_value(symbol, exchange)
+        if cached_ltp and float(cached_ltp) > 0:
+            payload = {
+                "symbol": symbol,
+                "exchange": exchange,
+                "ltp": float(cached_ltp),
+                "status": "success",
+                "source": "websocket_cache",
+                "message": None,
+            }
+            with _quote_cache_lock:
+                _recent_quotes[key] = (now + _QUOTE_CACHE_TTL_SECONDS, payload)
+            return payload
+    except Exception:
+        pass
+
+    with _quote_cache_lock:
+        cached = _recent_quotes.get(key)
+        if cached and cached[0] > now:
+            return dict(cached[1])
 
     ok, response, _ = get_quotes_with_auth(
         symbol=symbol,
@@ -276,13 +304,17 @@ def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str
         ltp = float(data.get("ltp") or 0)
     except (TypeError, ValueError):
         ltp = 0.0
-    return {
+    payload = {
         "symbol": symbol,
         "exchange": exchange,
         "ltp": ltp,
         "status": "success" if ok else "error",
+        "source": "rest",
         "message": response.get("message") if isinstance(response, dict) else None,
     }
+    with _quote_cache_lock:
+        _recent_quotes[key] = (now + _QUOTE_CACHE_TTL_SECONDS, payload)
+    return payload
 
 
 @router.post("/futures-risk/quick-order/preview")

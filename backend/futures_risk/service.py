@@ -857,10 +857,18 @@ def _resolve_trade_plan(
             f"No futures mapping configured for {p['underlying']}. Add one in the admin panel.", 400
         )
     entry_fut = 0.0
-    ok, q, status = get_quotes_with_auth(fut["symbol"], fut["exchange"], auth_token, broker, config)
-    if ok:
-        ltp = q.get("data", {}).get("ltp")
-        entry_fut = float(ltp) if ltp and float(ltp) > 0 else 0.0
+    status = 0
+    try:
+        cached_entry = get_ltp_value(fut["symbol"], fut["exchange"])
+        if cached_entry and float(cached_entry) > 0:
+            entry_fut = float(cached_entry)
+    except Exception:
+        pass
+    if entry_fut <= 0:
+        ok, q, status = get_quotes_with_auth(fut["symbol"], fut["exchange"], auth_token, broker, config)
+        if ok:
+            ltp = q.get("data", {}).get("ltp")
+            entry_fut = float(ltp) if ltp and float(ltp) > 0 else 0.0
     if entry_fut <= 0:
         if require_price:
             raise FrError(f"Futures price unavailable for {fut['symbol']}", 502)
