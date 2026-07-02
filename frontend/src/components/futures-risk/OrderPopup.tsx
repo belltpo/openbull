@@ -43,6 +43,31 @@ type ContractOrderDefaults = {
   product?: string;
 };
 
+type TargetOverrideRow = { points: number; exit_pct: number };
+
+function splitExitPercent(count: number): number[] {
+  if (count <= 0) return [];
+  const base = Math.floor(10000 / count) / 100;
+  const values = Array.from({ length: count }, () => base);
+  values[count - 1] = Number((100 - values.slice(0, -1).reduce((sum, value) => sum + value, 0)).toFixed(2));
+  return values;
+}
+
+function autoSplitTargets(rows: TargetOverrideRow[]): TargetOverrideRow[] {
+  const split = splitExitPercent(rows.filter((row) => row.points > 0).length);
+  let splitIndex = 0;
+  return rows.map((row) => {
+    if (row.points <= 0) return { ...row, exit_pct: 0 };
+    return { ...row, exit_pct: split[splitIndex++] ?? 0 };
+  });
+}
+
+function normalizeTargetRows(rows: TargetOverrideRow[]): TargetOverrideRow[] {
+  const active = rows.filter((row) => row.points > 0);
+  const total = Number(active.reduce((sum, row) => sum + Number(row.exit_pct || 0), 0).toFixed(2));
+  return active.length > 0 && Math.abs(total - 100) > 0.01 ? autoSplitTargets(rows) : rows;
+}
+
 function formatStrikeForSymbol(strike: number): string {
   return Number.isInteger(strike) ? String(strike) : String(strike).replace(/\.0+$/, "").replace(".", "");
 }
@@ -92,7 +117,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [slPoints, setSlPoints] = useState<string>("");
   const [targetTemplateId, setTargetTemplateId] = useState<number | null>(null);
   const [overrideTargets, setOverrideTargets] = useState(false);
-  const [targetRows, setTargetRows] = useState<{ points: number; exit_pct: number }[]>([]);
+  const [targetRows, setTargetRows] = useState<TargetOverrideRow[]>([]);
   const [asDraft, setAsDraft] = useState(false);
   const [product, setProduct] = useState("");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -262,9 +287,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   useEffect(() => {
     if (!selectedTemplate || overrideTargets) return;
-    setTargetRows(
-      selectedTemplate.targets.filter((t) => t.enabled).map((t) => ({ points: t.points, exit_pct: t.exit_pct })),
-    );
+    setTargetRows(normalizeTargetRows(selectedTemplate.targets.filter((t) => t.enabled).map((t) => ({ points: t.points, exit_pct: t.exit_pct }))));
   }, [overrideTargets, selectedTemplate]);
 
   // Default the underlying to the first available.
@@ -382,7 +405,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
       product: product || undefined,
       strike: selectedStrike,
       sl_points: slPoints === "" ? null : Number(slPoints),
-      targets: overrideTargets ? targetRows.filter((t) => t.points > 0) : null,
+      targets: overrideTargets ? normalizeTargetRows(targetRows.filter((t) => t.points > 0)) : null,
       target_template_id: overrideTargets ? null : targetTemplateId,
     };
     mutation.mutate(payload);

@@ -287,7 +287,51 @@ def _clean_template_targets(targets: list[dict[str, Any]] | None) -> list[dict[s
                 "enabled": bool(t.get("enabled", True)),
             }
         )
-    return out
+    return _normalise_target_exit_pcts(out, enabled_key="enabled", strict=True)
+
+
+def _split_exit_pcts(count: int) -> list[float]:
+    if count <= 0:
+        return []
+    base = round(100.0 / count, 2)
+    values = [base for _ in range(count)]
+    values[-1] = round(100.0 - sum(values[:-1]), 2)
+    return values
+
+
+def _normalise_target_exit_pcts(
+    targets: list[dict[str, Any]],
+    *,
+    enabled_key: str | None = None,
+    strict: bool = False,
+) -> list[dict[str, Any]]:
+    """Ensure a target plan is executable and unambiguous.
+
+    If every active target has 0%, treat it as "auto" and split 100% across
+    the active target count. Otherwise the active target percentages must sum
+    to 100%, because the final target exits any remaining quantity.
+    """
+    active_indexes = [
+        idx for idx, target in enumerate(targets)
+        if enabled_key is None or bool(target.get(enabled_key, True))
+    ]
+    if not active_indexes:
+        return targets
+
+    total = round(sum(float(targets[idx].get("exit_pct", 0) or 0) for idx in active_indexes), 2)
+    if total <= 0:
+        split = _split_exit_pcts(len(active_indexes))
+        for idx, pct in zip(active_indexes, split, strict=False):
+            targets[idx]["exit_pct"] = pct
+        return targets
+
+    if abs(total - 100.0) > 0.01:
+        if strict:
+            raise FrError("Enabled target exit % must total 100. Use Auto Split or adjust the target percentages.", 400)
+        split = _split_exit_pcts(len(active_indexes))
+        for idx, pct in zip(active_indexes, split, strict=False):
+            targets[idx]["exit_pct"] = pct
+    return targets
 
 
 def _replace_template_targets(db, template_id: int, targets: list[dict[str, Any]]) -> None:
@@ -809,13 +853,13 @@ def _resolve_trade_plan(
     sl_price = round(entry_fut - direction * sl_points, 2) if entry_fut > 0 else 0.0
 
     if p["targets"]:
-        template = [
+        template = _normalise_target_exit_pcts([
             {"seq": i + 1, "points": float(t["points"]), "exit_pct": float(t.get("exit_pct", 0))}
             for i, t in enumerate(p["targets"])
             if float(t.get("points", 0)) > 0
-        ]
+        ])
     else:
-        template = list_targets(enabled_only=True, template_id=p.get("target_template_id"))
+        template = _normalise_target_exit_pcts(list_targets(enabled_only=True, template_id=p.get("target_template_id")))
     if not template:
         raise FrError("No targets configured for the selected template.", 400)
     lot_size = int(opt["lotsize"] or 1)
@@ -1867,13 +1911,13 @@ def modify_trade(
 
             target_source = None
             if "targets" in fields and fields["targets"] is not None:
-                target_source = [
+                target_source = _normalise_target_exit_pcts([
                     {"seq": i + 1, "points": float(x["points"]), "exit_pct": float(x.get("exit_pct", 0))}
                     for i, x in enumerate(fields["targets"])
                     if float(x.get("points", 0)) > 0
-                ]
+                ])
             elif fields.get("target_template_id") is not None:
-                target_source = list_targets(enabled_only=True, template_id=int(fields["target_template_id"]))
+                target_source = _normalise_target_exit_pcts(list_targets(enabled_only=True, template_id=int(fields["target_template_id"])))
 
             if target_source is not None:
                 # Replace only the PENDING targets; keep already-hit ones intact.
@@ -1885,11 +1929,11 @@ def modify_trade(
                 hit_lots = sum(int(r.exit_qty) for r in hit) // max(1, t.lot_size)
                 remaining_lots = max(0, t.lots - hit_lots)
                 base_seq = len(hit)
-                template = [
+                template = _normalise_target_exit_pcts([
                     {"seq": base_seq + i + 1, "points": float(x["points"]), "exit_pct": float(x.get("exit_pct", 0))}
                     for i, x in enumerate(target_source)
                     if float(x.get("points", 0)) > 0
-                ]
+                ])
                 new_rows = _build_targets(t.entry_futures_price, t.direction, remaining_lots, t.lot_size, template)
                 db.execute(
                     text("DELETE FROM fr_trade_target WHERE trade_id = :tid AND status = 'pending'"),

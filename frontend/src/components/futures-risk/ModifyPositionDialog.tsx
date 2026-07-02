@@ -31,6 +31,31 @@ interface Props {
 const inputCls =
   "h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3";
 
+type TargetEditRow = { points: number; exit_pct: number };
+
+function splitExitPercent(count: number): number[] {
+  if (count <= 0) return [];
+  const base = Math.floor(10000 / count) / 100;
+  const values = Array.from({ length: count }, () => base);
+  values[count - 1] = Number((100 - values.slice(0, -1).reduce((sum, value) => sum + value, 0)).toFixed(2));
+  return values;
+}
+
+function autoSplitTargets(rows: TargetEditRow[]): TargetEditRow[] {
+  const split = splitExitPercent(rows.filter((row) => row.points > 0).length);
+  let splitIndex = 0;
+  return rows.map((row) => {
+    if (row.points <= 0) return { ...row, exit_pct: 0 };
+    return { ...row, exit_pct: split[splitIndex++] ?? 0 };
+  });
+}
+
+function normalizeTargetRows(rows: TargetEditRow[]): TargetEditRow[] {
+  const active = rows.filter((row) => row.points > 0);
+  const total = Number(active.reduce((sum, row) => sum + Number(row.exit_pct || 0), 0).toFixed(2));
+  return active.length > 0 && Math.abs(total - 100) > 0.01 ? autoSplitTargets(rows) : rows;
+}
+
 export function ModifyPositionDialog({ trade, open, onOpenChange }: Props) {
   const qc = useQueryClient();
   const isDraft = trade?.status === "draft";
@@ -38,7 +63,7 @@ export function ModifyPositionDialog({ trade, open, onOpenChange }: Props) {
   const [slPoints, setSlPoints] = useState<string>("");
   const [lots, setLots] = useState(1);
   const [trailing, setTrailing] = useState<TrailingMode | "">("");
-  const [targets, setTargets] = useState<{ points: number; exit_pct: number }[]>([]);
+  const [targets, setTargets] = useState<TargetEditRow[]>([]);
   const [editTargets, setEditTargets] = useState(false);
 
   useEffect(() => {
@@ -71,7 +96,7 @@ export function ModifyPositionDialog({ trade, open, onOpenChange }: Props) {
     const fields: ModifyTradePayload = {};
     if (slPoints !== "" && Number(slPoints) > 0) fields.sl_points = Number(slPoints);
     if (trailing) fields.trailing_mode = trailing;
-    if (editTargets) fields.targets = targets.filter((t) => t.points > 0);
+    if (editTargets) fields.targets = normalizeTargetRows(targets.filter((t) => t.points > 0));
     if (isDraft && lots !== trade.lots) fields.lots = lots;
     if (Object.keys(fields).length === 0) {
       toast.error("Nothing changed");
@@ -138,10 +163,17 @@ export function ModifyPositionDialog({ trade, open, onOpenChange }: Props) {
           <div className="rounded-lg border p-2.5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-medium">Pending targets (pts → % exit)</span>
-              <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <input type="checkbox" checked={editTargets} onChange={(e) => setEditTargets(e.target.checked)} className="h-3.5 w-3.5" />
-                Edit
-              </label>
+              <div className="flex items-center gap-2">
+                {editTargets && (
+                  <button type="button" className="text-[11px] text-primary" onClick={() => setTargets((rows) => autoSplitTargets(rows))}>
+                    Auto Split
+                  </button>
+                )}
+                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                  <input type="checkbox" checked={editTargets} onChange={(e) => setEditTargets(e.target.checked)} className="h-3.5 w-3.5" />
+                  Edit
+                </label>
+              </div>
             </div>
             <div className="mt-2 space-y-1.5">
               {targets.map((t, i) => (
@@ -170,7 +202,12 @@ export function ModifyPositionDialog({ trade, open, onOpenChange }: Props) {
                 <button
                   type="button"
                   className="mt-1 flex items-center gap-1 text-[11px] text-primary"
-                  onClick={() => setTargets((r) => [...r, { points: 0, exit_pct: 0 }])}
+                  onClick={() =>
+                    setTargets((rows) => {
+                      const lastPoints = [...rows].reverse().find((row) => row.points > 0)?.points ?? 0;
+                      return autoSplitTargets([...rows, { points: lastPoints + 50, exit_pct: 0 }]);
+                    })
+                  }
                 >
                   <Plus className="h-3 w-3" /> add target
                 </button>

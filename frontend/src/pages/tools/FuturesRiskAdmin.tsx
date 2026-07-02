@@ -52,6 +52,27 @@ const emptyDefaultOrder = {
   default_product: "",
 } satisfies Record<(typeof DEFAULT_ORDER_KEYS)[number], string>;
 
+type TargetRow = { points: number; exit_pct: number; enabled: boolean };
+
+function splitExitPercent(count: number): number[] {
+  if (count <= 0) return [];
+  const base = Math.floor((10000 / count)) / 100;
+  const values = Array.from({ length: count }, () => base);
+  values[count - 1] = Number((100 - values.slice(0, -1).reduce((sum, value) => sum + value, 0)).toFixed(2));
+  return values;
+}
+
+function autoSplitTargetRows(rows: TargetRow[]): TargetRow[] {
+  const enabledIndexes = rows.map((row, index) => (row.enabled ? index : -1)).filter((index) => index >= 0);
+  const split = splitExitPercent(enabledIndexes.length);
+  let splitIndex = 0;
+  return rows.map((row) => {
+    if (!row.enabled) return { ...row, exit_pct: 0 };
+    const exit_pct = split[splitIndex++] ?? 0;
+    return { ...row, exit_pct };
+  });
+}
+
 function parseContractOrderDefaults(raw: string | undefined): Record<string, ContractOrderDefaults> {
   if (!raw) return {};
   try {
@@ -367,7 +388,7 @@ function TargetLevels() {
   const [description, setDescription] = useState("");
   const [enabled, setEnabled] = useState(true);
   const [isDefault, setIsDefault] = useState(false);
-  const [rows, setRows] = useState<{ points: number; exit_pct: number; enabled: boolean }[]>([]);
+  const [rows, setRows] = useState<TargetRow[]>([]);
 
   useEffect(() => {
     const templates = query.data ?? [];
@@ -397,11 +418,16 @@ function TargetLevels() {
   };
   const onErr = (err: unknown) =>
     // @ts-expect-error axios error shape
-    toast.error(String(err?.response?.data?.detail ?? "Failed"));
+    toast.error(String(err?.response?.data?.detail ?? (err instanceof Error ? err.message : "Failed")));
 
   const saveMut = useMutation({
     mutationFn: () => {
       if (!selectedId) throw new Error("Select a target template first");
+      const activeRows = rows.filter((r) => r.enabled && r.points > 0);
+      const activeExit = activeRows.reduce((sum, row) => sum + Number(row.exit_pct || 0), 0);
+      if (activeRows.length > 0 && Math.abs(activeExit - 100) > 0.01) {
+        throw new Error("Enabled target exit % must total 100. Use Auto Split or adjust the values.");
+      }
       return updateTargetTemplate(selectedId, {
         name,
         description,
@@ -431,10 +457,10 @@ function TargetLevels() {
         name: "New Template",
         description: "",
         enabled: true,
-        targets: [
-          { points: 50, exit_pct: 25, enabled: true },
-          { points: 100, exit_pct: 25, enabled: true },
-        ],
+        targets: autoSplitTargetRows([
+          { points: 50, exit_pct: 0, enabled: true },
+          { points: 100, exit_pct: 0, enabled: true },
+        ]),
       }),
     onSuccess: (template) => {
       toast.success("Template created");
@@ -445,7 +471,7 @@ function TargetLevels() {
   });
 
   const templates = query.data ?? [];
-  const totalExit = rows.reduce((sum, r) => sum + (r.enabled ? Number(r.exit_pct) || 0 : 0), 0);
+  const totalExit = Number(rows.reduce((sum, r) => sum + (r.enabled ? Number(r.exit_pct) || 0 : 0), 0).toFixed(2));
 
   return (
     <AdminPanel
@@ -511,7 +537,10 @@ function TargetLevels() {
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <Badge variant="outline">{rows.filter((r) => r.enabled).length} active target(s)</Badge>
-            <Badge variant={totalExit > 100 ? "destructive" : "outline"}>{totalExit}% planned exit</Badge>
+            <Badge variant={Math.abs(totalExit - 100) > 0.01 && rows.some((r) => r.enabled) ? "destructive" : "outline"}>{totalExit}% planned exit</Badge>
+            <Button size="xs" variant="outline" onClick={() => setRows((rs) => autoSplitTargetRows(rs))}>
+              Auto Split
+            </Button>
           </div>
 
           <div className="hidden grid-cols-[3rem_minmax(140px,1fr)_minmax(120px,1fr)_4rem_2.25rem] items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground sm:grid">
@@ -541,17 +570,31 @@ function TargetLevels() {
                 onChange={(e) => setRows((rs) => rs.map((x, idx) => (idx === i ? { ...x, exit_pct: Number(e.target.value) } : x)))}
               />
               <label className="flex h-8 items-center justify-center rounded-md border border-input bg-background px-2 text-xs text-muted-foreground">
-                <Switch checked={r.enabled} onCheckedChange={(checked) => setRows((rs) => rs.map((x, idx) => (idx === i ? { ...x, enabled: checked } : x)))} />
+                <Switch
+                  checked={r.enabled}
+                  onCheckedChange={(checked) =>
+                    setRows((rs) => autoSplitTargetRows(rs.map((x, idx) => (idx === i ? { ...x, enabled: checked } : x))))
+                  }
+                />
               </label>
               <div className="flex justify-end">
-                <Button size="xs" variant="ghost" onClick={() => setRows((rs) => rs.filter((_, idx) => idx !== i))}>
+                <Button size="xs" variant="ghost" onClick={() => setRows((rs) => autoSplitTargetRows(rs.filter((_, idx) => idx !== i)))}>
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
               </div>
             </div>
           ))}
           <div className="flex flex-wrap justify-between gap-2">
-            <Button size="sm" variant="outline" onClick={() => setRows((rs) => [...rs, { points: 0, exit_pct: 0, enabled: true }])}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                setRows((rs) => {
+                  const lastPoints = [...rs].reverse().find((row) => row.points > 0)?.points ?? 0;
+                  return autoSplitTargetRows([...rs, { points: lastPoints + 50, exit_pct: 0, enabled: true }]);
+                })
+              }
+            >
               <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Target
             </Button>
             <Button
