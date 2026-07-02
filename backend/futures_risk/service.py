@@ -1631,7 +1631,7 @@ def _sync_active_entry_order_statuses(db, user_id: int) -> None:
         )
     ).scalars().all()
     for trade in rows:
-        status, _ = _broker_order_status(
+        status, _, _ = _broker_order_status(
             str(trade.entry_order_id),
             ctx["auth_token"],
             ctx["broker"],
