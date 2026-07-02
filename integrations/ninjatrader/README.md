@@ -39,8 +39,10 @@ X-API-KEY header
 4. Right-click `Indicators`, choose `New Indicator`, then replace the generated
    content with `OpenBullQuickOrderIndicator.cs`.
 5. Compile.
-6. Add `OpenBull Quick Order` to any chart.
-7. Set:
+6. Restart the OpenBull backend after pulling this integration, otherwise NT
+   will receive `{"detail":"Not Found"}` for the new API routes.
+7. Add `OpenBull Quick Order` to any chart.
+8. Set:
    - `OpenBull URL`
    - `API Key`
    - `Underlying`
@@ -53,6 +55,15 @@ X-API-KEY header
 
 Use `Target Template Id = 0` only when using override targets. Otherwise set it
 to the OpenBull target template id you want this chart to use.
+
+## Chart Widget Behavior
+
+- `S` opens a separate quick settings card beside the order buttons.
+- `X` collapses the quick-order popup into a small `OB` restore button.
+- Click `OB` to show the quick-order popup again; you do not need to remove and
+  add the indicator.
+- Futures, CE, and PE LTP values are polled from OpenBull every two seconds via
+  `/api/v1/futures-risk/quick-order/preview`.
 
 ## Button Mapping
 

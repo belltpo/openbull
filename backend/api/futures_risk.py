@@ -53,6 +53,15 @@ class FuturesRiskQuickOrder(BaseModel):
     target_template_id: int | None = None
 
 
+class FuturesRiskQuickOrderPreview(BaseModel):
+    apikey: str | None = None
+    underlying: str = Field(..., min_length=1)
+    underlying_exchange: str = "NSE_INDEX"
+    expiry: str = Field(..., min_length=1)
+    ce_strike: float | None = None
+    pe_strike: float | None = None
+
+
 async def _resolve_api_user(request: Request) -> tuple[int, str, str, dict]:
     from backend.dependencies import get_api_user, get_db
 
@@ -90,6 +99,98 @@ def _remember_client_order(client_order_id: str | None) -> bool:
             return False
         _recent_client_orders[client_order_id] = now + _DEDUP_TTL_SECONDS
     return True
+
+
+def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str, config: dict) -> dict[str, Any]:
+    from backend.services.quotes_service import get_quotes_with_auth
+
+    ok, response, _ = get_quotes_with_auth(
+        symbol=symbol,
+        exchange=exchange,
+        auth_token=auth_token,
+        broker=broker_name,
+        config=config,
+    )
+    data = response.get("data", {}) if ok and isinstance(response, dict) else {}
+    try:
+        ltp = float(data.get("ltp") or 0)
+    except (TypeError, ValueError):
+        ltp = 0.0
+    return {
+        "symbol": symbol,
+        "exchange": exchange,
+        "ltp": ltp,
+        "status": "success" if ok else "error",
+        "message": response.get("message") if isinstance(response, dict) else None,
+    }
+
+
+@router.post("/futures-risk/quick-order/preview")
+async def api_futures_risk_quick_order_preview(request: Request):
+    """Resolve the current quick-order symbols and return live quote snapshots."""
+    try:
+        _user_id, auth_token, broker_name, config = await _resolve_api_user(request)
+        body = await _request_json(request)
+        payload = FuturesRiskQuickOrderPreview.model_validate(body)
+    except ValidationError as exc:
+        return JSONResponse(
+            content={"status": "error", "message": exc.errors()[0].get("msg", "Invalid request")},
+            status_code=422,
+        )
+    except Exception as exc:
+        return _error_response(exc)
+
+    try:
+        fut = fr.resolve_futures(payload.underlying)
+        if fut is None:
+            return JSONResponse(
+                content={"status": "error", "message": f"No futures mapping configured for {payload.underlying}"},
+                status_code=404,
+            )
+
+        data: dict[str, Any] = {
+            "futures": _quote_payload(fut["symbol"], fut["exchange"], auth_token, broker_name, config),
+            "ce": None,
+            "pe": None,
+        }
+        if payload.ce_strike:
+            ce = fr._resolve_option(  # type: ignore[attr-defined]
+                payload.underlying,
+                payload.underlying_exchange,
+                payload.expiry,
+                "CE",
+                "BUY",
+                payload.ce_strike,
+                "ATM",
+                auth_token,
+                broker_name,
+                config,
+            )
+            data["ce"] = _quote_payload(ce["symbol"], ce["exchange"], auth_token, broker_name, config)
+        if payload.pe_strike:
+            pe = fr._resolve_option(  # type: ignore[attr-defined]
+                payload.underlying,
+                payload.underlying_exchange,
+                payload.expiry,
+                "PE",
+                "BUY",
+                payload.pe_strike,
+                "ATM",
+                auth_token,
+                broker_name,
+                config,
+            )
+            data["pe"] = _quote_payload(pe["symbol"], pe["exchange"], auth_token, broker_name, config)
+    except FrError as exc:
+        return JSONResponse(content={"status": "error", "message": exc.message}, status_code=exc.status)
+    except Exception:
+        logger.exception("Unexpected error in Futures-Risk quick-order preview API")
+        return JSONResponse(
+            content={"status": "error", "message": "An unexpected error occurred"},
+            status_code=500,
+        )
+
+    return JSONResponse(content={"status": "success", "data": data}, status_code=200)
 
 
 @router.post("/futures-risk/quick-order")

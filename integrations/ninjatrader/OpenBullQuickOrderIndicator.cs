@@ -5,11 +5,13 @@ using System.ComponentModel.DataAnnotations;
 using System.Globalization;
 using System.Net.Http;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Indicators;
 #endregion
@@ -23,18 +25,28 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Grid root;
         private Border popup;
         private Border settingsPanel;
+        private Button restoreButton;
         private TextBlock liveText;
         private TextBlock statusText;
         private Button buyCeButton;
         private Button sellCeButton;
         private Button buyPeButton;
         private Button sellPeButton;
+        private DispatcherTimer liveTimer;
         private bool controlsAdded;
         private bool isBusy;
         private bool wasDragged;
         private bool isDragging;
         private Point dragStart;
         private Thickness dragStartMargin;
+        private double futuresLtp;
+        private double ceLtp;
+        private double peLtp;
+
+        public override string DisplayName
+        {
+            get { return "OpenBull Quick Order"; }
+        }
 
         protected override void OnStateChange()
         {
@@ -83,15 +95,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         protected override void OnBarUpdate()
         {
-            if (CurrentBar < 0 || liveText == null || ChartControl == null)
-                return;
-
-            double last = Close[0];
-            ChartControl.Dispatcher.InvokeAsync(() =>
-            {
-                if (liveText != null)
-                    liveText.Text = string.Format(CultureInfo.InvariantCulture, "{0} FUT  {1:N2}", Underlying, last);
-            });
+            // Prices shown in the widget come from OpenBull, not the NT chart instrument.
         }
 
         private void AddChartControls()
@@ -108,6 +112,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 UserControlCollection.Add(root);
                 controlsAdded = true;
                 CenterPopup();
+                StartLiveTimer();
                 if (ChartControl != null)
                     ChartControl.SizeChanged += OnChartSizeChanged;
             });
@@ -120,6 +125,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             ChartControl.Dispatcher.InvokeAsync(() =>
             {
+                StopLiveTimer();
                 if (ChartControl != null)
                     ChartControl.SizeChanged -= OnChartSizeChanged;
                 if (root != null && UserControlCollection.Contains(root))
@@ -141,15 +147,32 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
 
             double width = Math.Max(0, ChartControl.ActualWidth);
-            double left = Math.Max(12, (width - 248) / 2);
+            double left = Math.Max(12, (width - 580) / 2);
             root.Margin = new Thickness(left, 18, 0, 0);
+        }
+
+        private void StartLiveTimer()
+        {
+            StopLiveTimer();
+            liveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+            liveTimer.Tick += async (s, e) => await FetchLiveAsync();
+            liveTimer.Start();
+            Task.Run(async () => await FetchLiveAsync());
+        }
+
+        private void StopLiveTimer()
+        {
+            if (liveTimer == null)
+                return;
+            liveTimer.Stop();
+            liveTimer = null;
         }
 
         private void BuildControls()
         {
             root = new Grid
             {
-                Width = 248,
+                Width = 580,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
                 Background = Brushes.Transparent
@@ -158,15 +181,31 @@ namespace NinjaTrader.NinjaScript.Indicators
             StackPanel stack = new StackPanel { Orientation = Orientation.Vertical };
             popup = new Border
             {
+                Width = 260,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                VerticalAlignment = VerticalAlignment.Top,
                 CornerRadius = new CornerRadius(10),
                 Padding = new Thickness(8),
-                Background = new SolidColorBrush(Color.FromArgb(238, 18, 18, 18)),
+                Background = new SolidColorBrush(Color.FromArgb(242, 18, 18, 18)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(54, 54, 54)),
                 BorderThickness = new Thickness(1),
                 Child = stack
             };
 
-            Grid header = new Grid { Margin = new Thickness(0, 0, 0, 5) };
+            TextBlock grip = new TextBlock
+            {
+                Text = "...",
+                Foreground = new SolidColorBrush(Color.FromRgb(130, 130, 130)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                FontSize = 10,
+                Margin = new Thickness(0, -5, 0, 0)
+            };
+            grip.MouseLeftButtonDown += StartDrag;
+            grip.MouseMove += DragMove;
+            grip.MouseLeftButtonUp += StopDrag;
+            stack.Children.Add(grip);
+
+            Grid header = new Grid { Margin = new Thickness(0, 0, 0, 6) };
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -191,31 +230,70 @@ namespace NinjaTrader.NinjaScript.Indicators
             header.Children.Add(settingsButton);
 
             Button closeButton = IconButton("X");
-            closeButton.Click += (s, e) => root.Visibility = Visibility.Collapsed;
+            closeButton.Click += (s, e) => CollapseQuickPopup();
             Grid.SetColumn(closeButton, 2);
             header.Children.Add(closeButton);
-
-            TextBlock grip = new TextBlock
-            {
-                Text = "...",
-                Foreground = new SolidColorBrush(Color.FromRgb(130, 130, 130)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                FontSize = 11,
-                Margin = new Thickness(0, -5, 0, -1)
-            };
-            grip.MouseLeftButtonDown += StartDrag;
-            grip.MouseMove += DragMove;
-            grip.MouseLeftButtonUp += StopDrag;
-            stack.Children.Add(grip);
             stack.Children.Add(header);
 
+            stack.Children.Add(BuildLiveBox());
+            stack.Children.Add(BuildButtonGrid());
+
+            statusText = new TextBlock
+            {
+                Text = "* Ready",
+                Foreground = new SolidColorBrush(Color.FromRgb(20, 190, 120)),
+                FontSize = 10,
+                Margin = new Thickness(1, 6, 0, 0)
+            };
+            stack.Children.Add(statusText);
+
+            restoreButton = BuildRestoreButton();
+            restoreButton.Visibility = Visibility.Collapsed;
+            root.Children.Add(restoreButton);
+
+            settingsPanel = BuildSettingsPanel();
+            settingsPanel.Margin = new Thickness(270, 0, 0, 0);
+            settingsPanel.HorizontalAlignment = HorizontalAlignment.Left;
+            settingsPanel.VerticalAlignment = VerticalAlignment.Top;
+            settingsPanel.Visibility = Visibility.Collapsed;
+            root.Children.Add(popup);
+            root.Children.Add(settingsPanel);
+        }
+
+        private Button BuildRestoreButton()
+        {
+            Button button = new Button
+            {
+                Content = "OB",
+                Width = 42,
+                Height = 30,
+                Padding = new Thickness(0),
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromArgb(235, 18, 18, 18)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(70, 70, 70)),
+                FontSize = 12,
+                FontWeight = FontWeights.Bold
+            };
+            button.Click += (s, e) =>
+            {
+                popup.Visibility = Visibility.Visible;
+                restoreButton.Visibility = Visibility.Collapsed;
+            };
+            button.MouseLeftButtonDown += StartDrag;
+            button.MouseMove += DragMove;
+            button.MouseLeftButtonUp += StopDrag;
+            return button;
+        }
+
+        private Border BuildLiveBox()
+        {
             Border liveBox = new Border
             {
                 CornerRadius = new CornerRadius(8),
                 Background = new SolidColorBrush(Color.FromRgb(31, 31, 31)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(55, 55, 55)),
                 BorderThickness = new Thickness(1),
-                Padding = new Thickness(8, 6, 8, 6),
+                Padding = new Thickness(8, 5, 8, 5),
                 Margin = new Thickness(0, 0, 0, 7)
             };
             Grid liveGrid = new Grid();
@@ -224,7 +302,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             TextBlock liveLabel = new TextBlock
             {
-                Text = "LIVE",
+                Text = "FUT LIVE",
                 Foreground = new SolidColorBrush(Color.FromRgb(155, 155, 155)),
                 FontSize = 9,
                 FontWeight = FontWeights.SemiBold,
@@ -232,7 +310,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             };
             liveText = new TextBlock
             {
-                Text = Underlying + " FUT  --",
+                Text = Underlying + " FUT --",
                 Foreground = Brushes.White,
                 FontSize = 11,
                 FontWeight = FontWeights.Bold,
@@ -243,8 +321,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             liveGrid.Children.Add(liveLabel);
             liveGrid.Children.Add(liveText);
             liveBox.Child = liveGrid;
-            stack.Children.Add(liveBox);
+            return liveBox;
+        }
 
+        private Grid BuildButtonGrid()
+        {
             Grid buttons = new Grid();
             buttons.ColumnDefinitions.Add(new ColumnDefinition());
             buttons.ColumnDefinitions.Add(new ColumnDefinition());
@@ -264,21 +345,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             AddButton(buttons, sellCeButton, 0, 1);
             AddButton(buttons, buyPeButton, 1, 0);
             AddButton(buttons, sellPeButton, 1, 1);
-            stack.Children.Add(buttons);
-
-            statusText = new TextBlock
-            {
-                Text = "* Ready",
-                Foreground = new SolidColorBrush(Color.FromRgb(20, 190, 120)),
-                FontSize = 10,
-                Margin = new Thickness(1, 6, 0, 0)
-            };
-            stack.Children.Add(statusText);
-
-            settingsPanel = BuildSettingsPanel();
-            settingsPanel.Visibility = Visibility.Collapsed;
-            stack.Children.Add(settingsPanel);
-            root.Children.Add(popup);
+            RefreshButtonText();
+            return buttons;
         }
 
         private Button IconButton(string text)
@@ -299,22 +367,20 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private Button TradeButton(string text, bool isBuy)
         {
-            string optionType = text.EndsWith("CE", StringComparison.OrdinalIgnoreCase) ? "CE" : "PE";
-            double strike = optionType == "CE" ? CeStrike : PeStrike;
             TextBlock content = new TextBlock
             {
-                Text = text + "\n" + strike.ToString("0", CultureInfo.InvariantCulture) + " " + optionType,
+                Text = text,
                 TextAlignment = TextAlignment.Center,
                 Foreground = Brushes.White,
                 FontWeight = FontWeights.Bold,
-                FontSize = 10,
-                LineHeight = 11
+                FontSize = 9,
+                LineHeight = 10
             };
 
             return new Button
             {
                 Content = content,
-                Height = 40,
+                Height = 46,
                 Margin = new Thickness(3),
                 Padding = new Thickness(2),
                 Background = isBuy
@@ -334,17 +400,30 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private Border BuildSettingsPanel()
         {
-            StackPanel stack = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
-            stack.Children.Add(new TextBlock
+            StackPanel stack = new StackPanel();
+            Grid header = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            header.MouseLeftButtonDown += StartDrag;
+            header.MouseMove += DragMove;
+            header.MouseLeftButtonUp += StopDrag;
+            TextBlock title = new TextBlock
             {
-                Text = "Settings",
+                Text = "Quick Settings",
                 Foreground = Brushes.White,
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(0, 0, 0, 5)
-            });
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Button close = IconButton("X");
+            close.Click += (s, e) => settingsPanel.Visibility = Visibility.Collapsed;
+            Grid.SetColumn(title, 0);
+            Grid.SetColumn(close, 1);
+            header.Children.Add(title);
+            header.Children.Add(close);
+            stack.Children.Add(header);
             stack.Children.Add(Field("URL", OpenBullUrl, value => OpenBullUrl = value));
-            stack.Children.Add(Field("API Key", ApiKey, value => ApiKey = value));
+            stack.Children.Add(PasswordField("API Key", value => ApiKey = value));
             stack.Children.Add(Field("Instrument", Underlying, value => Underlying = value.ToUpperInvariant()));
             stack.Children.Add(Field("Expiry", Expiry, value => Expiry = value.ToUpperInvariant()));
             stack.Children.Add(Field("CE", CeStrike.ToString(CultureInfo.InvariantCulture), value => CeStrike = ParseDouble(value, CeStrike)));
@@ -355,8 +434,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             return new Border
             {
+                Width = 300,
                 CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromRgb(24, 24, 24)),
+                Background = new SolidColorBrush(Color.FromArgb(242, 20, 20, 20)),
                 BorderBrush = new SolidColorBrush(Color.FromRgb(55, 55, 55)),
                 BorderThickness = new Thickness(1),
                 Padding = new Thickness(8),
@@ -364,19 +444,28 @@ namespace NinjaTrader.NinjaScript.Indicators
             };
         }
 
+        private UIElement PasswordField(string label, Action<string> onChanged)
+        {
+            Grid row = FieldRow(label);
+            PasswordBox box = new PasswordBox
+            {
+                Password = ApiKey ?? "",
+                FontSize = 10,
+                Height = 23,
+                Padding = new Thickness(4, 1, 4, 1),
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(10, 10, 10)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 65))
+            };
+            box.PasswordChanged += (s, e) => onChanged(box.Password);
+            Grid.SetColumn(box, 1);
+            row.Children.Add(box);
+            return row;
+        }
+
         private UIElement Field(string label, string value, Action<string> onChanged)
         {
-            Grid row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            TextBlock text = new TextBlock
-            {
-                Text = label,
-                Foreground = new SolidColorBrush(Color.FromRgb(165, 165, 165)),
-                FontSize = 10,
-                VerticalAlignment = VerticalAlignment.Center
-            };
+            Grid row = FieldRow(label);
             TextBox box = new TextBox
             {
                 Text = value,
@@ -392,11 +481,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                 onChanged(box.Text);
                 RefreshButtonText();
             };
-
-            Grid.SetColumn(text, 0);
             Grid.SetColumn(box, 1);
-            row.Children.Add(text);
             row.Children.Add(box);
+            return row;
+        }
+
+        private Grid FieldRow(string label)
+        {
+            Grid row = new Grid { Margin = new Thickness(0, 2, 0, 2) };
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(74) });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            TextBlock text = new TextBlock
+            {
+                Text = label,
+                Foreground = new SolidColorBrush(Color.FromRgb(165, 165, 165)),
+                FontSize = 10,
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            Grid.SetColumn(text, 0);
+            row.Children.Add(text);
             return row;
         }
 
@@ -409,21 +513,76 @@ namespace NinjaTrader.NinjaScript.Indicators
                 : Visibility.Visible;
         }
 
-        private void RefreshButtonText()
+        private void CollapseQuickPopup()
         {
-            SetTradeButtonText(buyCeButton, "Buy CE", CeStrike, "CE");
-            SetTradeButtonText(sellCeButton, "Sell CE", CeStrike, "CE");
-            SetTradeButtonText(buyPeButton, "Buy PE", PeStrike, "PE");
-            SetTradeButtonText(sellPeButton, "Sell PE", PeStrike, "PE");
+            if (popup != null)
+                popup.Visibility = Visibility.Collapsed;
+            if (settingsPanel != null)
+                settingsPanel.Visibility = Visibility.Collapsed;
+            if (restoreButton != null)
+                restoreButton.Visibility = Visibility.Visible;
         }
 
-        private static void SetTradeButtonText(Button button, string label, double strike, string optionType)
+        private void RefreshButtonText()
+        {
+            SetTradeButtonText(buyCeButton, "Buy CE", CeStrike, "CE", ceLtp);
+            SetTradeButtonText(sellCeButton, "Sell CE", CeStrike, "CE", ceLtp);
+            SetTradeButtonText(buyPeButton, "Buy PE", PeStrike, "PE", peLtp);
+            SetTradeButtonText(sellPeButton, "Sell PE", PeStrike, "PE", peLtp);
+        }
+
+        private static void SetTradeButtonText(Button button, string label, double strike, string optionType, double ltp)
         {
             if (button == null)
                 return;
             TextBlock text = button.Content as TextBlock;
-            if (text != null)
-                text.Text = label + "\n" + strike.ToString("0", CultureInfo.InvariantCulture) + " " + optionType;
+            if (text == null)
+                return;
+            string ltpText = ltp > 0 ? ltp.ToString("0.##", CultureInfo.InvariantCulture) : "--";
+            text.Text = label + "\n" + strike.ToString("0", CultureInfo.InvariantCulture) + " " + optionType + "\nLTP " + ltpText;
+        }
+
+        private async Task FetchLiveAsync()
+        {
+            if (string.IsNullOrWhiteSpace(ApiKey) || string.IsNullOrWhiteSpace(OpenBullUrl))
+                return;
+
+            try
+            {
+                string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/quick-order/preview";
+                using (StringContent content = new StringContent(BuildPreviewJson(), Encoding.UTF8, "application/json"))
+                {
+                    HttpResponseMessage response = await Http.PostAsync(url, content);
+                    string body = await response.Content.ReadAsStringAsync();
+                    if (!response.IsSuccessStatusCode || body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        if (!isBusy)
+                            SetStatus(TrimForStatus(body), false);
+                        return;
+                    }
+                    double nextFut = ExtractLtp(body, "futures");
+                    double nextCe = ExtractLtp(body, "ce");
+                    double nextPe = ExtractLtp(body, "pe");
+
+                    ChartControl.Dispatcher.InvokeAsync(() =>
+                    {
+                        futuresLtp = nextFut > 0 ? nextFut : futuresLtp;
+                        ceLtp = nextCe > 0 ? nextCe : ceLtp;
+                        peLtp = nextPe > 0 ? nextPe : peLtp;
+                        if (liveText != null)
+                        {
+                            string futText = futuresLtp > 0 ? futuresLtp.ToString("N2", CultureInfo.InvariantCulture) : "--";
+                            liveText.Text = Underlying + " FUT " + futText;
+                        }
+                        RefreshButtonText();
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                if (!isBusy)
+                    SetStatus(ex.Message, false);
+            }
         }
 
         private async Task SendQuickOrderAsync(string side, string optionType)
@@ -460,7 +619,22 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 isBusy = false;
                 SetButtonsEnabled(true);
+                await FetchLiveAsync();
             }
+        }
+
+        private string BuildPreviewJson()
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("{");
+            JsonString(sb, "apikey", ApiKey, true);
+            JsonString(sb, "underlying", Underlying, false);
+            JsonString(sb, "underlying_exchange", UnderlyingExchange, false);
+            JsonString(sb, "expiry", Expiry, false);
+            JsonNumber(sb, "ce_strike", CeStrike, false);
+            JsonNumber(sb, "pe_strike", PeStrike, false);
+            sb.Append("}");
+            return sb.ToString();
         }
 
         private string BuildQuickOrderJson(string side, string optionType)
@@ -562,6 +736,24 @@ namespace NinjaTrader.NinjaScript.Indicators
         private static string Escape(string value)
         {
             return (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+
+        private static double ExtractLtp(string body, string blockName)
+        {
+            if (string.IsNullOrEmpty(body))
+                return 0;
+            Match block = Regex.Match(
+                body,
+                "\"" + Regex.Escape(blockName) + "\"\\s*:\\s*\\{(?<body>.*?)\\}",
+                RegexOptions.Singleline | RegexOptions.IgnoreCase
+            );
+            if (!block.Success)
+                return 0;
+            Match ltp = Regex.Match(block.Groups["body"].Value, "\"ltp\"\\s*:\\s*(?<ltp>-?\\d+(?:\\.\\d+)?)", RegexOptions.IgnoreCase);
+            if (!ltp.Success)
+                return 0;
+            double parsed;
+            return double.TryParse(ltp.Groups["ltp"].Value, NumberStyles.Any, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
         }
 
         private void SetStatus(string message, bool ok)
