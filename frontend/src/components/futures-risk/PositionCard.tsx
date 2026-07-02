@@ -172,7 +172,7 @@ export function PositionCard({
   const sm = statusMeta(trade.status);
   const isDraft = trade.status === "draft";
   const isActive = trade.status === "active";
-  const isClosed = ["completed", "stopped", "cancelled"].includes(trade.status);
+  const isClosed = ["completed", "stopped", "cancelled", "error"].includes(trade.status);
 
   const futDelta = liveFut !== undefined ? liveFut - trade.entry_futures_price : null;
   const optDelta = liveOpt !== undefined ? liveOpt - trade.entry_option_price : null;

@@ -341,6 +341,14 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const mutation = useMutation({
     mutationFn: (payload: PlaceTradePayload) => (asDraft ? createDraft(payload) : placeTrade(payload)),
     onSuccess: (trade) => {
+      if (trade.status === "error") {
+        const message = trade.events?.find((event) => event.severity === "error")?.message ?? "Broker rejected the entry order";
+        toast.error(message);
+        qc.invalidateQueries({ queryKey: ["fr-trades"] });
+        onPlaced?.();
+        closeQuickOrder();
+        return;
+      }
       toast.success(
         asDraft
           ? `Draft saved - ${trade.side} ${trade.lots} lot ${trade.option_symbol}`

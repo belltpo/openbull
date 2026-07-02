@@ -44,6 +44,8 @@ export function statusMeta(status: TradeStatus): StatusMeta {
       return { label: "Completed", pill: "bg-sky-400/15 text-sky-600 dark:text-sky-300 border-sky-400/30", dot: "bg-sky-400", live: false };
     case "stopped":
       return { label: "Stopped", pill: "bg-red-400/15 text-red-600 dark:text-red-300 border-red-400/30", dot: "bg-red-400", live: false };
+    case "error":
+      return { label: "Failed", pill: "bg-red-500/15 text-red-600 dark:text-red-300 border-red-500/30", dot: "bg-red-500", live: false };
     case "cancelled":
       return { label: "Cancelled", pill: "bg-zinc-400/15 text-zinc-500 dark:text-zinc-300 border-zinc-400/30", dot: "bg-zinc-400", live: false };
     default:

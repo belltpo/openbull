@@ -18,8 +18,17 @@ import { PhaseHistory } from "@/components/futures-risk/PhaseHistory";
 import { fmt, livePnl, totalPnl } from "@/components/futures-risk/frFormat";
 import { makeFuturesRiskDemoData } from "@/components/futures-risk/demoData";
 
-const STATUS_FILTERS = ["active", "draft", "all", "completed", "stopped"] as const;
+const STATUS_FILTERS = ["active", "draft", "error", "all", "completed", "stopped"] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number];
+
+const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
+  active: "Active",
+  draft: "Draft",
+  error: "Failed",
+  all: "All",
+  completed: "Completed",
+  stopped: "Stopped",
+};
 
 function HeroStat({
   icon,
@@ -145,7 +154,13 @@ export default function FuturesRisk() {
 
   const placeMutation = useMutation({
     mutationFn: (id: number) => placeDraft(id),
-    onSuccess: () => {
+    onSuccess: (trade) => {
+      if (trade.status === "error") {
+        const message = trade.events?.find((event) => event.severity === "error")?.message ?? "Broker rejected the entry order";
+        toast.error(message);
+        qc.invalidateQueries({ queryKey: ["fr-trades"] });
+        return;
+      }
       toast.success("Draft placed");
       qc.invalidateQueries({ queryKey: ["fr-trades"] });
     },
@@ -290,7 +305,7 @@ export default function FuturesRisk() {
                   statusFilter === s ? "bg-primary text-primary-foreground shadow" : "bg-foreground/[0.05] text-muted-foreground hover:bg-foreground/10",
                 )}
               >
-                {s}
+                {STATUS_FILTER_LABELS[s]}
               </button>
             ))}
           </div>

@@ -897,6 +897,88 @@ def _persist_targets(db, trade_id: int, target_rows: list[dict[str, Any]]) -> No
         )
 
 
+def _persist_failed_entry(
+    *,
+    user_id: int,
+    mode: str,
+    params: dict[str, Any],
+    plan: dict[str, Any],
+    message: str,
+    broker_status: int,
+    existing_trade_id: int | None = None,
+) -> int:
+    """Store a rejected entry attempt with its resolved SL/target levels.
+
+    Failed entries must be visible for audit/debugging, but they must never be
+    treated as active positions or consume a phase number.
+    """
+    with session_scope() as db:
+        if existing_trade_id is not None:
+            trade = db.get(FrTrade, existing_trade_id)
+            if trade is None or trade.user_id != user_id:
+                raise FrError("Draft not found", 404)
+        else:
+            trade = FrTrade(user_id=user_id)
+            db.add(trade)
+
+        trade.mode = mode
+        trade.underlying = params["underlying"]
+        trade.option_symbol = plan["option_symbol"]
+        trade.option_exchange = plan["option_exchange"]
+        trade.option_type = params["option_type"]
+        trade.side = params["side"]
+        trade.product = params["product"]
+        trade.expiry = params["expiry"]
+        trade.strike = plan["strike_val"]
+        trade.lots = params["lots"]
+        trade.lot_size = plan["lot_size"]
+        trade.total_qty = plan["total_qty"]
+        trade.remaining_qty = 0
+        trade.entry_option_price = plan["entry_opt"]
+        trade.entry_order_id = None
+        trade.futures_symbol = plan["fut_symbol"]
+        trade.futures_exchange = plan["fut_exchange"]
+        trade.entry_futures_price = plan["entry_fut"]
+        trade.direction = plan["direction"]
+        trade.sl_points = plan["sl_points"]
+        trade.sl_price = plan["sl_price"]
+        trade.sl_basis = "initial"
+        trade.status = "error"
+        trade.realized_pnl = 0.0
+        trade.closed_at = datetime.now(tz=timezone.utc)
+        trade.modified_by = user_id
+        if existing_trade_id is None:
+            trade.created_by = user_id
+        trade.phase_group = None
+        trade.phase_no = 0
+        trade.meta = {
+            "offset": params["offset"] if params["strike"] is None else None,
+            "params": params,
+            "entry_error": message,
+            "broker_status": broker_status,
+        }
+        db.flush()
+
+        db.execute(text("DELETE FROM fr_trade_target WHERE trade_id = :tid"), {"tid": trade.id})
+        _persist_targets(db, trade.id, plan["target_rows"])
+        log_event(
+            db,
+            trade_id=trade.id,
+            user_id=user_id,
+            kind="error",
+            severity="error",
+            message=f"Entry order failed: {message}",
+            payload={
+                "broker_status": broker_status,
+                "entry_futures_price": plan["entry_fut"],
+                "entry_option_price": plan["entry_opt"],
+                "sl_price": plan["sl_price"],
+                "targets": plan["target_rows"],
+            },
+        )
+        return trade.id
+
+
 def place_trade(
     user_id: int,
     mode: str,
@@ -929,7 +1011,16 @@ def place_trade(
     }
     ok, resp, status = dispatch_order(mode, user_id, order_data, auth_token=auth_token, broker=broker, config=config)
     if not ok:
-        raise FrError(resp.get("message", "Entry order failed"), status)
+        msg = resp.get("message", "Entry order failed")
+        trade_id = _persist_failed_entry(
+            user_id=user_id,
+            mode=mode,
+            params=p,
+            plan=plan,
+            message=msg,
+            broker_status=status,
+        )
+        return get_trade(user_id, trade_id) or {}
     entry_order_id = resp.get("orderid")
 
     with session_scope() as db:
@@ -1092,7 +1183,17 @@ def place_draft(
     }
     ok, resp, status = dispatch_order(mode, user_id, order_data, auth_token=auth_token, broker=broker, config=config)
     if not ok:
-        raise FrError(resp.get("message", "Entry order failed"), status)
+        msg = resp.get("message", "Entry order failed")
+        failed_id = _persist_failed_entry(
+            user_id=user_id,
+            mode=mode,
+            params=p,
+            plan=plan,
+            message=msg,
+            broker_status=status,
+            existing_trade_id=trade_id,
+        )
+        return get_trade(user_id, failed_id) or {}
     entry_order_id = resp.get("orderid")
 
     with session_scope() as db:

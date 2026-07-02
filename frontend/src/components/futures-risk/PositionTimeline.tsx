@@ -40,14 +40,15 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
   const placed = trade.status !== "draft";
   const closed = ["completed", "stopped", "cancelled"].includes(trade.status);
   const stopped = trade.status === "stopped";
+  const failed = trade.status === "error";
   const t1Hit = trade.targets.some((t) => t.seq === 1 && t.status === "hit");
   const nextPendingSeq = trade.targets.find((t) => t.status === "pending")?.seq ?? null;
   const entryOptionLine = optLine(trade.entry_option_price);
 
   steps.push({
     key: "placed",
-    label: "Placed",
-    state: "done",
+    label: failed ? "Rejected" : "Placed",
+    state: failed ? "failed" : "done",
     tone: "neutral",
     icon: <ClipboardCheck className="h-3.5 w-3.5" />,
   });
@@ -55,7 +56,7 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
   steps.push({
     key: "initial-sl",
     label: t1Hit ? "Init SL" : "Stoploss",
-    state: t1Hit ? "done" : stopped ? "failed" : placed ? "current" : "todo",
+    state: failed ? "todo" : t1Hit ? "done" : stopped ? "failed" : placed ? "current" : "todo",
     tone: t1Hit ? "muted" : "red",
     icon: <Shield className="h-3.5 w-3.5" />,
     futures: `F ${fmt(t1Hit ? initialSlPrice(trade) : trade.sl_price)}`,
@@ -65,7 +66,7 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
   steps.push({
     key: "entry",
     label: t1Hit ? "Stoploss" : placed ? "Entry" : "Pending",
-    state: t1Hit && !closed ? "current" : placed ? "done" : "current",
+    state: failed ? "todo" : t1Hit && !closed ? "current" : placed ? "done" : "current",
     tone: t1Hit ? "red" : "blue",
     icon: <Play className="h-3.5 w-3.5" />,
     futures: placed ? `F ${fmt(trade.entry_futures_price)}` : "Draft",
@@ -74,7 +75,7 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
 
   trade.targets.forEach((target) => {
     const hit = target.status === "hit";
-    const current = !closed && target.seq === nextPendingSeq;
+    const current = !failed && !closed && target.seq === nextPendingSeq;
     steps.push({
       key: `t${target.seq}`,
       label: `T${target.seq}`,
@@ -88,10 +89,10 @@ function buildSteps(trade: FrTrade, liveOpt: number | undefined): Step[] {
 
   steps.push({
     key: "closed",
-    label: stopped ? "Stopped" : closed ? "Closed" : "Open",
-    state: stopped ? "failed" : closed ? "done" : "todo",
-    tone: stopped ? "red" : closed ? "green" : "muted",
-    icon: stopped ? (
+    label: failed ? "Failed" : stopped ? "Stopped" : closed ? "Closed" : "Open",
+    state: failed || stopped ? "failed" : closed ? "done" : "todo",
+    tone: failed || stopped ? "red" : closed ? "green" : "muted",
+    icon: failed || stopped ? (
       <X className="h-3.5 w-3.5" />
     ) : closed ? (
       <Check className="h-3.5 w-3.5" />
