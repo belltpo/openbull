@@ -719,9 +719,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Foreground = Brushes.White,
                 FontSize = 10,
                 FontWeight = FontWeights.SemiBold,
-                Margin = new Thickness(7, 0, 22, 0),
                 VerticalAlignment = VerticalAlignment.Center,
                 TextTrimming = TextTrimming.CharacterEllipsis,
+                IsHitTestVisible = false
+            };
+            Border displayCover = new Border
+            {
+                Background = new SolidColorBrush(Color.FromRgb(10, 10, 10)),
+                Margin = new Thickness(2, 2, 21, 2),
+                Padding = new Thickness(5, 0, 0, 0),
+                Child = display,
                 IsHitTestVisible = false
             };
             TextBlock arrow = new TextBlock
@@ -735,7 +742,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 VerticalAlignment = VerticalAlignment.Center,
                 IsHitTestVisible = false
             };
-            comboShell.Children.Add(display);
+            comboShell.Children.Add(displayCover);
             comboShell.Children.Add(arrow);
             comboDisplays[combo] = display;
 
