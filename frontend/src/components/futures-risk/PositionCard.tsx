@@ -65,6 +65,18 @@ function Metric({ label, value, tone, sub }: { label: string; value: React.React
   );
 }
 
+function targetQtyLabel(trade: FrTrade, hitCount: number): string {
+  if (trade.status === "active" || trade.status === "draft") {
+    return `Remaining ${trade.remaining_qty}/${trade.total_qty} qty`;
+  }
+  const exitedQty = Math.max(0, trade.total_qty - trade.remaining_qty);
+  if (trade.status === "stopped") return `Exited ${exitedQty}/${trade.total_qty} via SL`;
+  if (trade.status === "completed" && trade.targets.length > 0 && hitCount >= trade.targets.length) {
+    return `Exited ${exitedQty}/${trade.total_qty} via targets`;
+  }
+  return `Exited ${exitedQty}/${trade.total_qty} qty`;
+}
+
 function PreviousPhaseCard({ trade, liveOpt }: { trade: FrTrade; liveOpt: number | undefined }) {
   const sm = statusMeta(trade.status);
   const pnl = trade.status === "active" ? totalPnl(trade, liveOpt) : trade.realized_pnl;
@@ -95,7 +107,7 @@ function PreviousPhaseCard({ trade, liveOpt }: { trade: FrTrade; liveOpt: number
       <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
         <Metric label="Entry" value={fmt(trade.entry_futures_price)} sub={`Option Rs. ${fmt(trade.entry_option_price)}`} />
         <Metric label="Stop-Loss" value={fmt(trade.sl_price)} sub={trade.sl_basis} />
-        <Metric label="Targets" value={`${hitCount}/${trade.targets.length}`} sub={`${trade.remaining_qty}/${trade.total_qty} qty`} />
+        <Metric label="Targets" value={`${hitCount}/${trade.targets.length}`} sub={targetQtyLabel(trade, hitCount)} />
         <Metric label="Duration" value={durationFmt(trade.duration_sec)} sub={`${timeFmt(trade.created_at)} -> ${trade.closed_at ? timeFmt(trade.closed_at) : "open"}`} />
       </div>
     </div>

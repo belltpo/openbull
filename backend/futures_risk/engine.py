@@ -235,6 +235,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                 planned_qty = max(planned_qty, t.remaining_qty)
             qty = min(planned_qty, t.remaining_qty)
             if qty <= 0:
+                hit_option_price = fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
                 tgt.status = "hit"
                 tgt.hit_futures_price = fut
                 tgt.hit_at = datetime.now(tz=timezone.utc)
@@ -246,7 +247,14 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                         f"(trigger {tgt.trigger_price}); no quantity exited because "
                         "the configured exit percentage is below one executable lot"
                     ),
-                    payload={"futures_price": fut, "seq": tgt.seq, "exit_order_id": None, "qty": 0, "pnl": 0.0},
+                    payload={
+                        "futures_price": fut,
+                        "seq": tgt.seq,
+                        "exit_order_id": None,
+                        "qty": 0,
+                        "exit_option_price": hit_option_price,
+                        "pnl": 0.0,
+                    },
                 )
                 prev_sl = t.sl_price
                 _apply_trailing(t, tgt.seq, all_targets)

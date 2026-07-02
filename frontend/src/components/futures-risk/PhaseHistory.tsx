@@ -59,6 +59,19 @@ function phaseMtm(p: FrPhase, liveOpt: number | undefined): number {
   return (p.realized_pnl ?? 0) + phaseOpenPnl(p, liveOpt);
 }
 
+function targetQtyLabel(phase: FrPhase, completedTargets: number): string {
+  if (phase.status === "active" || phase.status === "draft") {
+    return `Remaining ${phase.remaining_qty}/${phase.total_qty} qty`;
+  }
+  const exitedQty = Math.max(0, phase.total_qty - phase.remaining_qty);
+  if (phase.status === "stopped") return `Exited ${exitedQty}/${phase.total_qty} via SL`;
+  if (phase.status === "completed" && phase.targets_total > 0 && completedTargets >= phase.targets_total) {
+    return `Exited ${exitedQty}/${phase.total_qty} via targets`;
+  }
+  if (phase.exit_kind === "manual") return `Exited ${exitedQty}/${phase.total_qty} manually`;
+  return `Exited ${exitedQty}/${phase.total_qty} qty`;
+}
+
 function Metric({
   label,
   value,
@@ -108,7 +121,7 @@ function PreviousPhaseRow({ phase, liveOpt }: { phase: FrPhase; liveOpt: number 
         <Metric label="Phase MTM" value={`Rs. ${fmt(mtm)}`} sub={phase.status === "active" ? "live + booked" : "booked"} valueClassName={pnlTone} />
         <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} />
         <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} />
-        <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={`${phase.remaining_qty}/${phase.total_qty} qty`} />
+        <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={targetQtyLabel(phase, completedTargets)} />
         <Metric
           label="Duration"
           value={durationFmt(phase.duration_sec)}
@@ -168,7 +181,7 @@ function PhaseCard({
         <Metric label="Phase MTM" value={`Rs. ${fmt(mtm)}`} sub={phase.status === "active" ? "live + booked" : "booked"} valueClassName={pnlTone} />
         <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} />
         <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} icon={<Shield className="h-3 w-3" />} />
-        <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={`${phase.remaining_qty}/${phase.total_qty} qty`} icon={<Target className="h-3 w-3" />} />
+        <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={targetQtyLabel(phase, completedTargets)} icon={<Target className="h-3 w-3" />} />
         <Metric label="Duration" value={durationFmt(phase.duration_sec)} sub={`${timeFmt(phase.entry_time)} -> ${phase.exit_time ? timeFmt(phase.exit_time) : "open"}`} icon={<Clock className="h-3 w-3" />} />
       </div>
 
@@ -180,16 +193,25 @@ function PhaseCard({
               className={cn(
                 "rounded-md border px-3 py-2 text-xs",
                 t.status === "hit"
-                  ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+                  ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300"
                   : "fr-dark-surface border-border/60 bg-background/40 text-muted-foreground",
               )}
             >
-              <div className="flex justify-between gap-2">
-                <span>T{t.seq}</span>
-                <span>{t.status}</span>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold">T{t.seq}</div>
+                  <div className="mt-0.5 tabular-nums">{fmt(t.trigger_price, 0)}</div>
+                  <div className="mt-0.5 text-[11px] opacity-80">{fmt(t.points, 0)} pts / {fmt(t.exit_pct, 0)}%</div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div>{t.status}</div>
+                  {t.status === "hit" ? (
+                    <div className="mt-1 text-[11px] font-semibold tabular-nums">
+                      Opt {t.exit_option_price ? fmt(t.exit_option_price) : "--"}
+                    </div>
+                  ) : null}
+                </div>
               </div>
-              <div className="mt-0.5 tabular-nums">{fmt(t.trigger_price, 0)}</div>
-              <div className="mt-0.5 text-[11px] opacity-80">{fmt(t.points, 0)} pts / {fmt(t.exit_pct, 0)}%</div>
             </div>
           ))}
         </div>

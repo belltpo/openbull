@@ -1515,6 +1515,23 @@ def _trade_exit_option_prices(db, trade_id: int) -> tuple[dict[int, float], floa
             target_prices[seq] = price
         elif kind == "sl_hit":
             sl_price = price
+    existing_target_price_seqs = list(target_prices) or [-1]
+    missing_hit_prices = db.execute(
+        select(FrTradeTarget.seq)
+        .where(
+            FrTradeTarget.trade_id == trade_id,
+            FrTradeTarget.status == "hit",
+            ~FrTradeTarget.seq.in_(existing_target_price_seqs),
+        )
+        .order_by(FrTradeTarget.seq)
+    ).scalars().all()
+    if missing_hit_prices:
+        trade = db.get(FrTrade, trade_id)
+        if trade is not None:
+            current_option_ltp = get_ltp_value(trade.option_symbol, trade.option_exchange)
+            if current_option_ltp and float(current_option_ltp) > 0:
+                for seq in missing_hit_prices:
+                    target_prices[int(seq)] = float(current_option_ltp)
     return target_prices, sl_price
 
 
