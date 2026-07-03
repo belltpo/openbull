@@ -59,6 +59,7 @@ X-API-KEY header
    - `CE Strike`
    - `PE Strike`
    - `Lots`
+   - `Product` defaults to `MIS` and can be changed/saved per contract
    - `SL Points`
    - `Target Template Id`
 
@@ -87,9 +88,10 @@ to the OpenBull target template id you want this chart to use.
 - After a successful quick order, the indicator fetches the created Futures-Risk
   trade and creates/updates a tagged `Bell_LongEntryTool` or
   `Bell_ShortEntryTool` on the chart.
-- The last linked OpenBull trade id is stored with the indicator. When the chart
-  or workspace reloads, the indicator fetches that trade from OpenBull and
-  restores the same tagged Bell drawing tool instead of losing the levels.
+- The indicator restores one tagged Bell drawing tool per current-session
+  OpenBull phase/trade for the selected instrument. When the chart or workspace
+  reloads, it fetches those phases from OpenBull and restores their levels
+  instead of losing them.
 - If you manually delete the linked Bell drawing tool from the chart, the
   indicator respects that deletion and does not recreate it until a new quick
   order links a new trade.

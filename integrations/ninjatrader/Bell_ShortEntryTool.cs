@@ -315,8 +315,8 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 FontSize = 15;
 
                 EntryBrush = Brushes.DeepPink;
-                SLBrush = Brushes.LimeGreen;
-                TargetBrush = Brushes.Orange;
+                SLBrush = Brushes.Orange;
+                TargetBrush = Brushes.LimeGreen;
 
                 EntryAnchor = new ChartAnchor
                 {
@@ -795,6 +795,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         {
             if (startAnchor == null || endAnchor == null)
                 return;
+            Brush renderBrush = startAnchor.IsEditing ? Brushes.Red : brush;
 
             int startBarIndex = chartBars.Bars.GetBar(startAnchor.Time);
             int endBarIndex = chartBars.Bars.GetBar(endAnchor.Time);
@@ -809,11 +810,11 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             // Draw the line
             var start = new SharpDX.Vector2(startX, y);
             var end = new SharpDX.Vector2(endX, y);
-            var stroke = new Stroke(brush, dashStyle, LineThickness) { RenderTarget = RenderTarget };
+            var stroke = new Stroke(renderBrush, dashStyle, LineThickness) { RenderTarget = RenderTarget };
             RenderTarget.DrawLine(start, end, stroke.BrushDX, stroke.Width, stroke.StrokeStyle);
 
             // Draw a dot at the end (for dragging)
-            using (var dotBrush = brush.ToDxBrush(RenderTarget))
+            using (var dotBrush = renderBrush.ToDxBrush(RenderTarget))
             {
                 var center = new SharpDX.Vector2(endX, y);
                 var outer = new SharpDX.Direct2D1.Ellipse(center, 6f, 6f);
@@ -825,7 +826,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             }
 
             // Draw label on the right
-            DrawLabel(label, endX + 10, y, brush);
+            DrawLabel(label, endX + 10, y, renderBrush);
         }
 
         private void DrawHorizontalLine(float startX, float endX, ChartScale chartScale, double price, Brush brush, DashStyleHelper dashStyle, string label)
@@ -860,11 +861,22 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                     layout.Metrics.Width + padding * 2,
                     layout.Metrics.Height + padding * 2
                 );
+                var rounded = new SharpDX.Direct2D1.RoundedRectangle
+                {
+                    Rect = bgRect,
+                    RadiusX = 6f,
+                    RadiusY = 6f
+                };
+                Brush finalTextBrush = textBrush;
+                if (text.IndexOf("MTM -", StringComparison.OrdinalIgnoreCase) >= 0)
+                    finalTextBrush = Brushes.Red;
+                else if (text.IndexOf("MTM +", StringComparison.OrdinalIgnoreCase) >= 0)
+                    finalTextBrush = Brushes.LimeGreen;
 
                 using (var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color4(0, 0, 0, 0.7f)))
-                using (var textBrushDx = textBrush.ToDxBrush(RenderTarget))
+                using (var textBrushDx = finalTextBrush.ToDxBrush(RenderTarget))
                 {
-                    RenderTarget.FillRectangle(bgRect, bgBrush);
+                    RenderTarget.FillRoundedRectangle(rounded, bgBrush);
                     RenderTarget.DrawTextLayout(new SharpDX.Vector2(textX, textY), layout, textBrushDx);
                 }
             }

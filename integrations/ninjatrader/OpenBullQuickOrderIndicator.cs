@@ -26,6 +26,8 @@ namespace NinjaTrader.NinjaScript.Indicators
     public class OpenBullQuickOrderIndicator : Indicator
     {
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        private static string[] cachedExpiries = new string[0];
+        private static double[] cachedStrikes = new double[0];
 
         private Grid root;
         private Border popup;
@@ -70,6 +72,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         private DrawingTool linkedBellTool;
         private string linkedBellTag;
         private bool linkedBellSeenOnChart;
+        private readonly Dictionary<int, OpenBullTradeSnapshot> managedTrades = new Dictionary<int, OpenBullTradeSnapshot>();
+        private readonly Dictionary<int, DrawingTool> linkedBellTools = new Dictionary<int, DrawingTool>();
+        private readonly HashSet<int> linkedBellSeenTradeIds = new HashSet<int>();
         private bool levelDragging;
         private string draggedLevelKey;
         private string tradingMode = "--";
@@ -102,7 +107,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 PeStrike = 24100;
                 Lots = 1;
                 SlPoints = 5;
-                Product = "NRML";
+                Product = "MIS";
                 TargetTemplateId = 0;
                 UseOverrideTargets = false;
                 AutoSplitTargets = true;
@@ -115,6 +120,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Target3ExitPct = 25;
                 Target4ExitPct = 25;
                 LinkedTradeId = 0;
+                LinkedTradeIds = "";
+                RemovedLinkedTradeIds = "";
                 LinkedTradeRemovedByUser = false;
                 NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
             }
@@ -1214,16 +1221,19 @@ namespace NinjaTrader.NinjaScript.Indicators
                         return;
                     }
 
+                    List<string> expiryValues = ParseExpiryValues(body);
+                    List<string> strikeValues = ParseNumberArray(body, "strikes");
+                    cachedExpiries = expiryValues.ToArray();
+                    cachedStrikes = ParseStrikeCache(strikeValues);
                     ChartControl.Dispatcher.InvokeAsync(() =>
                     {
                         settingsHydrating = true;
                         try
                         {
                             FillCombo(instrumentCombo, ParseStringArray(body, "underlyings"), Underlying);
-                            FillCombo(expiryCombo, ParseExpiryValues(body), Expiry);
-                            List<string> strikes = ParseNumberArray(body, "strikes");
-                            FillCombo(ceCombo, strikes, CeStrike.ToString("0", CultureInfo.InvariantCulture));
-                            FillCombo(peCombo, strikes, PeStrike.ToString("0", CultureInfo.InvariantCulture));
+                            FillCombo(expiryCombo, expiryValues, Expiry);
+                            FillCombo(ceCombo, strikeValues, CeStrike.ToString("0", CultureInfo.InvariantCulture));
+                            FillCombo(peCombo, strikeValues, PeStrike.ToString("0", CultureInfo.InvariantCulture));
                             FillCombo(templateCombo, ParseTemplates(body), TemplateFallbackLabel(TargetTemplateId));
                             FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
                             string mappedExchange = ExtractJsonValue(body, "underlying_exchange");
@@ -1424,9 +1434,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             ChartControl.Dispatcher.InvokeAsync(() =>
             {
                 LinkedTradeId = tradeId;
+                AddLinkedTradeId(tradeId);
+                RemoveDeletedLinkedTradeId(tradeId);
                 LinkedTradeRemovedByUser = false;
                 linkedBellSeenOnChart = false;
                 managedTrade = snapshot;
+                managedTrades[tradeId] = snapshot;
                 bool bellLinked = AttachBellDrawingTool(snapshot);
                 SetStatus(bellLinked ? "Order sent - Bell drawing tool linked" : "Order sent - chart levels linked", true);
                 RequestChartRefresh();
@@ -1435,57 +1448,96 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private async Task RehydrateLinkedTradeAsync()
         {
-            if (rehydrateAttempted || LinkedTradeId <= 0 || LinkedTradeRemovedByUser || string.IsNullOrWhiteSpace(ApiKey))
+            if (rehydrateAttempted || string.IsNullOrWhiteSpace(ApiKey))
                 return;
             rehydrateAttempted = true;
+            if (LinkedTradeRemovedByUser && LinkedTradeId > 0)
+                AddDeletedLinkedTradeId(LinkedTradeId);
             await Task.Delay(500);
-            OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(LinkedTradeId);
-            if (snapshot == null)
-                return;
-            ApplyLiveOptionPrice(snapshot);
+            List<OpenBullTradeSnapshot> snapshots = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradesAsync(Underlying);
+            if (snapshots.Count == 0)
+            {
+                foreach (int id in ParseTradeIds(LinkedTradeIds))
+                {
+                    if (IsDeletedLinkedTradeId(id))
+                        continue;
+                    OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(id);
+                    if (snapshot != null)
+                        snapshots.Add(snapshot);
+                }
+                if (LinkedTradeId > 0 && !IsDeletedLinkedTradeId(LinkedTradeId))
+                {
+                    OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(LinkedTradeId);
+                    if (snapshot != null)
+                        snapshots.Add(snapshot);
+                }
+            }
+            foreach (OpenBullTradeSnapshot snapshot in snapshots)
+                ApplyLiveOptionPrice(snapshot);
             ChartControl.Dispatcher.InvokeAsync(() =>
             {
-                managedTrade = snapshot;
-                linkedBellTag = "OpenBull_FR_" + snapshot.TradeId.ToString(CultureInfo.InvariantCulture);
-                bool bellLinked = AttachBellDrawingTool(snapshot);
-                if (bellLinked)
-                    SetStatus("Bell drawing restored from OpenBull trade " + snapshot.TradeId.ToString(CultureInfo.InvariantCulture), true);
+                int restored = 0;
+                foreach (OpenBullTradeSnapshot snapshot in snapshots)
+                {
+                    if (snapshot == null || snapshot.TradeId <= 0 || IsDeletedLinkedTradeId(snapshot.TradeId))
+                        continue;
+                    managedTrade = snapshot;
+                    managedTrades[snapshot.TradeId] = snapshot;
+                    AddLinkedTradeId(snapshot.TradeId);
+                    linkedBellTag = "OpenBull_FR_" + snapshot.TradeId.ToString(CultureInfo.InvariantCulture);
+                    if (AttachBellDrawingTool(snapshot))
+                        restored++;
+                }
+                if (restored > 0)
+                    SetStatus("Restored " + restored.ToString(CultureInfo.InvariantCulture) + " Bell drawing tool(s)", true);
                 RequestChartRefresh();
             });
         }
 
         private async Task RefreshManagedTradeAsync()
         {
-            if (managedTrade == null || managedTrade.TradeId <= 0)
+            List<int> ids = new List<int>(managedTrades.Keys);
+            if (managedTrade != null && managedTrade.TradeId > 0 && !ids.Contains(managedTrade.TradeId))
+                ids.Add(managedTrade.TradeId);
+            if (ids.Count == 0)
                 return;
-            if (linkedBellTool != null && linkedBellSeenOnChart && !DrawingToolExists(linkedBellTag))
+            foreach (int id in ids)
             {
-                LinkedTradeRemovedByUser = true;
-                linkedBellTool = null;
-                linkedBellTag = null;
-                managedTrade = null;
-                SetStatus("Bell drawing removed manually; link kept off this chart", true);
-                RequestChartRefresh();
-                return;
+                string tag = BellTag(id);
+                if (linkedBellTools.ContainsKey(id) && linkedBellSeenTradeIds.Contains(id) && !DrawingToolExists(tag))
+                {
+                    AddDeletedLinkedTradeId(id);
+                    linkedBellTools.Remove(id);
+                    linkedBellSeenTradeIds.Remove(id);
+                    managedTrades.Remove(id);
+                    if (managedTrade != null && managedTrade.TradeId == id)
+                        managedTrade = null;
+                    SetStatus("Bell drawing removed manually; link kept off this chart", true);
+                    RequestChartRefresh();
+                    continue;
+                }
+                if (IsDeletedLinkedTradeId(id))
+                    continue;
+                OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(id);
+                if (snapshot == null)
+                    continue;
+                ApplyLiveOptionPrice(snapshot);
+                ChartControl.Dispatcher.InvokeAsync(() =>
+                {
+                    managedTrade = snapshot;
+                    managedTrades[snapshot.TradeId] = snapshot;
+                    if (linkedBellTools.ContainsKey(snapshot.TradeId))
+                        AttachBellDrawingTool(snapshot);
+                    RequestChartRefresh();
+                });
             }
-            OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(managedTrade.TradeId);
-            if (snapshot == null)
-                return;
-            ApplyLiveOptionPrice(snapshot);
-            ChartControl.Dispatcher.InvokeAsync(() =>
-            {
-                managedTrade = snapshot;
-                if (linkedBellTool != null)
-                    AttachBellDrawingTool(snapshot);
-                RequestChartRefresh();
-            });
         }
 
         private bool AttachBellDrawingTool(OpenBullTradeSnapshot snapshot)
         {
             if (snapshot == null || snapshot.TradeId <= 0 || snapshot.EntryFuturesPrice <= 0 || snapshot.StopLossPrice <= 0)
                 return false;
-            if (LinkedTradeRemovedByUser && LinkedTradeId == snapshot.TradeId)
+            if (IsDeletedLinkedTradeId(snapshot.TradeId))
                 return false;
             if (ChartBars == null || ChartBars.Bars == null || ChartBars.Bars.Count <= 0)
                 return false;
@@ -1493,7 +1545,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             DateTime entryTime;
             DateTime endTime;
             ResolveBellToolTimes(snapshot, out entryTime, out endTime);
-            linkedBellTag = "OpenBull_FR_" + snapshot.TradeId.ToString(CultureInfo.InvariantCulture);
+            linkedBellTag = BellTag(snapshot.TradeId);
             if (snapshot.Direction >= 0)
             {
                 Bell_LongEntryTool tool = Draw.BellLongEntry(
@@ -1509,6 +1561,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     snapshot.Mtm
                 );
                 linkedBellTool = tool;
+                linkedBellTools[snapshot.TradeId] = tool;
             }
             else
             {
@@ -1525,8 +1578,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                     snapshot.Mtm
                 );
                 linkedBellTool = tool;
+                linkedBellTools[snapshot.TradeId] = tool;
             }
             linkedBellSeenOnChart = linkedBellTool != null && DrawingToolExists(linkedBellTag);
+            if (linkedBellSeenOnChart)
+                linkedBellSeenTradeIds.Add(snapshot.TradeId);
             return linkedBellTool != null;
         }
 
@@ -1547,6 +1603,77 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return linkedBellTool != null;
             }
             return false;
+        }
+
+        private static string BellTag(int tradeId)
+        {
+            return "OpenBull_FR_" + tradeId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static HashSet<int> ParseTradeIds(string value)
+        {
+            HashSet<int> ids = new HashSet<int>();
+            if (string.IsNullOrWhiteSpace(value))
+                return ids;
+            string[] parts = value.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (string part in parts)
+            {
+                int id = ParseInt(part.Trim(), 0);
+                if (id > 0)
+                    ids.Add(id);
+            }
+            return ids;
+        }
+
+        private static string FormatTradeIds(HashSet<int> ids)
+        {
+            if (ids == null || ids.Count == 0)
+                return "";
+            List<int> sorted = new List<int>(ids);
+            sorted.Sort();
+            StringBuilder sb = new StringBuilder();
+            foreach (int id in sorted)
+            {
+                if (sb.Length > 0)
+                    sb.Append(",");
+                sb.Append(id.ToString(CultureInfo.InvariantCulture));
+            }
+            return sb.ToString();
+        }
+
+        private void AddLinkedTradeId(int tradeId)
+        {
+            if (tradeId <= 0)
+                return;
+            HashSet<int> ids = ParseTradeIds(LinkedTradeIds);
+            ids.Add(tradeId);
+            LinkedTradeIds = FormatTradeIds(ids);
+        }
+
+        private bool IsDeletedLinkedTradeId(int tradeId)
+        {
+            return tradeId > 0 && ParseTradeIds(RemovedLinkedTradeIds).Contains(tradeId);
+        }
+
+        private void AddDeletedLinkedTradeId(int tradeId)
+        {
+            if (tradeId <= 0)
+                return;
+            HashSet<int> ids = ParseTradeIds(RemovedLinkedTradeIds);
+            ids.Add(tradeId);
+            RemovedLinkedTradeIds = FormatTradeIds(ids);
+            if (LinkedTradeId == tradeId)
+                LinkedTradeRemovedByUser = true;
+        }
+
+        private void RemoveDeletedLinkedTradeId(int tradeId)
+        {
+            if (tradeId <= 0)
+                return;
+            HashSet<int> ids = ParseTradeIds(RemovedLinkedTradeIds);
+            if (ids.Remove(tradeId))
+                RemovedLinkedTradeIds = FormatTradeIds(ids);
+            LinkedTradeRemovedByUser = false;
         }
 
         private void ResolveBellToolTimes(OpenBullTradeSnapshot snapshot, out DateTime entryTime, out DateTime endTime)
@@ -1824,6 +1951,20 @@ namespace NinjaTrader.NinjaScript.Indicators
             foreach (Match m in Regex.Matches(array.Groups["body"].Value, "-?\\d+(?:\\.\\d+)?"))
                 result.Add(m.Value);
             return result;
+        }
+
+        private static double[] ParseStrikeCache(List<string> values)
+        {
+            List<double> strikes = new List<double>();
+            if (values == null)
+                return strikes.ToArray();
+            foreach (string value in values)
+            {
+                double parsed = ParseDouble(value, 0);
+                if (parsed > 0)
+                    strikes.Add(parsed);
+            }
+            return strikes.ToArray();
         }
 
         private static List<string> ParseExpiryValues(string body)
@@ -2159,6 +2300,26 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        public class ExpiryListConverter : StringConverter
+        {
+            public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
+            public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
+            public override TypeConverter.StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
+            {
+                return new TypeConverter.StandardValuesCollection(cachedExpiries);
+            }
+        }
+
+        public class StrikeListConverter : DoubleConverter
+        {
+            public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
+            public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
+            public override TypeConverter.StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
+            {
+                return new TypeConverter.StandardValuesCollection(cachedStrikes);
+            }
+        }
+
         [NinjaScriptProperty]
         [Display(Name = "OpenBull URL", GroupName = "OpenBull", Order = 1)]
         public string OpenBullUrl { get; set; }
@@ -2178,14 +2339,17 @@ namespace NinjaTrader.NinjaScript.Indicators
         public string UnderlyingExchange { get; set; }
 
         [NinjaScriptProperty]
+        [TypeConverter(typeof(ExpiryListConverter))]
         [Display(Name = "Expiry", GroupName = "Contract", Order = 12)]
         public string Expiry { get; set; }
 
         [NinjaScriptProperty]
+        [TypeConverter(typeof(StrikeListConverter))]
         [Display(Name = "CE Strike", GroupName = "Contract", Order = 13)]
         public double CeStrike { get; set; }
 
         [NinjaScriptProperty]
+        [TypeConverter(typeof(StrikeListConverter))]
         [Display(Name = "PE Strike", GroupName = "Contract", Order = 14)]
         public double PeStrike { get; set; }
 
@@ -2252,6 +2416,14 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Browsable(false)]
         public int LinkedTradeId { get; set; }
+
+        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string LinkedTradeIds { get; set; }
+
+        [NinjaScriptProperty]
+        [Browsable(false)]
+        public string RemovedLinkedTradeIds { get; set; }
 
         [NinjaScriptProperty]
         [Browsable(false)]

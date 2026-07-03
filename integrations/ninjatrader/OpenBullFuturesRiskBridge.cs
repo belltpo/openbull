@@ -111,6 +111,35 @@ namespace NinjaTrader.NinjaScript
             }
         }
 
+        public static async Task<List<OpenBullTradeSnapshot>> FetchTradesAsync(string underlying)
+        {
+            List<OpenBullTradeSnapshot> trades = new List<OpenBullTradeSnapshot>();
+            if (string.IsNullOrWhiteSpace(ApiKey))
+                return trades;
+
+            string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/trades?status=all&current_session=true";
+            if (!string.IsNullOrWhiteSpace(underlying))
+                url += "&underlying=" + Uri.EscapeDataString(underlying.Trim().ToUpperInvariant());
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, url))
+            {
+                request.Headers.TryAddWithoutValidation("X-API-KEY", ApiKey);
+                HttpResponseMessage response = await Http.SendAsync(request);
+                string body = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode || body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) < 0)
+                    return trades;
+                string array = ExtractArray(body, "data");
+                if (string.IsNullOrWhiteSpace(array))
+                    return trades;
+                foreach (string obj in SplitObjects(array))
+                {
+                    OpenBullTradeSnapshot trade = ParseTradeSnapshot(obj);
+                    if (trade != null && trade.TradeId > 0)
+                        trades.Add(trade);
+                }
+            }
+            return trades;
+        }
+
         public static OpenBullTradeSnapshot ParseTradeSnapshot(string body)
         {
             if (string.IsNullOrWhiteSpace(body))
@@ -284,6 +313,35 @@ namespace NinjaTrader.NinjaScript
                 }
             }
             return "";
+        }
+
+        private static List<string> SplitObjects(string arrayBody)
+        {
+            List<string> objects = new List<string>();
+            if (string.IsNullOrWhiteSpace(arrayBody))
+                return objects;
+            int depth = 0;
+            int start = -1;
+            for (int i = 0; i < arrayBody.Length; i++)
+            {
+                char c = arrayBody[i];
+                if (c == '{')
+                {
+                    if (depth == 0)
+                        start = i;
+                    depth++;
+                }
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0 && start >= 0)
+                    {
+                        objects.Add(arrayBody.Substring(start + 1, i - start - 1));
+                        start = -1;
+                    }
+                }
+            }
+            return objects;
         }
 
         private static string ExtractObject(string body, string key)

@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
@@ -535,6 +535,39 @@ async def api_futures_risk_trade_detail(trade_id: int, request: Request):
     if trade is None:
         return JSONResponse(content={"status": "error", "message": "Trade not found"}, status_code=404)
     return JSONResponse(content={"status": "success", "data": trade}, status_code=200)
+
+
+@router.get("/futures-risk/trades")
+async def api_futures_risk_trade_list(
+    request: Request,
+    underlying: str | None = Query(None),
+    status: str = Query("all"),
+    current_session: bool = Query(True),
+):
+    """Return Futures-Risk trades for API-key clients.
+
+    NinjaTrader uses this to restore one Bell drawing per phase after chart or
+    workspace reload. By default it returns the selected instrument's current
+    trading-session phases, which matches the Futures-Risk day-wise phase logic.
+    """
+    try:
+        user_id, _auth_token, _broker_name, _config = await _resolve_api_user(request)
+    except Exception as exc:
+        return _error_response(exc)
+
+    normalized_underlying = (underlying or "").strip().upper()
+    session_suffix = ":" + fr._session_date_ist() if current_session else ""  # type: ignore[attr-defined]
+    trades = []
+    for trade in fr.list_trades(user_id, status=status):
+        if normalized_underlying and str(trade.get("underlying") or "").upper() != normalized_underlying:
+            continue
+        if current_session and not str(trade.get("phase_group") or "").endswith(session_suffix):
+            continue
+        if int(trade.get("phase_no") or 0) <= 0:
+            continue
+        trades.append(trade)
+    trades.sort(key=lambda t: (str(t.get("underlying") or ""), int(t.get("phase_no") or 0), int(t.get("id") or 0)))
+    return JSONResponse(content={"status": "success", "data": trades}, status_code=200)
 
 
 @router.put("/futures-risk/trades/{trade_id}/levels")
