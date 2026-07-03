@@ -10,11 +10,13 @@ Futures-Risk Options web API (/web/fr/*).
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.futures_risk import _quote_payload
 from backend.dependencies import BrokerContext, get_broker_context, get_current_user, get_db
 from backend.futures_risk import service as fr
 from backend.futures_risk.service import FrError
@@ -252,6 +254,76 @@ async def strikes(
         underlying, exchange, expiry, option_type,
         ctx.auth_token, ctx.broker_name, ctx.broker_config,
     )
+    return {"status": "success", "data": data}
+
+
+class QuickOrderPreview(BaseModel):
+    underlying: str = Field(..., min_length=1)
+    underlying_exchange: str = "NSE_INDEX"
+    expiry: str = Field(..., min_length=1)
+    ce_strike: float | None = None
+    pe_strike: float | None = None
+
+
+@router.post("/quick-order-preview")
+async def quick_order_preview(
+    payload: QuickOrderPreview,
+    ctx: BrokerContext = Depends(get_broker_context),
+    db: AsyncSession = Depends(get_db),
+):
+    """Session-auth quote preview for the browser quick-order popup.
+
+    The popup still prefers WebSocket ticks, but this endpoint gives it a
+    REST/cache fallback for instruments whose broker stream is slow or missing.
+    """
+    try:
+        mode = await get_trading_mode(db)
+        maps = [m for m in fr.list_symbol_maps() if m.get("enabled")]
+        selected_map = next(
+            (m for m in maps if str(m.get("underlying", "")).upper() == payload.underlying.upper()),
+            None,
+        )
+        underlying_exchange = str((selected_map or {}).get("underlying_exchange") or payload.underlying_exchange)
+        fut = fr.resolve_futures(payload.underlying)
+        if fut is None:
+            raise FrError(f"No futures mapping configured for {payload.underlying}", 404)
+
+        data: dict[str, Any] = {
+            "mode": mode,
+            "futures": _quote_payload(fut["symbol"], fut["exchange"], ctx.auth_token, ctx.broker_name, ctx.broker_config),
+            "ce": None,
+            "pe": None,
+        }
+        if payload.ce_strike:
+            ce = fr._resolve_option(  # type: ignore[attr-defined]
+                payload.underlying,
+                underlying_exchange,
+                payload.expiry,
+                "CE",
+                "BUY",
+                payload.ce_strike,
+                "ATM",
+                ctx.auth_token,
+                ctx.broker_name,
+                ctx.broker_config,
+            )
+            data["ce"] = _quote_payload(ce["symbol"], ce["exchange"], ctx.auth_token, ctx.broker_name, ctx.broker_config)
+        if payload.pe_strike:
+            pe = fr._resolve_option(  # type: ignore[attr-defined]
+                payload.underlying,
+                underlying_exchange,
+                payload.expiry,
+                "PE",
+                "BUY",
+                payload.pe_strike,
+                "ATM",
+                ctx.auth_token,
+                ctx.broker_name,
+                ctx.broker_config,
+            )
+            data["pe"] = _quote_payload(pe["symbol"], pe["exchange"], ctx.auth_token, ctx.broker_name, ctx.broker_config)
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
     return {"status": "success", "data": data}
 
 

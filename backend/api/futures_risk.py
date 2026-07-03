@@ -268,12 +268,26 @@ async def api_futures_risk_quick_order_settings_delete(request: Request):
 
 
 def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str, config: dict) -> dict[str, Any]:
-    from backend.services.market_data_cache import get_ltp_value
+    from backend.services.market_data_cache import get_market_data_cache
     from backend.services.market_data_cache import process_market_data
     from backend.services.quotes_service import get_quotes_with_auth
 
     key = (str(symbol).upper(), str(exchange).upper())
     now = time.monotonic()
+
+    def fresh_cached_ltp() -> float | None:
+        try:
+            entry = get_market_data_cache().get_all(symbol, exchange)
+            last_update = float(entry.get("last_update") or 0)
+            ltp_value = (entry.get("ltp") or {}).get("value")
+            ltp = float(ltp_value or 0)
+        except Exception:
+            return None
+        if ltp <= 0 or last_update <= 0:
+            return None
+        if time.time() - last_update > _QUOTE_CACHE_TTL_SECONDS:
+            return None
+        return ltp
 
     def remember_ltp(value: float) -> None:
         if value <= 0:
@@ -289,12 +303,12 @@ def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str
             logger.debug("Unable to seed market-data cache for %s/%s", symbol, exchange, exc_info=True)
 
     try:
-        cached_ltp = get_ltp_value(symbol, exchange)
-        if cached_ltp and float(cached_ltp) > 0:
+        cached_ltp = fresh_cached_ltp()
+        if cached_ltp and cached_ltp > 0:
             payload = {
                 "symbol": symbol,
                 "exchange": exchange,
-                "ltp": float(cached_ltp),
+                "ltp": cached_ltp,
                 "status": "success",
                 "source": "websocket_cache",
                 "message": None,

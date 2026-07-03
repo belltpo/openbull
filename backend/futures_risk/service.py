@@ -29,7 +29,7 @@ from backend.models.futures_risk import (
     FrTradeTarget,
 )
 from backend.sandbox._db import session_scope
-from backend.services.market_data_cache import get_ltp_value
+from backend.services.market_data_cache import get_ltp_value, get_market_data_cache
 from backend.services.option_symbol_service import (
     _fetch_available_strikes,
     _find_atm,
@@ -655,17 +655,41 @@ def list_strikes(
     strikes = _fetch_available_strikes(base, expiry.upper(), option_type.upper(), options_exchange)
 
     atm: float | None = None
+
+    def fresh_cached_ltp(symbol: str, exchange: str) -> float | None:
+        try:
+            entry = get_market_data_cache().get_all(symbol, exchange)
+            last_update = float(entry.get("last_update") or 0)
+            ltp_value = (entry.get("ltp") or {}).get("value")
+            ltp = float(ltp_value or 0)
+        except Exception:
+            return None
+        if ltp <= 0 or last_update <= 0:
+            return None
+        return ltp if time.time() - last_update <= 5 else None
+
     try:
         if quote_exchange in ("NSE_INDEX", "BSE_INDEX", "NSE", "BSE"):
             quote_symbol, q_exch = base, quote_exchange
         else:
             fut = _find_near_month_futures(base, quote_exchange)
             quote_symbol, q_exch = (fut["symbol"], fut["exchange"]) if fut else (base, quote_exchange)
-        ok, q, _ = get_quotes_with_auth(quote_symbol, q_exch, auth_token, broker, config)
-        if ok:
-            ltp = q.get("data", {}).get("ltp")
-            if ltp:
-                atm = _find_atm(float(ltp), strikes)
+        cached_ltp = fresh_cached_ltp(quote_symbol, q_exch)
+        if cached_ltp:
+            atm = _find_atm(cached_ltp, strikes)
+        else:
+            ok, q, _ = get_quotes_with_auth(quote_symbol, q_exch, auth_token, broker, config)
+            if ok:
+                ltp = q.get("data", {}).get("ltp")
+                if ltp:
+                    atm = _find_atm(float(ltp), strikes)
+        if atm is None:
+            # If REST is rate-limited or unavailable, an older cache value is
+            # still useful for strike selection. Live display never uses this
+            # fallback; it is only an ATM selector.
+            cached_ltp = get_ltp_value(quote_symbol, q_exch)
+            if cached_ltp:
+                atm = _find_atm(float(cached_ltp), strikes)
     except Exception:
         logger.exception("ATM lookup failed for %s", underlying)
     return {"strikes": strikes, "atm": atm, "options_exchange": options_exchange}

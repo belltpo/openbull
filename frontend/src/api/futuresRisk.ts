@@ -117,6 +117,33 @@ export async function listStrikes(
   return r.data.data;
 }
 
+export interface FrQuickOrderQuote {
+  symbol: string;
+  exchange: string;
+  ltp: number;
+  status: "success" | "error";
+  source?: string;
+  message?: string | null;
+}
+
+export interface FrQuickOrderPreview {
+  mode: "live" | "sandbox";
+  futures: FrQuickOrderQuote;
+  ce: FrQuickOrderQuote | null;
+  pe: FrQuickOrderQuote | null;
+}
+
+export async function quickOrderPreview(data: {
+  underlying: string;
+  underlying_exchange?: string;
+  expiry: string;
+  ce_strike?: number | null;
+  pe_strike?: number | null;
+}): Promise<FrQuickOrderPreview> {
+  const r = await api.post<Wrapped<FrQuickOrderPreview>>("/web/fr/quick-order-preview", data);
+  return r.data.data;
+}
+
 // ---- Trades ----
 export async function placeTrade(payload: PlaceTradePayload): Promise<FrTrade> {
   const r = await api.post<Wrapped<FrTrade>>("/web/fr/trade", payload);

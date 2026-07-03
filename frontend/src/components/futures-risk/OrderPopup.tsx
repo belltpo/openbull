@@ -24,6 +24,7 @@ import {
   listSymbolMaps,
   listTargetTemplates,
   placeTrade,
+  quickOrderPreview,
   resolveFutures,
 } from "@/api/futuresRisk";
 import type { OptionType, PlaceTradePayload, Side } from "@/types/futuresRisk";
@@ -439,9 +440,35 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     mode: "LTP",
     enabled: open && liveSymbols.length > 0,
   });
-  const futuresLtp = futuresSymbol ? tickMap.get(`${futuresExchange}:${futuresSymbol}`)?.data.ltp : undefined;
-  const ceLtp = ceSymbol ? tickMap.get(`${optionExchange}:${ceSymbol}`)?.data.ltp : undefined;
-  const peLtp = peSymbol ? tickMap.get(`${optionExchange}:${peSymbol}`)?.data.ltp : undefined;
+  const previewQuery = useQuery({
+    queryKey: ["fr-quick-order-preview", underlying, underlyingExchange, expiry, ceStrike, peStrike],
+    queryFn: () =>
+      quickOrderPreview({
+        underlying,
+        underlying_exchange: underlyingExchange,
+        expiry,
+        ce_strike: Number(ceStrike) > 0 ? Number(ceStrike) : null,
+        pe_strike: Number(peStrike) > 0 ? Number(peStrike) : null,
+      }),
+    enabled: open && !!underlying && !!expiry,
+    refetchInterval: open && !!underlying && !!expiry ? 1500 : false,
+    staleTime: 1000,
+  });
+
+  const preview = previewQuery.data;
+  const previewLtp = (quote: { ltp?: number; status?: string } | null | undefined) =>
+    quote && quote.status === "success" && Number.isFinite(quote.ltp) && Number(quote.ltp) > 0
+      ? Number(quote.ltp)
+      : undefined;
+  const futuresLtp = futuresSymbol
+    ? tickMap.get(`${futuresExchange}:${futuresSymbol}`)?.data.ltp ?? previewLtp(preview?.futures)
+    : previewLtp(preview?.futures);
+  const ceLtp = ceSymbol
+    ? tickMap.get(`${optionExchange}:${ceSymbol}`)?.data.ltp ?? previewLtp(preview?.ce)
+    : previewLtp(preview?.ce);
+  const peLtp = peSymbol
+    ? tickMap.get(`${optionExchange}:${peSymbol}`)?.data.ltp ?? previewLtp(preview?.pe)
+    : previewLtp(preview?.pe);
   const targetSummary =
     targetRows.length > 0
       ? targetRows.map((t, i) => `T${i + 1} ${t.points} / ${t.exit_pct}%`).join(" | ")
