@@ -28,6 +28,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         private static string[] cachedExpiries = new string[0];
         private static double[] cachedStrikes = new double[0];
+        private static int[] cachedTemplateIds = new int[] { 0 };
+        private static readonly Dictionary<int, string> cachedTemplateLabels = new Dictionary<int, string> { { 0, "0 - Saved/default" } };
+        private static readonly object templateCacheLock = new object();
+        private static string templateCacheKey = "";
+        private static DateTime templateCacheAt = DateTime.MinValue;
 
         private Grid root;
         private Border popup;
@@ -1223,8 +1228,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                     List<string> expiryValues = ParseExpiryValues(body);
                     List<string> strikeValues = ParseNumberArray(body, "strikes");
+                    List<string> templateValues = ParseTemplates(body);
                     cachedExpiries = expiryValues.ToArray();
                     cachedStrikes = ParseStrikeCache(strikeValues);
+                    CacheTemplateLabels(templateValues);
                     ChartControl.Dispatcher.InvokeAsync(() =>
                     {
                         settingsHydrating = true;
@@ -1234,7 +1241,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                             FillCombo(expiryCombo, expiryValues, Expiry);
                             FillCombo(ceCombo, strikeValues, CeStrike.ToString("0", CultureInfo.InvariantCulture));
                             FillCombo(peCombo, strikeValues, PeStrike.ToString("0", CultureInfo.InvariantCulture));
-                            FillCombo(templateCombo, ParseTemplates(body), TemplateFallbackLabel(TargetTemplateId));
+                            FillCombo(templateCombo, templateValues, TemplateFallbackLabel(TargetTemplateId));
                             FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
                             string mappedExchange = ExtractJsonValue(body, "underlying_exchange");
                             if (!string.IsNullOrWhiteSpace(mappedExchange))
@@ -2000,8 +2007,66 @@ namespace NinjaTrader.NinjaScript.Indicators
             return result;
         }
 
+        private static void CacheTemplateLabels(List<string> labels)
+        {
+            Dictionary<int, string> nextLabels = new Dictionary<int, string>();
+            List<int> nextIds = new List<int>();
+            nextLabels[0] = TemplateFallbackLabel(0);
+            nextIds.Add(0);
+            foreach (string label in labels)
+            {
+                int id = ParseTemplateId(label, -1);
+                if (id < 0)
+                    continue;
+                nextLabels[id] = label;
+                if (!nextIds.Contains(id))
+                    nextIds.Add(id);
+            }
+            lock (templateCacheLock)
+            {
+                cachedTemplateLabels.Clear();
+                foreach (KeyValuePair<int, string> pair in nextLabels)
+                    cachedTemplateLabels[pair.Key] = pair.Value;
+                cachedTemplateIds = nextIds.ToArray();
+            }
+        }
+
+        private static void TryRefreshTemplateCache(OpenBullQuickOrderIndicator instance)
+        {
+            if (instance == null || string.IsNullOrWhiteSpace(instance.ApiKey) || string.IsNullOrWhiteSpace(instance.OpenBullUrl))
+                return;
+            string key = instance.OpenBullUrl.TrimEnd('/') + "|" + instance.ApiKey + "|" + instance.Underlying + "|" + instance.UnderlyingExchange + "|" + instance.Expiry;
+            lock (templateCacheLock)
+            {
+                if (key == templateCacheKey && (DateTime.UtcNow - templateCacheAt).TotalSeconds < 20)
+                    return;
+                templateCacheKey = key;
+                templateCacheAt = DateTime.UtcNow;
+            }
+            try
+            {
+                string url = instance.OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/quick-order/options";
+                using (StringContent content = new StringContent(instance.BuildOptionsJson(), Encoding.UTF8, "application/json"))
+                {
+                    HttpResponseMessage response = Http.PostAsync(url, content).GetAwaiter().GetResult();
+                    string body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+                    if (response.IsSuccessStatusCode && body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) >= 0)
+                        CacheTemplateLabels(ParseTemplates(body));
+                }
+            }
+            catch
+            {
+            }
+        }
+
         private static string TemplateFallbackLabel(int id)
         {
+            lock (templateCacheLock)
+            {
+                string label;
+                if (cachedTemplateLabels.TryGetValue(id, out label) && !string.IsNullOrWhiteSpace(label))
+                    return label;
+            }
             return id <= 0 ? "0 - Saved/default" : id.ToString(CultureInfo.InvariantCulture);
         }
 
@@ -2320,6 +2385,58 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        public class TargetTemplateListConverter : Int32Converter
+        {
+            public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
+            public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
+            public override TypeConverter.StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
+            {
+                OpenBullQuickOrderIndicator instance = context == null ? null : context.Instance as OpenBullQuickOrderIndicator;
+                TryRefreshTemplateCache(instance);
+                List<int> values = new List<int>();
+                lock (templateCacheLock)
+                {
+                    foreach (int id in cachedTemplateIds)
+                        if (!values.Contains(id))
+                            values.Add(id);
+                }
+                if (instance != null && !values.Contains(instance.TargetTemplateId))
+                    values.Add(instance.TargetTemplateId);
+                return new TypeConverter.StandardValuesCollection(values);
+            }
+
+            public override bool CanConvertTo(ITypeDescriptorContext context, Type destinationType)
+            {
+                return destinationType == typeof(string) || base.CanConvertTo(context, destinationType);
+            }
+
+            public override object ConvertTo(ITypeDescriptorContext context, CultureInfo culture, object value, Type destinationType)
+            {
+                if (destinationType == typeof(string))
+                {
+                    int id;
+                    if (value is int)
+                        id = (int)value;
+                    else
+                        id = ParseTemplateId(value == null ? "" : value.ToString(), 0);
+                    return TemplateFallbackLabel(id);
+                }
+                return base.ConvertTo(context, culture, value, destinationType);
+            }
+
+            public override bool CanConvertFrom(ITypeDescriptorContext context, Type sourceType)
+            {
+                return sourceType == typeof(string) || base.CanConvertFrom(context, sourceType);
+            }
+
+            public override object ConvertFrom(ITypeDescriptorContext context, CultureInfo culture, object value)
+            {
+                if (value is string)
+                    return ParseTemplateId((string)value, 0);
+                return base.ConvertFrom(context, culture, value);
+            }
+        }
+
         [NinjaScriptProperty]
         [Display(Name = "OpenBull URL", GroupName = "OpenBull", Order = 1)]
         public string OpenBullUrl { get; set; }
@@ -2370,6 +2487,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [NinjaScriptProperty]
         [Range(0, int.MaxValue)]
+        [TypeConverter(typeof(TargetTemplateListConverter))]
         [Display(Name = "Target Template", GroupName = "Risk", Order = 31)]
         public int TargetTemplateId { get; set; }
 

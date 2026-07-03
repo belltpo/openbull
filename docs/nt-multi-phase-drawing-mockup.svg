@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <pattern id="grid" width="80" height="60" patternUnits="userSpaceOnUse">
+      <path d="M 80 0 L 0 0 0 60" fill="none" stroke="#dfe4ea" stroke-width="1"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="5" stdDeviation="5" flood-color="#0f172a" flood-opacity="0.22"/>
+    </filter>
+    <style>
+      .axis { fill: #111827; font-family: Segoe UI, Arial, sans-serif; font-size: 14px; }
+      .ui { font-family: Segoe UI, Arial, sans-serif; }
+      .line-green { stroke: #00d084; stroke-width: 3; stroke-dasharray: 5 6; }
+      .line-red { stroke: #ff2d55; stroke-width: 3; stroke-dasharray: 5 6; }
+      .line-cyan { stroke: #06b6d4; stroke-width: 3; stroke-dasharray: 7 6; }
+      .line-magenta { stroke: #a855f7; stroke-width: 3; stroke-dasharray: 7 6; }
+      .card { rx: 8; filter: url(#shadow); }
+      .label { fill: #ffffff; font-weight: 700; font-size: 22px; }
+      .small { fill: #cbd5e1; font-size: 16px; }
+      .green { fill: #24f59a; }
+      .red { fill: #ff5c6c; }
+      .orange { fill: #ffb347; }
+      .badge { fill: #0f172a; stroke: #334155; stroke-width: 1; rx: 8; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="#f8fafc"/>
+  <rect x="0" y="0" width="1600" height="48" fill="#f3f4f6"/>
+  <text x="18" y="31" class="axis" font-weight="700">NinjaTrader Chart - OpenBull linked phases</text>
+  <rect x="0" y="48" width="1600" height="852" fill="url(#grid)"/>
+
+  <!-- price axis -->
+  <rect x="1510" y="48" width="90" height="852" fill="#ffffff" opacity="0.94"/>
+  <g class="axis">
+    <text x="1522" y="116">24470</text>
+    <text x="1522" y="216">24460</text>
+    <text x="1522" y="316">24450</text>
+    <text x="1522" y="416">24440</text>
+    <text x="1522" y="516">24430</text>
+    <text x="1522" y="616">24420</text>
+    <text x="1522" y="716">24410</text>
+  </g>
+
+  <!-- candlesticks -->
+  <g stroke="#111827" stroke-width="1.5">
+    <g transform="translate(90,0)">
+      <line x1="20" y1="325" x2="20" y2="440"/><rect x="12" y="360" width="16" height="54" fill="#16a34a"/>
+      <line x1="55" y1="280" x2="55" y2="410"/><rect x="47" y="300" width="16" height="88" fill="#16a34a"/>
+      <line x1="90" y1="260" x2="90" y2="390"/><rect x="82" y="318" width="16" height="62" fill="#dc2626"/>
+      <line x1="125" y1="240" x2="125" y2="382"/><rect x="117" y="270" width="16" height="66" fill="#16a34a"/>
+      <line x1="160" y1="295" x2="160" y2="435"/><rect x="152" y="320" width="16" height="92" fill="#dc2626"/>
+      <line x1="195" y1="315" x2="195" y2="470"/><rect x="187" y="335" width="16" height="104" fill="#dc2626"/>
+      <line x1="230" y1="355" x2="230" y2="470"/><rect x="222" y="375" width="16" height="66" fill="#16a34a"/>
+      <line x1="265" y1="310" x2="265" y2="420"/><rect x="257" y="330" width="16" height="62" fill="#16a34a"/>
+      <line x1="300" y1="260" x2="300" y2="398"/><rect x="292" y="286" width="16" height="96" fill="#16a34a"/>
+      <line x1="335" y1="250" x2="335" y2="420"/><rect x="327" y="284" width="16" height="112" fill="#dc2626"/>
+      <line x1="370" y1="282" x2="370" y2="432"/><rect x="362" y="310" width="16" height="84" fill="#dc2626"/>
+      <line x1="405" y1="340" x2="405" y2="490"/><rect x="397" y="365" width="16" height="92" fill="#16a34a"/>
+      <line x1="440" y1="300" x2="440" y2="435"/><rect x="432" y="330" width="16" height="72" fill="#16a34a"/>
+      <line x1="475" y1="286" x2="475" y2="430"/><rect x="467" y="304" width="16" height="90" fill="#16a34a"/>
+      <line x1="510" y1="310" x2="510" y2="458"/><rect x="502" y="340" width="16" height="82" fill="#dc2626"/>
+      <line x1="545" y1="260" x2="545" y2="400"/><rect x="537" y="286" width="16" height="82" fill="#16a34a"/>
+      <line x1="580" y1="230" x2="580" y2="365"/><rect x="572" y="255" width="16" height="78" fill="#16a34a"/>
+      <line x1="615" y1="200" x2="615" y2="340"/><rect x="607" y="226" width="16" height="82" fill="#16a34a"/>
+      <line x1="650" y1="188" x2="650" y2="355"/><rect x="642" y="218" width="16" height="94" fill="#dc2626"/>
+      <line x1="685" y1="248" x2="685" y2="400"/><rect x="677" y="274" width="16" height="102" fill="#dc2626"/>
+      <line x1="720" y1="300" x2="720" y2="430"/><rect x="712" y="324" width="16" height="78" fill="#dc2626"/>
+      <line x1="755" y1="330" x2="755" y2="470"/><rect x="747" y="355" width="16" height="86" fill="#16a34a"/>
+      <line x1="790" y1="312" x2="790" y2="445"/><rect x="782" y="338" width="16" height="74" fill="#16a34a"/>
+      <line x1="825" y1="280" x2="825" y2="420"/><rect x="817" y="300" width="16" height="86" fill="#16a34a"/>
+      <line x1="860" y1="250" x2="860" y2="395"/><rect x="852" y="274" width="16" height="86" fill="#16a34a"/>
+      <line x1="895" y1="238" x2="895" y2="390"/><rect x="887" y="265" width="16" height="94" fill="#dc2626"/>
+      <line x1="930" y1="285" x2="930" y2="435"/><rect x="922" y="312" width="16" height="88" fill="#dc2626"/>
+      <line x1="965" y1="330" x2="965" y2="480"/><rect x="957" y="356" width="16" height="88" fill="#dc2626"/>
+      <line x1="1000" y1="370" x2="1000" y2="505"/><rect x="992" y="392" width="16" height="82" fill="#16a34a"/>
+      <line x1="1035" y1="332" x2="1035" y2="455"/><rect x="1027" y="354" width="16" height="68" fill="#16a34a"/>
+    </g>
+  </g>
+
+  <!-- long phase 13 -->
+  <line x1="390" y1="418" x2="915" y2="418" class="line-cyan"/>
+  <rect x="470" y="390" width="270" height="70" fill="#334155" class="card"/>
+  <text x="488" y="417" class="label">L React @ 24436.1</text>
+  <text x="488" y="444" class="label green">MTM +451.75</text>
+  <rect x="374" y="383" width="92" height="28" class="badge"/>
+  <text x="388" y="403" class="small">Phase 13 Long</text>
+
+  <line x1="330" y1="366" x2="950" y2="366" class="line-green"/>
+  <rect x="748" y="342" width="174" height="44" fill="#064e3b" class="card"/>
+  <text x="766" y="371" class="label green" font-size="18">ME1 @ 24441.1 hit</text>
+  <line x1="330" y1="330" x2="955" y2="330" class="line-green"/>
+  <rect x="952" y="306" width="150" height="44" fill="#064e3b" class="card"/>
+  <text x="970" y="335" class="label green" font-size="18">ME2 @ 24442.1</text>
+  <line x1="330" y1="294" x2="1005" y2="294" class="line-green"/>
+  <rect x="1030" y="270" width="150" height="44" fill="#064e3b" class="card"/>
+  <text x="1048" y="299" class="label green" font-size="18">ME3 @ 24443.1</text>
+  <line x1="330" y1="258" x2="1050" y2="258" class="line-red"/>
+  <rect x="1088" y="234" width="170" height="44" fill="#3f1d1d" stroke="#ff2d55" stroke-width="3" class="card"/>
+  <text x="1106" y="263" class="label red" font-size="18">ME4 drag @ 24444.1</text>
+  <line x1="330" y1="488" x2="830" y2="488" class="line-red"/>
+  <rect x="612" y="464" width="155" height="44" fill="#3f1d1d" class="card"/>
+  <text x="632" y="493" class="label red" font-size="18">RL @ 24432.1</text>
+
+  <!-- short phase 14 -->
+  <line x1="780" y1="210" x2="1360" y2="210" class="line-magenta"/>
+  <rect x="960" y="182" width="280" height="70" fill="#334155" class="card"/>
+  <text x="978" y="209" class="label">S React @ 24458.4</text>
+  <text x="978" y="236" class="label red">MTM -186.50</text>
+  <rect x="1246" y="184" width="96" height="28" class="badge"/>
+  <text x="1260" y="204" class="small">Phase 14 Short</text>
+
+  <line x1="870" y1="160" x2="1390" y2="160" class="line-red"/>
+  <rect x="1180" y="136" width="150" height="44" fill="#3f1d1d" class="card"/>
+  <text x="1202" y="165" class="label red" font-size="18">SL @ 24464.2</text>
+  <line x1="870" y1="275" x2="1380" y2="275" class="line-green"/>
+  <rect x="1188" y="251" width="154" height="44" fill="#064e3b" class="card"/>
+  <text x="1206" y="280" class="label green" font-size="18">ME1 @ 24454.2</text>
+  <line x1="870" y1="338" x2="1380" y2="338" class="line-green"/>
+  <rect x="1085" y="314" width="184" height="44" fill="#064e3b" class="card"/>
+  <text x="1102" y="343" class="label green" font-size="18">ME2 @ 24450.3 hit</text>
+
+  <!-- quick order widget -->
+  <rect x="1110" y="548" width="370" height="260" fill="#1f1f1f" stroke="#454545" stroke-width="2" rx="14" filter="url(#shadow)"/>
+  <text x="1130" y="584" class="label" font-size="22">OB Quick</text>
+  <text x="1405" y="584" class="label" font-size="22">x</text>
+  <rect x="1130" y="604" width="330" height="76" fill="#232323" stroke="#3b3b3b" rx="10"/>
+  <text x="1150" y="632" class="small">FUT LIVE</text>
+  <text x="1322" y="632" class="label" font-size="18">NIFTY FUT 24,438.00</text>
+  <text x="1150" y="660" class="small">MTM</text>
+  <text x="1322" y="660" class="label green" font-size="18">+81.25</text>
+  <text x="1150" y="690" class="small">MODE</text>
+  <text x="1322" y="690" fill="#a78bfa" font-family="Segoe UI, Arial" font-weight="700" font-size="18">SANDBOX</text>
+  <rect x="1130" y="708" width="150" height="56" fill="#008c5a" rx="10"/>
+  <text x="1192" y="731" fill="#fff" class="ui" font-weight="700" font-size="15" text-anchor="middle">Buy CE</text>
+  <text x="1192" y="751" fill="#fff" class="ui" font-weight="700" font-size="13" text-anchor="middle">24100 CE LTP 289.25</text>
+  <rect x="1310" y="708" width="150" height="56" fill="#d9043d" rx="10"/>
+  <text x="1385" y="731" fill="#fff" class="ui" font-weight="700" font-size="15" text-anchor="middle">Sell CE</text>
+  <text x="1385" y="751" fill="#fff" class="ui" font-weight="700" font-size="13" text-anchor="middle">24100 CE LTP 289.25</text>
+  <rect x="1130" y="772" width="150" height="56" fill="#008c5a" rx="10"/>
+  <text x="1192" y="795" fill="#fff" class="ui" font-weight="700" font-size="15" text-anchor="middle">Buy PE</text>
+  <text x="1192" y="815" fill="#fff" class="ui" font-weight="700" font-size="13" text-anchor="middle">24100 PE LTP 26.25</text>
+  <rect x="1310" y="772" width="150" height="56" fill="#d9043d" rx="10"/>
+  <text x="1385" y="795" fill="#fff" class="ui" font-weight="700" font-size="15" text-anchor="middle">Sell PE</text>
+  <text x="1385" y="815" fill="#fff" class="ui" font-weight="700" font-size="13" text-anchor="middle">24100 PE LTP 26.25</text>
+</svg>
