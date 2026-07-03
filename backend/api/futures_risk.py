@@ -174,11 +174,13 @@ async def api_futures_risk_quick_order_options(request: Request):
     expiries = fr.list_expiries(selected, underlying_exchange) if selected else []
     selected_expiry = payload.expiry or (expiries[0]["value"] if expiries else "")
     strikes: list[float] = []
+    atm: float | None = None
     options_exchange = "NFO"
     if selected and selected_expiry:
         try:
             strike_data = fr.list_strikes(selected, underlying_exchange, selected_expiry, "CE", auth_token, broker_name, config)
             strikes = strike_data.get("strikes") or []
+            atm = strike_data.get("atm")
             options_exchange = strike_data.get("options_exchange") or options_exchange
         except Exception:
             logger.debug("NT quick-order strike lookup failed", exc_info=True)
@@ -208,6 +210,7 @@ async def api_futures_risk_quick_order_options(request: Request):
                 "underlying_exchange": underlying_exchange,
                 "expiries": expiries,
                 "strikes": strikes,
+                "atm": atm,
                 "options_exchange": options_exchange,
                 "templates": templates,
                 "saved": defaults,

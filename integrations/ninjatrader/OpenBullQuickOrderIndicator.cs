@@ -753,12 +753,22 @@ namespace NinjaTrader.NinjaScript.Indicators
             instrumentCombo = ComboRow(stack, "Instrument", value =>
             {
                 Underlying = value.ToUpperInvariant();
+                futuresLtp = 0;
+                ceLtp = 0;
+                peLtp = 0;
+                CeStrike = 0;
+                PeStrike = 0;
+                RefreshButtonText();
                 Task.Run(async () => await FetchOptionsAsync());
-                Task.Run(async () => await SaveSettingsAsync());
             });
             expiryCombo = ComboRow(stack, "Expiry", value =>
             {
                 Expiry = value.ToUpperInvariant();
+                ceLtp = 0;
+                peLtp = 0;
+                CeStrike = 0;
+                PeStrike = 0;
+                RefreshButtonText();
                 Task.Run(async () => await FetchOptionsAsync());
             });
             ceCombo = ComboRow(stack, "CE", value =>
@@ -1305,6 +1315,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     List<string> expiryValues = ParseExpiryValues(body);
                     List<string> strikeValues = ParseNumberArray(body, "strikes");
                     List<string> templateValues = ParseTemplates(body);
+                    double atmStrike = ParseDouble(ExtractJsonValue(body, "atm"), 0);
                     cachedExpiries = expiryValues.ToArray();
                     cachedStrikes = ParseStrikeCache(strikeValues);
                     CacheTemplateLabels(templateValues);
@@ -1313,12 +1324,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                         settingsHydrating = true;
                         try
                         {
-                            FillCombo(instrumentCombo, ParseStringArray(body, "underlyings"), Underlying);
-                            FillCombo(expiryCombo, expiryValues, Expiry);
-                            FillCombo(ceCombo, strikeValues, CeStrike.ToString("0", CultureInfo.InvariantCulture));
-                            FillCombo(peCombo, strikeValues, PeStrike.ToString("0", CultureInfo.InvariantCulture));
-                            FillCombo(templateCombo, templateValues, TemplateFallbackLabel(TargetTemplateId));
-                            FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
                             string mappedExchange = ExtractJsonValue(body, "underlying_exchange");
                             if (!string.IsNullOrWhiteSpace(mappedExchange))
                                 UnderlyingExchange = mappedExchange.ToUpperInvariant();
@@ -1327,6 +1332,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                                 tradingMode = nextMode.ToUpperInvariant();
 
                             string saved = ExtractBlock(body, "saved");
+                            string selectedExpiry = Expiry;
+                            double selectedCe = SelectValidStrike(strikeValues, CeStrike, atmStrike);
+                            double selectedPe = SelectValidStrike(strikeValues, PeStrike, atmStrike);
                             if (!string.IsNullOrEmpty(saved))
                             {
                                 string lots = ExtractJsonValue(saved, "lots");
@@ -1340,23 +1348,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                                 if (!string.IsNullOrEmpty(savedExchange) && savedExchange != "null")
                                     UnderlyingExchange = savedExchange.ToUpperInvariant();
                                 if (!string.IsNullOrEmpty(savedExpiry) && savedExpiry != "null")
-                                {
-                                    Expiry = savedExpiry.ToUpperInvariant();
-                                    SeedCombo(expiryCombo, Expiry);
-                                    SelectCombo(expiryCombo, Expiry);
-                                }
+                                    selectedExpiry = savedExpiry.ToUpperInvariant();
                                 if (!string.IsNullOrEmpty(savedCe) && savedCe != "null")
-                                {
-                                    CeStrike = ParseDouble(savedCe, CeStrike);
-                                    SeedCombo(ceCombo, CeStrike.ToString("0", CultureInfo.InvariantCulture));
-                                    SelectCombo(ceCombo, CeStrike.ToString("0", CultureInfo.InvariantCulture));
-                                }
+                                    selectedCe = SelectValidStrike(strikeValues, ParseDouble(savedCe, selectedCe), atmStrike);
                                 if (!string.IsNullOrEmpty(savedPe) && savedPe != "null")
-                                {
-                                    PeStrike = ParseDouble(savedPe, PeStrike);
-                                    SeedCombo(peCombo, PeStrike.ToString("0", CultureInfo.InvariantCulture));
-                                    SelectCombo(peCombo, PeStrike.ToString("0", CultureInfo.InvariantCulture));
-                                }
+                                    selectedPe = SelectValidStrike(strikeValues, ParseDouble(savedPe, selectedPe), atmStrike);
                                 if (!string.IsNullOrEmpty(lots))
                                 {
                                     Lots = Math.Max(1, ParseInt(lots, Lots));
@@ -1379,6 +1375,20 @@ namespace NinjaTrader.NinjaScript.Indicators
                                     SelectTemplateCombo(TargetTemplateId);
                                 }
                             }
+                            if (!ContainsText(expiryValues, selectedExpiry) && expiryValues.Count > 0)
+                                selectedExpiry = expiryValues[0];
+                            Expiry = string.IsNullOrWhiteSpace(selectedExpiry) ? Expiry : selectedExpiry.ToUpperInvariant();
+                            CeStrike = selectedCe;
+                            PeStrike = selectedPe;
+
+                            string ceText = FormatStrikeText(CeStrike);
+                            string peText = FormatStrikeText(PeStrike);
+                            FillCombo(instrumentCombo, ParseStringArray(body, "underlyings"), Underlying);
+                            FillCombo(expiryCombo, expiryValues, Expiry);
+                            FillCombo(ceCombo, strikeValues, ceText);
+                            FillCombo(peCombo, strikeValues, peText);
+                            FillCombo(templateCombo, templateValues, TemplateFallbackLabel(TargetTemplateId));
+                            FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
                         }
                         finally
                         {
@@ -2186,6 +2196,57 @@ namespace NinjaTrader.NinjaScript.Indicators
                     strikes.Add(parsed);
             }
             return strikes.ToArray();
+        }
+
+        private static bool ContainsText(List<string> values, string selected)
+        {
+            if (values == null || string.IsNullOrWhiteSpace(selected))
+                return false;
+            foreach (string value in values)
+                if (string.Equals(value, selected, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            return false;
+        }
+
+        private static string FormatStrikeText(double strike)
+        {
+            if (strike <= 0)
+                return "";
+            return Math.Abs(strike - Math.Round(strike)) < 0.0001
+                ? strike.ToString("0", CultureInfo.InvariantCulture)
+                : strike.ToString("0.##", CultureInfo.InvariantCulture);
+        }
+
+        private static double SelectValidStrike(List<string> strikeValues, double preferred, double fallback)
+        {
+            double[] strikes = ParseStrikeCache(strikeValues);
+            if (strikes.Length == 0)
+                return preferred > 0 ? preferred : fallback;
+
+            if (preferred > 0)
+            {
+                foreach (double strike in strikes)
+                    if (Math.Abs(strike - preferred) < 0.0001)
+                        return strike;
+            }
+
+            if (fallback > 0)
+            {
+                double closest = strikes[0];
+                double closestDistance = Math.Abs(closest - fallback);
+                for (int i = 1; i < strikes.Length; i++)
+                {
+                    double distance = Math.Abs(strikes[i] - fallback);
+                    if (distance < closestDistance)
+                    {
+                        closest = strikes[i];
+                        closestDistance = distance;
+                    }
+                }
+                return closest;
+            }
+
+            return strikes[strikes.Length / 2];
         }
 
         private static List<string> ParseExpiryValues(string body)
