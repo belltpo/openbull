@@ -391,10 +391,10 @@ async def api_futures_risk_quick_order_preview(request: Request):
         for trade in fr.list_trades(user_id, status="all"):
             if str(trade.get("underlying", "")).upper() != payload.underlying.upper():
                 continue
-            booked_pnl += float(trade.get("realized_pnl") or 0)
             if trade.get("status") != "active":
                 continue
             active_count += 1
+            booked_pnl += float(trade.get("realized_pnl") or 0)
             live_opt = quotes_by_symbol.get(trade.get("option_symbol"))
             if live_opt is None:
                 continue
