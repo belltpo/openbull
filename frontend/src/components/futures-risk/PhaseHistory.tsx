@@ -39,6 +39,17 @@ function isoDateKey(iso: string | null | undefined): string {
   return localDateKey(new Date(iso));
 }
 
+function displayDateLabel(dateKey: string): string {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  if (!year || !month || !day) return dateKey;
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function rangeFor(filter: DateFilter, customFrom: string, customTo: string): { from: string; to: string } {
   const now = new Date();
   const to = localDateKey(now);
@@ -296,16 +307,29 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
     enabled: !dataOverride && liveSymbols.length > 0,
   });
 
-  const groups = useMemo(() => {
-    const map = new Map<string, FrPhase[]>();
+  const dayGroups = useMemo(() => {
+    const byDate = new Map<string, Map<string, FrPhase[]>>();
     for (const p of filtered) {
-      if (!map.has(p.underlying)) map.set(p.underlying, []);
-      map.get(p.underlying)!.push(p);
+      const dateKey = isoDateKey(p.entry_time);
+      if (!dateKey) continue;
+      if (!byDate.has(dateKey)) byDate.set(dateKey, new Map());
+      const instrumentMap = byDate.get(dateKey)!;
+      if (!instrumentMap.has(p.underlying)) instrumentMap.set(p.underlying, []);
+      instrumentMap.get(p.underlying)!.push(p);
     }
-    for (const arr of map.values()) {
-      arr.sort((a, b) => a.phase_no - b.phase_no || String(a.entry_time).localeCompare(String(b.entry_time)));
-    }
-    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
+    return Array.from(byDate.entries())
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([dateKey, instrumentMap]) => {
+        const instruments = Array.from(instrumentMap.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([symbol, phases]) => ({
+            symbol,
+            phases: [...phases].sort(
+              (a, b) => a.phase_no - b.phase_no || String(a.entry_time).localeCompare(String(b.entry_time)),
+            ),
+          }));
+        return { dateKey, instruments };
+      });
   }, [filtered]);
 
   const liveOpt = (p: FrPhase): number | undefined => tickMap.get(`${p.option_exchange}:${p.option_symbol}`)?.data.ltp;
@@ -356,59 +380,73 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
         )}
       </div>
 
-      {groups.length === 0 ? (
+      {dayGroups.length === 0 ? (
         <p className="text-sm text-muted-foreground">No phase history for the selected date range.</p>
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          {groups.map(([symbol, phases]) => {
-            const selectedInstrumentPhases = phases;
-            const latestPhase = phases[phases.length - 1];
-            const totalMtm = selectedInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
-            const realized = selectedInstrumentPhases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
-            const active = selectedInstrumentPhases.filter((p) => p.status === "active").length;
-            const targetsHit = selectedInstrumentPhases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
-            const targetsTotal = selectedInstrumentPhases.reduce((sum, p) => sum + p.targets_total, 0);
-            const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
-
-            return (
-              <section key={symbol} className="fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4">
-                <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-                  <div className="min-w-0">
-                    <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Showing latest of {selectedInstrumentPhases.length} phase(s) in selected range
-                    </p>
-                  </div>
+        <div className="space-y-5">
+          {dayGroups.map(({ dateKey, instruments }) => (
+            <section key={dateKey} className="space-y-3">
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <div>
+                  <h3 className="text-lg font-bold tracking-tight">{displayDateLabel(dateKey)}</h3>
+                  <p className="text-sm text-muted-foreground">{instruments.length} instrument(s)</p>
                 </div>
+              </div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+                {instruments.map(({ symbol, phases }) => {
+                  const selectedInstrumentPhases = phases;
+                  const latestPhase = phases[phases.length - 1];
+                  const totalMtm = selectedInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
+                  const realized = selectedInstrumentPhases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
+                  const active = selectedInstrumentPhases.filter((p) => p.status === "active").length;
+                  const targetsHit = selectedInstrumentPhases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
+                  const targetsTotal = selectedInstrumentPhases.reduce((sum, p) => sum + p.targets_total, 0);
+                  const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
 
-                <aside className="mb-3 grid grid-cols-2 gap-2 text-right text-sm">
-                  <Metric
-                    label="Overall Instrument MTM"
-                    value={`Rs. ${fmt(totalMtm)}`}
-                    icon={<TrendingUp className="h-3 w-3" />}
-                    valueClassName={totalTone}
-                    className="min-h-16 bg-card/55"
-                  />
-                  <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} className="min-h-16 bg-card/55" />
-                  <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} className="min-h-16 bg-card/55" />
-                  <Metric label="Active Phases" value={String(active)} className="min-h-16 bg-card/55" />
-                </aside>
+                  return (
+                    <section key={`${dateKey}:${symbol}`} className="fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4">
+                      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                        <div className="min-w-0">
+                          <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            Showing latest of {selectedInstrumentPhases.length} phase(s) on this day
+                          </p>
+                        </div>
+                      </div>
 
-                <div className="grid min-w-0 grid-cols-1 gap-3">
-                  {latestPhase && (
-                    <PhaseCard
-                      key={latestPhase.trade_id}
-                      phase={latestPhase}
-                      liveOpt={liveOpt(latestPhase)}
-                      previousPhases={selectedInstrumentPhases.filter((item) => item.phase_no > 0 && item.phase_no < latestPhase.phase_no)}
-                      liveOptFor={liveOpt}
-                      className="bg-card/60"
-                    />
-                  )}
-                </div>
-              </section>
-            );
-          })}
+                      <aside className="mb-3 grid grid-cols-2 gap-2 text-right text-sm">
+                        <Metric
+                          label="Overall Instrument MTM"
+                          value={`Rs. ${fmt(totalMtm)}`}
+                          icon={<TrendingUp className="h-3 w-3" />}
+                          valueClassName={totalTone}
+                          className="min-h-16 bg-card/55"
+                        />
+                        <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} className="min-h-16 bg-card/55" />
+                        <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} className="min-h-16 bg-card/55" />
+                        <Metric label="Active Phases" value={String(active)} className="min-h-16 bg-card/55" />
+                      </aside>
+
+                      <div className="grid min-w-0 grid-cols-1 gap-3">
+                        {latestPhase && (
+                          <PhaseCard
+                            key={latestPhase.trade_id}
+                            phase={latestPhase}
+                            liveOpt={liveOpt(latestPhase)}
+                            previousPhases={selectedInstrumentPhases.filter(
+                              (item) => item.phase_no > 0 && item.phase_no < latestPhase.phase_no,
+                            )}
+                            liveOptFor={liveOpt}
+                            className="bg-card/60"
+                          />
+                        )}
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
         </div>
       )}
     </div>

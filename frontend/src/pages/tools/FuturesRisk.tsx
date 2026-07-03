@@ -30,6 +30,18 @@ const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   stopped: "Stopped",
 };
 
+function localDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function tradeDateKey(value: string | null | undefined): string {
+  if (!value) return "";
+  return localDateKey(new Date(value));
+}
+
 function HeroStat({
   icon,
   label,
@@ -199,7 +211,7 @@ export default function FuturesRisk() {
       map.get(trade.underlying)!.push(trade);
     }
     for (const group of map.values()) {
-      group.sort((a, b) => b.phase_no - a.phase_no || String(b.created_at).localeCompare(String(a.created_at)));
+      group.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || b.phase_no - a.phase_no);
     }
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [trades]);
@@ -211,7 +223,7 @@ export default function FuturesRisk() {
       map.get(trade.underlying)!.push(trade);
     }
     for (const group of map.values()) {
-      group.sort((a, b) => a.phase_no - b.phase_no || String(a.created_at).localeCompare(String(b.created_at)));
+      group.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || a.phase_no - b.phase_no);
     }
     return map;
   }, [allTrades]);
@@ -323,8 +335,12 @@ export default function FuturesRisk() {
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
               {positionGroups.map(([symbol, symbolTrades]) => {
                 const instrumentTrades = allByInstrument.get(symbol) ?? symbolTrades;
-                const phaseTrades = instrumentTrades.filter((trade) => trade.phase_no > 0);
                 const latestTrade = symbolTrades[0];
+                const latestDate = tradeDateKey(latestTrade?.created_at);
+                const dayInstrumentTrades = latestDate
+                  ? instrumentTrades.filter((trade) => tradeDateKey(trade.created_at) === latestDate)
+                  : instrumentTrades;
+                const phaseTrades = dayInstrumentTrades.filter((trade) => trade.phase_no > 0);
                 const instrumentPnl = phaseTrades.reduce(
                   (sum, trade) =>
                     sum +
@@ -345,7 +361,7 @@ export default function FuturesRisk() {
                       <div className="min-w-0">
                         <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          Showing latest of {instrumentTrades.length} position(s)
+                          Showing latest of {dayInstrumentTrades.length} position(s) on this day
                         </p>
                       </div>
                     </div>

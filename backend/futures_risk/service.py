@@ -942,18 +942,34 @@ def _session_date_ist() -> str:
     return ist.date().isoformat()
 
 
-def _assign_phase(db, user_id: int, underlying: str) -> tuple[str, int]:
-    """Return (phase_group, next_phase_no) for a (user, underlying).
+def _session_date_for_dt(dt: datetime | None) -> str:
+    """Return the IST trading date for a persisted UTC timestamp."""
+    if dt is None:
+        return _session_date_ist()
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return (dt + timedelta(hours=5, minutes=30)).date().isoformat()
 
-    The phase number increments 1,2,3... as positions close and reopen on the
-    same underlying. Phase display can still be filtered by date in the UI, but
-    numbering belongs to the symbol, not to the calendar day.
-    """
-    group = f"{user_id}:{underlying}"
-    max_no = db.execute(
-        select(func.max(FrTrade.phase_no)).where(FrTrade.user_id == user_id, FrTrade.underlying == underlying)
-    ).scalar() or 0
-    return group, int(max_no) + 1
+
+def _phase_group_key(user_id: int, underlying: str, session_date: str) -> str:
+    return f"{user_id}:{underlying}:{session_date}"
+
+
+def _display_phase_group(user_id: int, underlying: str, created_at: datetime | None) -> str:
+    return _phase_group_key(user_id, underlying, _session_date_for_dt(created_at))
+
+
+def _assign_phase(db, user_id: int, underlying: str) -> tuple[str, int]:
+    """Return (phase_group, next_phase_no) for this instrument's IST session."""
+    session_date = _session_date_ist()
+    group = _phase_group_key(user_id, underlying, session_date)
+    rows = db.execute(
+        select(FrTrade.created_at)
+        .where(FrTrade.user_id == user_id, FrTrade.underlying == underlying, FrTrade.phase_no > 0)
+        .order_by(FrTrade.created_at, FrTrade.id)
+    ).scalars().all()
+    same_day_count = sum(1 for created_at in rows if _session_date_for_dt(created_at) == session_date)
+    return group, same_day_count + 1
 
 
 def _assert_no_active_phase(db, user_id: int, underlying: str, exclude_trade_id: int | None = None) -> None:
@@ -966,8 +982,9 @@ def _assert_no_active_phase(db, user_id: int, underlying: str, exclude_trade_id:
         q = q.where(FrTrade.id != exclude_trade_id)
     existing = db.execute(q.order_by(FrTrade.phase_no.desc()).limit(1)).scalar_one_or_none()
     if existing is not None:
+        display_phase = _phase_display_numbers(db, user_id).get(existing.id, existing.phase_no)
         raise FrError(
-            f"{underlying} Phase {existing.phase_no} is still active. Complete it before starting the next phase.",
+            f"{underlying} Phase {display_phase} is still active. Complete it before starting the next phase.",
             409,
         )
 
@@ -1695,13 +1712,14 @@ def _phase_display_numbers(db, user_id: int) -> dict[int, int]:
     rows = db.execute(
         select(FrTrade)
         .where(FrTrade.user_id == user_id, FrTrade.phase_no > 0)
-        .order_by(FrTrade.underlying, FrTrade.created_at, FrTrade.id)
+        .order_by(FrTrade.created_at, FrTrade.id)
     ).scalars().all()
-    counters: dict[str, int] = {}
+    counters: dict[tuple[str, str], int] = {}
     out: dict[int, int] = {}
     for trade in rows:
-        counters[trade.underlying] = counters.get(trade.underlying, 0) + 1
-        out[trade.id] = counters[trade.underlying]
+        key = (trade.underlying, _session_date_for_dt(trade.created_at))
+        counters[key] = counters.get(key, 0) + 1
+        out[trade.id] = counters[key]
     return out
 
 
@@ -1721,7 +1739,7 @@ def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]
             target_exit_prices, sl_exit_option_price = _trade_exit_option_prices(db, t.id)
             d["sl_exit_option_price"] = sl_exit_option_price
             if t.id in display_phase:
-                d["phase_group"] = t.phase_group or f"{user_id}:{t.underlying}"
+                d["phase_group"] = _display_phase_group(user_id, t.underlying, t.created_at)
                 d["phase_no"] = display_phase[t.id]
             tgts = db.execute(
                 select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
@@ -1743,7 +1761,7 @@ def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
         d["sl_exit_option_price"] = sl_exit_option_price
         display_phase = _phase_display_numbers(db, user_id)
         if t.id in display_phase:
-            d["phase_group"] = t.phase_group or f"{user_id}:{t.underlying}"
+            d["phase_group"] = _display_phase_group(user_id, t.underlying, t.created_at)
             d["phase_no"] = display_phase[t.id]
         tgts = db.execute(
             select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
@@ -1791,7 +1809,7 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
             out.append({
                 "trade_id": t.id,
                 "underlying": t.underlying,
-                "phase_group": t.phase_group or f"{user_id}:{t.underlying}",
+                "phase_group": _display_phase_group(user_id, t.underlying, t.created_at),
                 "phase_no": display_phase.get(t.id, t.phase_no),
                 "status": t.status,
                 "option_symbol": t.option_symbol,
