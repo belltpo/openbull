@@ -1,0 +1,311 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+# OpenBull live deployment entrypoint.
+# Run on Ubuntu/Debian server:
+#   chmod +x install.sh
+#   sudo ./install.sh
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TIMESTAMP="$(date +%Y%m%d_%H%M%S)"
+LOG_DIR="${OPENBULL_DEPLOY_LOG_DIR:-/var/log/openbull}"
+if ! mkdir -p "$LOG_DIR" 2>/dev/null; then
+  LOG_DIR="$SCRIPT_DIR/logs"
+  mkdir -p "$LOG_DIR"
+fi
+DEPLOY_LOG="$LOG_DIR/deploy_$TIMESTAMP.log"
+
+log_info()  { echo -e "${GREEN}[INFO]${NC} $*" | tee -a "$DEPLOY_LOG"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $*" | tee -a "$DEPLOY_LOG"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $*" | tee -a "$DEPLOY_LOG"; }
+log_step()  { echo -e "\n${CYAN}=== $* ===${NC}" | tee -a "$DEPLOY_LOG"; }
+
+on_error() {
+  local line="$1"
+  log_error "Deployment failed at line $line. Log: $DEPLOY_LOG"
+}
+trap 'on_error "$LINENO"' ERR
+
+prompt_default() {
+  local prompt="$1"
+  local default="$2"
+  local value=""
+  read -r -p "$prompt [$default]: " value
+  printf '%s' "${value:-$default}"
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local default="${2:-y}"
+  local suffix="[y/N]"
+  local value=""
+  if [[ "$default" =~ ^[Yy]$ ]]; then
+    suffix="[Y/n]"
+  fi
+  while true; do
+    read -r -p "$prompt $suffix: " value
+    value="${value:-$default}"
+    case "$value" in
+      y|Y|yes|YES) return 0 ;;
+      n|N|no|NO) return 1 ;;
+      *) echo "Please answer y or n." ;;
+    esac
+  done
+}
+
+run_cmd() {
+  log_info "+ $*"
+  "$@" 2>&1 | tee -a "$DEPLOY_LOG"
+}
+
+default_repo_url() {
+  git -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || printf '%s' "https://github.com/belltpo/openbull.git"
+}
+
+default_branch() {
+  git -C "$SCRIPT_DIR" branch --show-current 2>/dev/null || printf '%s' "main"
+}
+
+require_command() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    log_error "Missing required command: $1"
+    exit 1
+  fi
+}
+
+normalize_public_url() {
+  local value="$1"
+  if [[ "$value" =~ ^https?:// ]]; then
+    printf '%s' "$value"
+  else
+    printf 'https://%s' "$value"
+  fi
+}
+
+print_header() {
+  echo -e "${BLUE}"
+  echo "OpenBull Live Deployment"
+  echo "Single command installer/updater for Ubuntu production servers"
+  echo -e "${NC}"
+  echo "Log file: $DEPLOY_LOG"
+  echo ""
+}
+
+collect_common_inputs() {
+  DEFAULT_REPO="$(default_repo_url)"
+  DEFAULT_BRANCH="$(default_branch)"
+
+  DOMAIN="$(prompt_default "Live domain or public URL" "openbull.example.com")"
+  PUBLIC_URL="$(normalize_public_url "$DOMAIN")"
+  REPO_URL="$(prompt_default "Git repository URL" "$DEFAULT_REPO")"
+  REPO_BRANCH="$(prompt_default "Git branch to deploy" "$DEFAULT_BRANCH")"
+  APP_ROOT="$(prompt_default "Server app directory" "/var/www/openbull")"
+  SERVICE_NAME="$(prompt_default "Systemd service name" "openbull")"
+  NODE_VERSION="$(prompt_default "Node.js major version" "20")"
+  DB_HOST="$(prompt_default "PostgreSQL host" "localhost")"
+  DB_PORT="$(prompt_default "PostgreSQL port" "5432")"
+  DB_NAME="$(prompt_default "PostgreSQL database" "openbull")"
+  DB_USER="$(prompt_default "PostgreSQL user" "postgres")"
+  DB_PASSWORD="$(prompt_default "PostgreSQL password" "123456")"
+
+  RUN_DEPS="no"
+  RUN_MIGRATIONS="no"
+  RUN_FRONTEND_BUILD="no"
+  RUN_RESTART="no"
+  RUN_NGINX_RELOAD="no"
+  RUN_HEALTHCHECK="no"
+  RUN_PERMISSIONS="no"
+
+  if prompt_yes_no "Install/update Python and frontend dependencies" y; then RUN_DEPS="yes"; fi
+  if prompt_yes_no "Run database migrations" y; then RUN_MIGRATIONS="yes"; fi
+  if prompt_yes_no "Build frontend" y; then RUN_FRONTEND_BUILD="yes"; fi
+  if prompt_yes_no "Fix app ownership/permissions for www-data" y; then RUN_PERMISSIONS="yes"; fi
+  if prompt_yes_no "Restart OpenBull systemd service" y; then RUN_RESTART="yes"; fi
+  if prompt_yes_no "Test and reload nginx" y; then RUN_NGINX_RELOAD="yes"; fi
+  if prompt_yes_no "Run health check after deployment" y; then RUN_HEALTHCHECK="yes"; fi
+}
+
+print_summary() {
+  echo ""
+  echo "Deployment summary"
+  echo "  Mode:                  $DEPLOY_MODE"
+  echo "  Public URL:            $PUBLIC_URL"
+  echo "  Repo:                  $REPO_URL"
+  echo "  Branch:                $REPO_BRANCH"
+  echo "  App root:              $APP_ROOT"
+  echo "  Service:               $SERVICE_NAME"
+  echo "  Node.js:               $NODE_VERSION"
+  echo "  Database:              $DB_USER@$DB_HOST:$DB_PORT/$DB_NAME"
+  echo "  Install deps:          $RUN_DEPS"
+  echo "  Run migrations:        $RUN_MIGRATIONS"
+  echo "  Build frontend:        $RUN_FRONTEND_BUILD"
+  echo "  Fix permissions:       $RUN_PERMISSIONS"
+  echo "  Restart service:       $RUN_RESTART"
+  echo "  Reload nginx:          $RUN_NGINX_RELOAD"
+  echo "  Health check:          $RUN_HEALTHCHECK"
+  echo ""
+}
+
+export_for_child_installer() {
+  export OPENBULL_REPO_URL="$REPO_URL"
+  export OPENBULL_REPO_BRANCH="$REPO_BRANCH"
+  export OPENBULL_APP_ROOT="$APP_ROOT"
+  export OPENBULL_SERVICE_NAME="$SERVICE_NAME"
+  export OPENBULL_NODE_VERSION="$NODE_VERSION"
+  export OPENBULL_DB_HOST="$DB_HOST"
+  export OPENBULL_DB_PORT="$DB_PORT"
+  export OPENBULL_DB_NAME="$DB_NAME"
+  export OPENBULL_DB_USER="$DB_USER"
+  export OPENBULL_DB_PASSWORD="$DB_PASSWORD"
+}
+
+fresh_install() {
+  log_step "Fresh install"
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    log_error "Fresh install must be run with sudo because it installs packages, nginx, systemd, PostgreSQL, and SSL."
+    exit 1
+  fi
+  export_for_child_installer
+  local domain_host="${PUBLIC_URL#https://}"
+  domain_host="${domain_host#http://}"
+  domain_host="${domain_host%%/*}"
+  log_info "Running install/install.sh with the selected repo, branch, app root, service, and database values."
+  printf '%s\n' "$domain_host" | bash "$SCRIPT_DIR/install/install.sh" 2>&1 | tee -a "$DEPLOY_LOG"
+}
+
+update_live() {
+  log_step "Update live deployment"
+  require_command git
+
+  if [[ ! -d "$APP_ROOT/.git" ]]; then
+    log_error "$APP_ROOT is not a git checkout. Use Fresh install mode first, or set the correct app directory."
+    exit 1
+  fi
+
+  run_cmd git -C "$APP_ROOT" config --global --add safe.directory "$APP_ROOT"
+  run_cmd git -C "$APP_ROOT" remote set-url origin "$REPO_URL"
+  run_cmd git -C "$APP_ROOT" fetch origin "$REPO_BRANCH"
+  run_cmd git -C "$APP_ROOT" checkout "$REPO_BRANCH"
+  run_cmd git -C "$APP_ROOT" pull --ff-only origin "$REPO_BRANCH"
+
+  if [[ -f "$APP_ROOT/.env" ]]; then
+    run_cmd cp "$APP_ROOT/.env" "$APP_ROOT/.env.backup.$TIMESTAMP"
+  fi
+
+  if [[ "$RUN_DEPS" == "yes" ]]; then
+    require_command uv
+    log_step "Install Python dependencies"
+    run_cmd bash -lc "cd '$APP_ROOT' && uv sync"
+  fi
+
+  if [[ "$RUN_MIGRATIONS" == "yes" ]]; then
+    require_command uv
+    log_step "Run migrations"
+    if [[ -f "$APP_ROOT/migrate_all.py" ]]; then
+      run_cmd bash -lc "cd '$APP_ROOT' && uv run python migrate_all.py"
+    elif [[ -f "$APP_ROOT/alembic.ini" ]]; then
+      run_cmd bash -lc "cd '$APP_ROOT' && uv run alembic upgrade head"
+    else
+      log_warn "No migrate_all.py or alembic.ini found. Skipping migrations."
+    fi
+  fi
+
+  if [[ "$RUN_FRONTEND_BUILD" == "yes" ]]; then
+    require_command npm
+    log_step "Build frontend"
+    if [[ -f "$APP_ROOT/frontend/package-lock.json" ]]; then
+      run_cmd bash -lc "cd '$APP_ROOT/frontend' && npm ci"
+    else
+      run_cmd bash -lc "cd '$APP_ROOT/frontend' && npm install"
+    fi
+    run_cmd bash -lc "cd '$APP_ROOT/frontend' && npm run build"
+  fi
+
+  if [[ "$RUN_PERMISSIONS" == "yes" ]]; then
+    log_step "Fix permissions"
+    if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+      run_cmd chown -R www-data:www-data "$APP_ROOT"
+      run_cmd chmod -R u=rwX,g=rX,o=rX "$APP_ROOT"
+      if [[ -f "$APP_ROOT/.env" ]]; then
+        run_cmd chmod 640 "$APP_ROOT/.env"
+      fi
+    else
+      log_warn "Skipping permissions because this script is not running as root."
+    fi
+  fi
+
+  if [[ "$RUN_RESTART" == "yes" ]]; then
+    log_step "Restart service"
+    run_cmd systemctl daemon-reload
+    run_cmd systemctl restart "$SERVICE_NAME"
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+      log_info "$SERVICE_NAME is active."
+    else
+      log_error "$SERVICE_NAME is not active. Recent logs:"
+      journalctl -u "$SERVICE_NAME" --no-pager -n 40 | tee -a "$DEPLOY_LOG" || true
+      exit 1
+    fi
+  fi
+
+  if [[ "$RUN_NGINX_RELOAD" == "yes" ]]; then
+    log_step "Reload nginx"
+    run_cmd nginx -t
+    run_cmd systemctl reload nginx
+  fi
+
+  if [[ "$RUN_HEALTHCHECK" == "yes" ]]; then
+    require_command curl
+    log_step "Health check"
+    if curl -fsS --max-time 20 "$PUBLIC_URL/health" | tee -a "$DEPLOY_LOG"; then
+      log_info "Health check passed: $PUBLIC_URL/health"
+    else
+      log_warn "Health check failed. Check service/nginx logs."
+    fi
+  fi
+}
+
+build_check_only() {
+  log_step "Build/check only"
+  require_command uv
+  require_command npm
+  run_cmd bash -lc "cd '$SCRIPT_DIR' && uv run python -c 'import backend.main; print(\"backend import ok\")'"
+  run_cmd bash -lc "cd '$SCRIPT_DIR/frontend' && npm run build"
+}
+
+print_header
+echo "Choose action:"
+echo "  1) Fresh install on this server"
+echo "  2) Update existing live deployment"
+echo "  3) Build/check current checkout only"
+read -r -p "Select 1, 2, or 3 [2]: " MODE
+MODE="${MODE:-2}"
+
+case "$MODE" in
+  1) DEPLOY_MODE="fresh install"; collect_common_inputs ;;
+  2) DEPLOY_MODE="update live"; collect_common_inputs ;;
+  3) DEPLOY_MODE="build/check only" ;;
+  *) log_error "Invalid selection: $MODE"; exit 1 ;;
+esac
+
+if [[ "$MODE" != "3" ]]; then
+  print_summary
+  if ! prompt_yes_no "Proceed with these live deployment settings" n; then
+    log_warn "Deployment cancelled."
+    exit 0
+  fi
+fi
+
+case "$MODE" in
+  1) fresh_install ;;
+  2) update_live ;;
+  3) build_check_only ;;
+esac
+
+log_info "Done. Deployment log: $DEPLOY_LOG"

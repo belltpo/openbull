@@ -31,21 +31,22 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()  { echo -e "\n${CYAN}=== $1 ===${NC}\n"; }
 
-# Configuration (fixed)
-REPO_URL="https://github.com/marketcalls/openbull.git"
-APP_ROOT="/var/www/openbull"
+# Configuration (overridable by the root install.sh entrypoint)
+REPO_URL="${OPENBULL_REPO_URL:-https://github.com/marketcalls/openbull.git}"
+REPO_BRANCH="${OPENBULL_REPO_BRANCH:-main}"
+APP_ROOT="${OPENBULL_APP_ROOT:-/var/www/openbull}"
 BACKEND_DIR="$APP_ROOT"
 FRONTEND_DIR="$APP_ROOT/frontend"
 LOG_DIR="/var/log/openbull"
-SERVICE_NAME="openbull"
-NODE_VERSION="20"
+SERVICE_NAME="${OPENBULL_SERVICE_NAME:-openbull}"
+NODE_VERSION="${OPENBULL_NODE_VERSION:-20}"
 
 # Database (matches .env.example default)
-DB_HOST="localhost"
-DB_PORT="5432"
-DB_NAME="openbull"
-DB_USER="postgres"
-DB_PASSWORD="123456"
+DB_HOST="${OPENBULL_DB_HOST:-localhost}"
+DB_PORT="${OPENBULL_DB_PORT:-5432}"
+DB_NAME="${OPENBULL_DB_NAME:-openbull}"
+DB_USER="${OPENBULL_DB_USER:-postgres}"
+DB_PASSWORD="${OPENBULL_DB_PASSWORD:-123456}"
 
 # Banner
 echo -e "${BLUE}"
@@ -314,8 +315,9 @@ if [ -d "$APP_ROOT/.git" ]; then
     log_info "Repository exists, pulling latest..."
     cd "$APP_ROOT"
     git config --global --add safe.directory "$APP_ROOT" 2>/dev/null || true
-    git fetch origin
-    git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || true
+    git fetch origin "$REPO_BRANCH" || git fetch origin
+    git checkout "$REPO_BRANCH" 2>/dev/null || git checkout -B "$REPO_BRANCH" "origin/$REPO_BRANCH" 2>/dev/null || true
+    git pull --ff-only origin "$REPO_BRANCH" 2>/dev/null || git pull origin "$REPO_BRANCH" 2>/dev/null || true
 else
     if [ -d "$APP_ROOT" ]; then
         BACKUP_ROOT="${APP_ROOT}_backup_${TIMESTAMP}"
@@ -323,7 +325,7 @@ else
         mv "$APP_ROOT" "$BACKUP_ROOT"
     fi
     mkdir -p "$(dirname "$APP_ROOT")"
-    git clone "$REPO_URL" "$APP_ROOT"
+    git clone --branch "$REPO_BRANCH" "$REPO_URL" "$APP_ROOT" 2>/dev/null || git clone "$REPO_URL" "$APP_ROOT"
 fi
 
 # ============================================================================
