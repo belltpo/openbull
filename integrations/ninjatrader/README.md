@@ -87,6 +87,12 @@ to the OpenBull target template id you want this chart to use.
 - After a successful quick order, the indicator fetches the created Futures-Risk
   trade and creates/updates a tagged `Bell_LongEntryTool` or
   `Bell_ShortEntryTool` on the chart.
+- The last linked OpenBull trade id is stored with the indicator. When the chart
+  or workspace reloads, the indicator fetches that trade from OpenBull and
+  restores the same tagged Bell drawing tool instead of losing the levels.
+- If you manually delete the linked Bell drawing tool from the chart, the
+  indicator respects that deletion and does not recreate it until a new quick
+  order links a new trade.
 - The entry line is fixed after order placement. Stop-loss and pending target
   lines can be dragged vertically; on mouse release the Bell drawing tool syncs
   the updated futures prices to OpenBull through

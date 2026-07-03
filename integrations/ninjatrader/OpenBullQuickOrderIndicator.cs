@@ -57,6 +57,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool wasDragged;
         private bool isDragging;
         private bool dragMoved;
+        private bool rehydrateAttempted;
         private int optionsPollTick;
         private Point dragStart;
         private Thickness dragStartMargin;
@@ -68,6 +69,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private OpenBullTradeSnapshot managedTrade;
         private DrawingTool linkedBellTool;
         private string linkedBellTag;
+        private bool linkedBellSeenOnChart;
         private bool levelDragging;
         private string draggedLevelKey;
         private string tradingMode = "--";
@@ -112,6 +114,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Target2ExitPct = 25;
                 Target3ExitPct = 25;
                 Target4ExitPct = 25;
+                LinkedTradeId = 0;
+                LinkedTradeRemovedByUser = false;
                 NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
             }
             else if (State == State.Historical)
@@ -225,6 +229,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 controlsAdded = true;
                 CenterPopup();
                 StartLiveTimer();
+                Task.Run(async () => await RehydrateLinkedTradeAsync());
                 if (ChartControl != null)
                 {
                     ChartControl.SizeChanged += OnChartSizeChanged;
@@ -1418,9 +1423,33 @@ namespace NinjaTrader.NinjaScript.Indicators
             ApplyLiveOptionPrice(snapshot);
             ChartControl.Dispatcher.InvokeAsync(() =>
             {
+                LinkedTradeId = tradeId;
+                LinkedTradeRemovedByUser = false;
+                linkedBellSeenOnChart = false;
                 managedTrade = snapshot;
                 bool bellLinked = AttachBellDrawingTool(snapshot);
                 SetStatus(bellLinked ? "Order sent - Bell drawing tool linked" : "Order sent - chart levels linked", true);
+                RequestChartRefresh();
+            });
+        }
+
+        private async Task RehydrateLinkedTradeAsync()
+        {
+            if (rehydrateAttempted || LinkedTradeId <= 0 || LinkedTradeRemovedByUser || string.IsNullOrWhiteSpace(ApiKey))
+                return;
+            rehydrateAttempted = true;
+            await Task.Delay(500);
+            OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(LinkedTradeId);
+            if (snapshot == null)
+                return;
+            ApplyLiveOptionPrice(snapshot);
+            ChartControl.Dispatcher.InvokeAsync(() =>
+            {
+                managedTrade = snapshot;
+                linkedBellTag = "OpenBull_FR_" + snapshot.TradeId.ToString(CultureInfo.InvariantCulture);
+                bool bellLinked = AttachBellDrawingTool(snapshot);
+                if (bellLinked)
+                    SetStatus("Bell drawing restored from OpenBull trade " + snapshot.TradeId.ToString(CultureInfo.InvariantCulture), true);
                 RequestChartRefresh();
             });
         }
@@ -1429,6 +1458,16 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (managedTrade == null || managedTrade.TradeId <= 0)
                 return;
+            if (linkedBellTool != null && linkedBellSeenOnChart && !DrawingToolExists(linkedBellTag))
+            {
+                LinkedTradeRemovedByUser = true;
+                linkedBellTool = null;
+                linkedBellTag = null;
+                managedTrade = null;
+                SetStatus("Bell drawing removed manually; link kept off this chart", true);
+                RequestChartRefresh();
+                return;
+            }
             OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(managedTrade.TradeId);
             if (snapshot == null)
                 return;
@@ -1445,6 +1484,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool AttachBellDrawingTool(OpenBullTradeSnapshot snapshot)
         {
             if (snapshot == null || snapshot.TradeId <= 0 || snapshot.EntryFuturesPrice <= 0 || snapshot.StopLossPrice <= 0)
+                return false;
+            if (LinkedTradeRemovedByUser && LinkedTradeId == snapshot.TradeId)
                 return false;
             if (ChartBars == null || ChartBars.Bars == null || ChartBars.Bars.Count <= 0)
                 return false;
@@ -1485,7 +1526,27 @@ namespace NinjaTrader.NinjaScript.Indicators
                 );
                 linkedBellTool = tool;
             }
+            linkedBellSeenOnChart = linkedBellTool != null && DrawingToolExists(linkedBellTag);
             return linkedBellTool != null;
+        }
+
+        private bool DrawingToolExists(string tag)
+        {
+            if (string.IsNullOrWhiteSpace(tag))
+                return false;
+            try
+            {
+                foreach (DrawingTool tool in DrawObjects)
+                {
+                    if (tool != null && string.Equals(tool.Tag, tag, StringComparison.Ordinal))
+                        return true;
+                }
+            }
+            catch
+            {
+                return linkedBellTool != null;
+            }
+            return false;
         }
 
         private void ResolveBellToolTimes(OpenBullTradeSnapshot snapshot, out DateTime entryTime, out DateTime endTime)
@@ -2187,5 +2248,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "T4 Exit %", GroupName = "Override Targets", Order = 53)]
         public double Target4ExitPct { get; set; }
+
+        [NinjaScriptProperty]
+        [Browsable(false)]
+        public int LinkedTradeId { get; set; }
+
+        [NinjaScriptProperty]
+        [Browsable(false)]
+        public bool LinkedTradeRemovedByUser { get; set; }
     }
 }
