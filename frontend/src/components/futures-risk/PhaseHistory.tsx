@@ -308,18 +308,6 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filtered]);
 
-  const allBySymbol = useMemo(() => {
-    const map = new Map<string, FrPhase[]>();
-    for (const p of allPhases) {
-      if (!map.has(p.underlying)) map.set(p.underlying, []);
-      map.get(p.underlying)!.push(p);
-    }
-    for (const arr of map.values()) {
-      arr.sort((a, b) => a.phase_no - b.phase_no || String(a.entry_time).localeCompare(String(b.entry_time)));
-    }
-    return map;
-  }, [allPhases]);
-
   const liveOpt = (p: FrPhase): number | undefined => tickMap.get(`${p.option_exchange}:${p.option_symbol}`)?.data.ltp;
 
   return (
@@ -373,13 +361,13 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {groups.map(([symbol, phases]) => {
-            const allInstrumentPhases = allBySymbol.get(symbol) ?? phases;
+            const selectedInstrumentPhases = phases;
             const latestPhase = phases[phases.length - 1];
-            const totalMtm = allInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
-            const realized = allInstrumentPhases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
-            const active = allInstrumentPhases.filter((p) => p.status === "active").length;
-            const targetsHit = allInstrumentPhases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
-            const targetsTotal = allInstrumentPhases.reduce((sum, p) => sum + p.targets_total, 0);
+            const totalMtm = selectedInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
+            const realized = selectedInstrumentPhases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
+            const active = selectedInstrumentPhases.filter((p) => p.status === "active").length;
+            const targetsHit = selectedInstrumentPhases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
+            const targetsTotal = selectedInstrumentPhases.reduce((sum, p) => sum + p.targets_total, 0);
             const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
 
             return (
@@ -388,7 +376,7 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
                   <div className="min-w-0">
                     <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Showing latest of {allInstrumentPhases.length} phase(s)
+                      Showing latest of {selectedInstrumentPhases.length} phase(s) in selected range
                     </p>
                   </div>
                 </div>
@@ -412,7 +400,7 @@ export function PhaseHistory({ underlying, dataOverride }: { underlying?: string
                       key={latestPhase.trade_id}
                       phase={latestPhase}
                       liveOpt={liveOpt(latestPhase)}
-                      previousPhases={allInstrumentPhases.filter((item) => item.phase_no > 0 && item.phase_no < latestPhase.phase_no)}
+                      previousPhases={selectedInstrumentPhases.filter((item) => item.phase_no > 0 && item.phase_no < latestPhase.phase_no)}
                       liveOptFor={liveOpt}
                       className="bg-card/60"
                     />
