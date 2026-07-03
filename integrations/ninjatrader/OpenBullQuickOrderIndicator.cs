@@ -2375,7 +2375,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        public class StrikeListConverter : DoubleConverter
+        public class StrikeListConverter : System.ComponentModel.DoubleConverter
         {
             public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
             public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
