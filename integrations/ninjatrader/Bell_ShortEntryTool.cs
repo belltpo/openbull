@@ -446,7 +446,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             else if (DrawingState == DrawingState.Normal)
             {
                 Point point = dataPoint.GetPoint(chartControl, chartPanel, chartScale);
-                ChartAnchor closest = GetClosestAnchor(chartControl, chartPanel, chartScale, 10, point);
+                ChartAnchor closest = GetClosestEditableAnchor(chartControl, chartPanel, chartScale, point);
 
                 if (closest != null)
                 {
@@ -917,6 +917,46 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             return false;
         }
 
+        private ChartAnchor GetClosestEditableAnchor(ChartControl chartControl, ChartPanel chartPanel, ChartScale chartScale, Point point)
+        {
+            ChartAnchor closest = GetClosestAnchor(chartControl, chartPanel, chartScale, 10, point);
+            if (closest != null)
+                return closest;
+            return GetClosestLineAnchor(chartControl, chartPanel, chartScale, point);
+        }
+
+        private ChartAnchor GetClosestLineAnchor(ChartControl chartControl, ChartPanel chartPanel, ChartScale chartScale, Point point)
+        {
+            if (IsPointNearLine(chartControl, chartPanel, chartScale, SLAnchor, SLEndAnchor, point))
+                return SLAnchor;
+            if (ShowT1 && IsPointNearLine(chartControl, chartPanel, chartScale, T1Anchor, T1EndAnchor, point))
+                return T1Anchor;
+            if (ShowT2 && IsPointNearLine(chartControl, chartPanel, chartScale, T2Anchor, T2EndAnchor, point))
+                return T2Anchor;
+            if (ShowT3 && IsPointNearLine(chartControl, chartPanel, chartScale, T3Anchor, T3EndAnchor, point))
+                return T3Anchor;
+            if (ShowT4 && IsPointNearLine(chartControl, chartPanel, chartScale, T4Anchor, T4EndAnchor, point))
+                return T4Anchor;
+            if (ShowT5 && IsPointNearLine(chartControl, chartPanel, chartScale, T5Anchor, T5EndAnchor, point))
+                return T5Anchor;
+            if (ShowT6 && IsPointNearLine(chartControl, chartPanel, chartScale, T6Anchor, T6EndAnchor, point))
+                return T6Anchor;
+            return null;
+        }
+
+        private bool IsPointNearLine(ChartControl chartControl, ChartPanel chartPanel, ChartScale chartScale, ChartAnchor startAnchor, ChartAnchor endAnchor, Point point)
+        {
+            if (startAnchor == null || endAnchor == null || startAnchor.Time == DateTime.MinValue)
+                return false;
+            Point start = startAnchor.GetPoint(chartControl, chartPanel, chartScale);
+            Point end = endAnchor.GetPoint(chartControl, chartPanel, chartScale);
+            double minX = Math.Min(start.X, end.X) - 18;
+            double maxX = Math.Max(start.X, end.X) + 120;
+            if (point.X < minX || point.X > maxX)
+                return false;
+            return Math.Abs(point.Y - start.Y) <= 10;
+        }
+
         private void SyncLevelsToOpenBull()
         {
             if (OpenBullTradeId <= 0 || SLAnchor == null)
@@ -952,6 +992,10 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             OpenBullTradeId = tradeId;
             OpenBullMtm = mtm;
             OpenBullSyncStatus = "Linked to OpenBull";
+
+            if (DrawingState == DrawingState.Editing)
+                return;
+
             MoveLinesTogether = false;
             DrawingState = DrawingState.Normal;
 

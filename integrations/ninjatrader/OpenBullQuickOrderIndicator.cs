@@ -380,7 +380,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Width = 580,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
-                Background = Brushes.Transparent
+                Background = null
             };
 
             StackPanel stack = new StackPanel { Orientation = Orientation.Vertical };
@@ -779,9 +779,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             Button refresh = SmallAction("Refresh");
             Button save = SmallAction("Save");
             Button delete = SmallAction("Delete");
-            refresh.Click += async (s, e) => await FetchOptionsAsync();
-            save.Click += async (s, e) => await SaveSettingsAsync();
-            delete.Click += async (s, e) => await DeleteSettingsAsync();
+            WireActionButton(refresh, "Refresh", async () => await FetchOptionsAsync());
+            WireActionButton(save, "Save", async () => await SaveSettingsAsync());
+            WireActionButton(delete, "Delete", async () => await DeleteSettingsAsync());
             Grid.SetColumn(refresh, 0);
             Grid.SetColumn(save, 1);
             Grid.SetColumn(delete, 2);
@@ -816,6 +816,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 65))
             };
             apiBox = box;
+            EnableTextEntry(box);
             box.PasswordChanged += (s, e) => onChanged(box.Password);
             Grid.SetColumn(box, 1);
             row.Children.Add(box);
@@ -836,6 +837,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 65))
             };
             outBox = box;
+            EnableTextEntry(box);
             box.TextChanged += (s, e) =>
             {
                 if (settingsHydrating)
@@ -1002,6 +1004,50 @@ namespace NinjaTrader.NinjaScript.Indicators
             return button;
         }
 
+        private void WireActionButton(Button button, string label, Func<Task> action)
+        {
+            if (button == null || action == null)
+                return;
+            button.PreviewMouseLeftButtonDown += (s, e) =>
+            {
+                SetStatus(label + " clicked", true);
+                button.Background = new SolidColorBrush(Color.FromRgb(58, 58, 58));
+                e.Handled = false;
+            };
+            button.PreviewMouseLeftButtonUp += async (s, e) =>
+            {
+                e.Handled = true;
+                SetStatus(label + " running...", true);
+                try
+                {
+                    await action();
+                }
+                finally
+                {
+                    button.Background = new SolidColorBrush(Color.FromRgb(35, 35, 35));
+                }
+            };
+        }
+
+        private static void EnableTextEntry(Control control)
+        {
+            if (control == null)
+                return;
+            control.Focusable = true;
+            control.PreviewMouseLeftButtonDown += (s, e) =>
+            {
+                Control target = s as Control;
+                if (target == null || target.IsKeyboardFocusWithin)
+                    return;
+                e.Handled = true;
+                target.Focus();
+                Keyboard.Focus(target);
+                TextBox textBox = target as TextBox;
+                if (textBox != null)
+                    textBox.CaretIndex = textBox.Text == null ? 0 : textBox.Text.Length;
+            };
+        }
+
         private static void ApplyRoundedButton(Button button, double radius)
         {
             Style style = new Style(typeof(Button));
@@ -1142,7 +1188,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private async Task FetchOptionsAsync()
         {
             if (string.IsNullOrWhiteSpace(ApiKey) || string.IsNullOrWhiteSpace(OpenBullUrl))
+            {
+                SetStatus("Cannot refresh: API key or URL missing", false);
                 return;
+            }
 
             try
             {
@@ -1247,7 +1296,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private async Task SaveSettingsAsync()
         {
             if (settingsHydrating || string.IsNullOrWhiteSpace(ApiKey) || string.IsNullOrWhiteSpace(OpenBullUrl) || string.IsNullOrWhiteSpace(Underlying))
+            {
+                SetStatus("Cannot save: API key, URL, or instrument missing", false);
                 return;
+            }
             try
             {
                 string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/quick-order/settings";
@@ -1270,7 +1322,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private async Task DeleteSettingsAsync()
         {
             if (string.IsNullOrWhiteSpace(ApiKey) || string.IsNullOrWhiteSpace(OpenBullUrl) || string.IsNullOrWhiteSpace(Underlying))
+            {
+                SetStatus("Cannot delete: API key, URL, or instrument missing", false);
                 return;
+            }
             try
             {
                 string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/quick-order/settings/delete";
