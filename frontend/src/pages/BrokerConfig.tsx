@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import type { FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -53,17 +54,17 @@ const HELP_BY_BROKER: Record<string, BrokerHelp> = {
   },
   dhan: {
     apiKeyLabel: "App ID (API Key)",
-    apiKeyHint: "Only needed for a Dhan Partner app. For normal DhanHQ Trading API access, use the Dhan token page.",
+    apiKeyHint: "Dhan Partner App ID / API ID from your Dhan app.",
     apiSecretLabel: "App Secret",
-    apiSecretHint: "Only needed for a Dhan Partner app. Leave this unused when connecting with a DhanHQ access token.",
-    redirectHint: "Not required for DhanHQ token login. Dhan requires an access token and a whitelisted public IP.",
+    apiSecretHint: "Dhan Partner App Secret from your Dhan app.",
+    redirectHint: "Use http://127.0.0.1:8000/dhan/callback and make sure the same URL is saved in Dhan.",
     showApiSecret: true,
     showRedirect: true,
     showClientId: true,
     clientIdLabel: "Dhan Client ID",
-    clientIdHint: "Your Dhan client ID. It is required with the access token for order APIs.",
+    clientIdHint: "Your Dhan client ID. It is required to generate the consent login URL.",
     banner:
-      "Dhan is connected from the broker selection page using a DhanHQ access token. There is no redirect URL for this flow; whitelist your public IP in Dhan before placing orders.",
+      "For Dhan API login, save App ID, App Secret, Client ID, and redirect URL here, then click Login with Dhan API on the broker selection page. Access-token login is still available as an alternate path.",
   },
   angel: {
     apiKeyLabel: "SmartAPI Key",
@@ -88,6 +89,7 @@ export default function BrokerConfig() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const { data: brokers, isLoading: brokersLoading } = useQuery({
     queryKey: ["brokers"],
@@ -308,6 +310,11 @@ export default function BrokerConfig() {
                 >
                   {saveMutation.isPending ? "Saving..." : "Save Credentials"}
                 </Button>
+                {selectedBroker === "dhan" && (
+                  <Button type="button" variant="outline" onClick={() => navigate("/broker/dhan/token")}>
+                    Use Access Token Instead
+                  </Button>
+                )}
               </>
               );
             })()}

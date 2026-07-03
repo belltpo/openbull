@@ -85,11 +85,30 @@ async def broker_redirect(
     if broker == "angel":
         return {"url": "/broker/angel/totp", "kind": "internal"}
 
-    # Dhan personal API access is token based in this app. Do not start the
-    # Partner consent redirect here; it requires a separate Partner setup and
-    # commonly fails with a proxy-visible 502 for normal DhanHQ users.
+    # Dhan Partner app flow: generate a consent session server-side, then
+    # redirect the browser to Dhan's consent login. Users who do not have a
+    # Partner app can still use /broker/dhan/token.
     if broker == "dhan":
-        return {"url": "/broker/dhan/token", "kind": "internal"}
+        extra = config.extra_config or {}
+        client_id = extra.get("client_id")
+        if not client_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Dhan Client ID is missing. Configure it first, or use Dhan access-token login.",
+            )
+        api_key = decrypt_value(config.api_key)
+        api_secret = decrypt_value(config.api_secret) if config.api_secret else ""
+
+        from backend.broker.dhan.api.auth_api import generate_consent
+        consent_app_id, error = generate_consent(client_id, api_key, api_secret)
+        if not consent_app_id:
+            raise HTTPException(status_code=502, detail=f"Dhan consent generation failed: {error}")
+
+        login_url = f"https://auth.dhan.co/login/consentApp-login?consentAppId={quote(consent_app_id, safe='')}"
+        # Dhan's callback receives tokenId without state. Stash user identity
+        # so the callback can find them when no state echo arrives.
+        _pending_oauth["dhan"] = {"user_id": user.id, "username": user.username}
+        return {"url": login_url, "kind": "external"}
 
     # Default OAuth flow (upstox, zerodha, fyers): substitute api_key + redirect_url
     # into the plugin's auth_url_template and add JWT state for the callback.
