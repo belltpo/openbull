@@ -401,17 +401,36 @@ async def api_futures_risk_quick_order_preview(request: Request):
             (data["ce"] or {}).get("symbol"): (data["ce"] or {}).get("ltp"),
             (data["pe"] or {}).get("symbol"): (data["pe"] or {}).get("ltp"),
         }
+        session_suffix = ":" + fr._session_date_ist()  # type: ignore[attr-defined]
         booked_pnl = 0.0
         open_pnl = 0.0
         active_count = 0
         for trade in fr.list_trades(user_id, status="all"):
             if str(trade.get("underlying", "")).upper() != payload.underlying.upper():
                 continue
+            if int(trade.get("phase_no") or 0) <= 0:
+                continue
+            if not str(trade.get("phase_group") or "").endswith(session_suffix):
+                continue
+            booked_pnl += float(trade.get("realized_pnl") or 0)
             if trade.get("status") != "active":
                 continue
             active_count += 1
-            booked_pnl += float(trade.get("realized_pnl") or 0)
             live_opt = quotes_by_symbol.get(trade.get("option_symbol"))
+            if live_opt is None:
+                option_symbol = trade.get("option_symbol")
+                option_exchange = trade.get("option_exchange")
+                if not option_symbol or not option_exchange:
+                    continue
+                quote = _quote_payload(
+                    option_symbol,
+                    option_exchange,
+                    auth_token,
+                    broker_name,
+                    config,
+                )
+                live_opt = quote.get("ltp") if quote.get("status") == "success" else None
+                quotes_by_symbol[option_symbol] = live_opt
             if live_opt is None:
                 continue
             entry_opt = float(trade.get("entry_option_price") or 0)

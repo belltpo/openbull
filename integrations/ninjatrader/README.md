@@ -82,8 +82,18 @@ to the OpenBull target template id you want this chart to use.
 - `Delete` removes the selected contract quick-order setup from OpenBull.
 - While the settings card is open, dropdown/default values are refreshed from
   OpenBull about every 10 seconds.
-- Futures, CE, and PE LTP values are polled from OpenBull every two seconds via
+- Futures, CE, and PE LTP values are polled from OpenBull every five seconds via
   `/api/v1/futures-risk/quick-order/preview`.
+- After a successful quick order, the indicator fetches the created Futures-Risk
+  trade and draws the linked entry, stop-loss, and target levels on the chart.
+- The entry line is fixed after order placement. Stop-loss and pending target
+  lines can be dragged vertically; on mouse release the indicator syncs the
+  updated futures prices to OpenBull through
+  `PUT /api/v1/futures-risk/trades/{trade_id}/levels`.
+- The entry label shows `L React` / `S React` with the current linked-trade MTM.
+  MTM and target status refresh through OpenBull polling. OpenBull remains the
+  execution source of truth; broker-side target/SL orders are not placed in
+  advance by this indicator.
 
 ## Button Mapping
 
@@ -95,3 +105,21 @@ to the OpenBull target template id you want this chart to use.
 The first version is intentionally independent from `Bell_LongEntryTool.cs` and
 `Bell_ShortEntryTool.cs`. Those drawing tools can be integrated later as a level
 provider after the API path is proven stable.
+
+## Advanced Level Management
+
+The current indicator now includes its own chart-level manager:
+
+1. Click a quick-order button.
+2. OpenBull places/records the Futures-Risk trade.
+3. NT loads that trade id and renders entry, SL, and target lines.
+4. Drag SL or a pending target line.
+5. Release the mouse; OpenBull immediately receives the new level plan.
+
+Use a chart with a price scale matching the selected underlying futures contract
+for accurate level placement. If the chart instrument has a completely different
+price scale, the OpenBull futures levels may render outside the visible panel.
+
+The copied Bell drawing tools also support manual linking through
+`OpenBull Trade ID`, but the quick-order indicator does not need them for the
+new auto-linked level overlay.

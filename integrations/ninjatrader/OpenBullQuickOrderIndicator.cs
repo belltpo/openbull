@@ -13,6 +13,9 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using NinjaTrader.Gui;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Indicators;
 #endregion
@@ -60,6 +63,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double ceLtp;
         private double peLtp;
         private double mtmValue;
+        private ChartScale activeChartScale;
+        private OpenBullTradeSnapshot managedTrade;
+        private bool levelDragging;
+        private string draggedLevelKey;
         private string tradingMode = "--";
         private readonly Dictionary<ComboBox, TextBlock> comboDisplays = new Dictionary<ComboBox, TextBlock>();
 
@@ -77,7 +84,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Calculate = Calculate.OnPriceChange;
                 IsOverlay = true;
                 DisplayInDataBox = false;
-                DrawOnPricePanel = false;
+                DrawOnPricePanel = true;
                 PaintPriceMarkers = false;
                 IsSuspendedWhileInactive = false;
 
@@ -119,6 +126,84 @@ namespace NinjaTrader.NinjaScript.Indicators
             // Prices shown in the widget come from OpenBull, not the NT chart instrument.
         }
 
+        protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
+        {
+            base.OnRender(chartControl, chartScale);
+            activeChartScale = chartScale;
+            if (managedTrade == null || managedTrade.EntryFuturesPrice <= 0 || ChartBars == null || ChartBars.Bars == null)
+                return;
+
+            int endBarIndex = Math.Max(0, ChartBars.Bars.Count - 1);
+            int startBarIndex = Math.Max(0, endBarIndex - 22);
+            float startX = chartControl.GetXByBarIndex(ChartBars, startBarIndex);
+            float endX = chartControl.GetXByBarIndex(ChartBars, endBarIndex);
+            DrawManagedLine(chartScale, startX, endX, managedTrade.EntryFuturesPrice, EntryBrushForTrade(), EntryLabelForTrade(), false);
+            DrawManagedLine(chartScale, startX, endX, managedTrade.StopLossPrice, Brushes.Red, "SL @ " + FormatChartPrice(managedTrade.StopLossPrice), true);
+            foreach (OpenBullTradeLevel target in managedTrade.Targets)
+            {
+                if (target == null || target.Price <= 0)
+                    continue;
+                string label = "T" + target.Seq.ToString(CultureInfo.InvariantCulture) + " @ " + FormatChartPrice(target.Price);
+                if (!string.IsNullOrWhiteSpace(target.Status) && !string.Equals(target.Status, "pending", StringComparison.OrdinalIgnoreCase))
+                    label += " " + target.Status;
+                DrawManagedLine(chartScale, startX, endX, target.Price, Brushes.MediumSpringGreen, label, string.Equals(target.Status, "pending", StringComparison.OrdinalIgnoreCase));
+            }
+        }
+
+        private Brush EntryBrushForTrade()
+        {
+            return string.Equals(managedTrade == null ? "" : managedTrade.Side, "BUY", StringComparison.OrdinalIgnoreCase)
+                ? Brushes.DeepSkyBlue
+                : Brushes.OrangeRed;
+        }
+
+        private string EntryLabelForTrade()
+        {
+            if (managedTrade == null)
+                return "React";
+            string prefix = string.Equals(managedTrade.Side, "BUY", StringComparison.OrdinalIgnoreCase) ? "L React" : "S React";
+            string sign = managedTrade.Mtm >= 0 ? "+" : "";
+            return prefix + " @ " + FormatChartPrice(managedTrade.EntryFuturesPrice) + " | MTM " + sign + managedTrade.Mtm.ToString("N2", CultureInfo.InvariantCulture);
+        }
+
+        private void DrawManagedLine(ChartScale chartScale, float startX, float endX, double price, Brush brush, string label, bool draggable)
+        {
+            if (price <= 0 || RenderTarget == null)
+                return;
+            float y = chartScale.GetYByValue(price);
+            var start = new SharpDX.Vector2(startX, y);
+            var end = new SharpDX.Vector2(endX, y);
+            var stroke = new Stroke(brush, DashStyleHelper.Dot, draggable ? 1.8f : 1.3f) { RenderTarget = RenderTarget };
+            RenderTarget.DrawLine(start, end, stroke.BrushDX, stroke.Width, stroke.StrokeStyle);
+            using (var dotBrush = brush.ToDxBrush(RenderTarget))
+            {
+                var center = new SharpDX.Vector2(endX, y);
+                var outer = new SharpDX.Direct2D1.Ellipse(center, draggable ? 6f : 4f, draggable ? 6f : 4f);
+                RenderTarget.DrawEllipse(outer, dotBrush, 1.4f);
+                if (draggable)
+                    RenderTarget.FillEllipse(new SharpDX.Direct2D1.Ellipse(center, 2.8f, 2.8f), dotBrush);
+            }
+            DrawManagedLabel(label, endX + 8, y, brush);
+        }
+
+        private void DrawManagedLabel(string text, float x, float y, Brush textBrush)
+        {
+            var font = new SimpleFont("Arial", 12) { Bold = true };
+            using (var textFormat = font.ToDirectWriteTextFormat())
+            using (var layout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, text, textFormat, 260, 44))
+            {
+                float padding = 4f;
+                float textY = y - layout.Metrics.Height / 2f;
+                var rect = new SharpDX.RectangleF(x - padding, textY - padding, layout.Metrics.Width + padding * 2, layout.Metrics.Height + padding * 2);
+                using (var bg = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color4(0, 0, 0, 0.72f)))
+                using (var fg = textBrush.ToDxBrush(RenderTarget))
+                {
+                    RenderTarget.FillRectangle(rect, bg);
+                    RenderTarget.DrawTextLayout(new SharpDX.Vector2(x, textY), layout, fg);
+                }
+            }
+        }
+
         private void AddChartControls()
         {
             if (ChartControl == null)
@@ -136,7 +221,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 CenterPopup();
                 StartLiveTimer();
                 if (ChartControl != null)
+                {
                     ChartControl.SizeChanged += OnChartSizeChanged;
+                    ChartControl.PreviewMouseLeftButtonDown += OnChartMouseDown;
+                    ChartControl.PreviewMouseMove += OnChartMouseMove;
+                    ChartControl.PreviewMouseLeftButtonUp += OnChartMouseUp;
+                }
             });
         }
 
@@ -149,7 +239,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 StopLiveTimer();
                 if (ChartControl != null)
+                {
                     ChartControl.SizeChanged -= OnChartSizeChanged;
+                    ChartControl.PreviewMouseLeftButtonDown -= OnChartMouseDown;
+                    ChartControl.PreviewMouseMove -= OnChartMouseMove;
+                    ChartControl.PreviewMouseLeftButtonUp -= OnChartMouseUp;
+                }
                 if (root != null && UserControlCollection.Contains(root))
                     UserControlCollection.Remove(root);
                 controlsAdded = false;
@@ -161,6 +256,79 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (!wasDragged)
                 CenterPopup();
+        }
+
+        private void OnChartMouseDown(object sender, MouseButtonEventArgs e)
+        {
+            if (managedTrade == null || activeChartScale == null || root == null || root.IsMouseOver)
+                return;
+            Point point = e.GetPosition(ChartControl);
+            string hit = HitTestManagedLevel(point);
+            if (string.IsNullOrWhiteSpace(hit))
+                return;
+            levelDragging = true;
+            draggedLevelKey = hit;
+            Mouse.Capture(ChartControl);
+            e.Handled = true;
+        }
+
+        private void OnChartMouseMove(object sender, MouseEventArgs e)
+        {
+            if (!levelDragging || managedTrade == null || activeChartScale == null || string.IsNullOrWhiteSpace(draggedLevelKey))
+                return;
+            Point point = e.GetPosition(ChartControl);
+            double price = RoundToChartTick(activeChartScale.GetValueByY((float)point.Y));
+            if (price <= 0)
+                return;
+            if (draggedLevelKey == "SL")
+            {
+                managedTrade.StopLossPrice = price;
+            }
+            else if (draggedLevelKey.StartsWith("T", StringComparison.OrdinalIgnoreCase))
+            {
+                int seq = ParseInt(draggedLevelKey.Substring(1), 0);
+                OpenBullTradeLevel target = managedTrade.Targets.Find(t => t.Seq == seq);
+                if (target != null && string.Equals(target.Status, "pending", StringComparison.OrdinalIgnoreCase))
+                    target.Price = price;
+            }
+            RequestChartRefresh();
+            e.Handled = true;
+        }
+
+        private void OnChartMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (!levelDragging)
+                return;
+            levelDragging = false;
+            string released = draggedLevelKey;
+            draggedLevelKey = null;
+            Mouse.Capture(null);
+            e.Handled = true;
+            if (!string.IsNullOrWhiteSpace(released))
+                Task.Run(async () => await SyncManagedLevelsAsync());
+        }
+
+        private string HitTestManagedLevel(Point point)
+        {
+            if (managedTrade == null || activeChartScale == null)
+                return "";
+            if (Math.Abs(activeChartScale.GetYByValue(managedTrade.StopLossPrice) - point.Y) <= 8)
+                return "SL";
+            foreach (OpenBullTradeLevel target in managedTrade.Targets)
+            {
+                if (target == null || !string.Equals(target.Status, "pending", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (Math.Abs(activeChartScale.GetYByValue(target.Price) - point.Y) <= 8)
+                    return "T" + target.Seq.ToString(CultureInfo.InvariantCulture);
+            }
+            return "";
+        }
+
+        private void RequestChartRefresh()
+        {
+            if (ChartControl == null)
+                return;
+            ChartControl.InvalidateVisual();
         }
 
         private void CenterPopup()
@@ -956,6 +1124,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                         UpdateModeText();
                         RefreshButtonText();
                     });
+                    await RefreshManagedTradeAsync();
                 }
             }
             catch (Exception ex)
@@ -1147,7 +1316,20 @@ namespace NinjaTrader.NinjaScript.Indicators
                     HttpResponseMessage response = await Http.PostAsync(url, content);
                     string body = await response.Content.ReadAsStringAsync();
                     bool ok = response.IsSuccessStatusCode && body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) >= 0;
-                    SetStatus(ok ? "Order sent" : TrimForStatus(body), ok);
+                    if (ok)
+                    {
+                        int tradeId = (int)ExtractNestedNumber(body, "data", "id");
+                        if (tradeId <= 0)
+                            tradeId = (int)ParseDouble(ExtractJsonValue(body, "id"), 0);
+                        if (tradeId > 0)
+                            await LinkPlacedTradeAsync(tradeId, optionType);
+                        else
+                            SetStatus("Order sent; trade id unavailable for chart levels", true);
+                    }
+                    else
+                    {
+                        SetStatus(TrimForStatus(body), false);
+                    }
                 }
             }
             catch (Exception ex)
@@ -1160,6 +1342,65 @@ namespace NinjaTrader.NinjaScript.Indicators
                 SetButtonsEnabled(true);
                 await FetchLiveAsync();
             }
+        }
+
+        private async Task LinkPlacedTradeAsync(int tradeId, string optionType)
+        {
+            OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(tradeId);
+            if (snapshot == null)
+            {
+                SetStatus("Order sent; unable to load linked trade levels", false);
+                return;
+            }
+            ApplyLiveOptionPrice(snapshot);
+            ChartControl.Dispatcher.InvokeAsync(() =>
+            {
+                managedTrade = snapshot;
+                SetStatus("Order sent - chart levels linked", true);
+                RequestChartRefresh();
+            });
+        }
+
+        private async Task RefreshManagedTradeAsync()
+        {
+            if (managedTrade == null || managedTrade.TradeId <= 0)
+                return;
+            OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(managedTrade.TradeId);
+            if (snapshot == null)
+                return;
+            ApplyLiveOptionPrice(snapshot);
+            ChartControl.Dispatcher.InvokeAsync(() =>
+            {
+                managedTrade = snapshot;
+                RequestChartRefresh();
+            });
+        }
+
+        private async Task SyncManagedLevelsAsync()
+        {
+            if (managedTrade == null || managedTrade.TradeId <= 0)
+                return;
+            List<OpenBullLevelTarget> targets = new List<OpenBullLevelTarget>();
+            foreach (OpenBullTradeLevel target in managedTrade.Targets)
+            {
+                if (target == null || target.Price <= 0 || !string.Equals(target.Status, "pending", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                targets.Add(new OpenBullLevelTarget { Seq = target.Seq, Price = target.Price, ExitPct = target.ExitPct > 0 ? (double?)target.ExitPct : null });
+            }
+            string result = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.UpdateLevelsAsync(managedTrade.TradeId, managedTrade.StopLossPrice, targets);
+            bool ok = string.Equals(result, "Levels synced", StringComparison.OrdinalIgnoreCase);
+            SetStatus(ok ? "Levels synced to OpenBull" : result, ok);
+            await RefreshManagedTradeAsync();
+        }
+
+        private void ApplyLiveOptionPrice(OpenBullTradeSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return;
+            if (string.Equals(snapshot.OptionType, "CE", StringComparison.OrdinalIgnoreCase))
+                snapshot.LiveOptionPrice = ceLtp;
+            else if (string.Equals(snapshot.OptionType, "PE", StringComparison.OrdinalIgnoreCase))
+                snapshot.LiveOptionPrice = peLtp;
         }
 
         private string BuildPreviewJson()
@@ -1607,6 +1848,36 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             double parsed;
             return double.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out parsed) ? parsed : fallback;
+        }
+
+        private double RoundToChartTick(double price)
+        {
+            try
+            {
+                if (Instrument != null && Instrument.MasterInstrument != null)
+                {
+                    double tickSize = Instrument.MasterInstrument.TickSize;
+                    if (tickSize > 0)
+                        return Math.Round(price / tickSize) * tickSize;
+                }
+            }
+            catch
+            {
+            }
+            return Math.Round(price, 2);
+        }
+
+        private string FormatChartPrice(double price)
+        {
+            try
+            {
+                if (Instrument != null && Instrument.MasterInstrument != null)
+                    return price.ToString(Core.Globals.GetTickFormatString(Instrument.MasterInstrument.TickSize));
+            }
+            catch
+            {
+            }
+            return price.ToString("0.##", CultureInfo.InvariantCulture);
         }
 
         private static int ParseInt(string value, int fallback)

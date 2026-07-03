@@ -194,16 +194,18 @@ export default function FuturesRisk() {
     },
   });
 
-  const activeCount = trades.filter((t) => t.status === "active").length;
-  const draftCount = trades.filter((t) => t.status === "draft").length;
+  const todayKey = localDateKey(new Date());
+  const todayTrades = useMemo(() => allTrades.filter((t) => tradeDateKey(t.created_at) === todayKey), [allTrades, todayKey]);
+  const activeCount = todayTrades.filter((t) => t.status === "active").length;
+  const draftCount = todayTrades.filter((t) => t.status === "draft").length;
   const liveUnrealized = useMemo(
     () =>
-      trades
+      todayTrades
         .filter((t) => t.status === "active")
         .reduce((acc, t) => acc + (livePnl(t, ltpOf(t.option_symbol, t.option_exchange)) ?? 0), 0),
-    [trades, tickMap],
+    [todayTrades, tickMap],
   );
-  const realizedTotal = useMemo(() => trades.reduce((a, t) => a + (t.realized_pnl ?? 0), 0), [trades]);
+  const realizedTotal = useMemo(() => todayTrades.reduce((a, t) => a + (t.realized_pnl ?? 0), 0), [todayTrades]);
   const positionGroups = useMemo(() => {
     const map = new Map<string, FrTrade[]>();
     for (const trade of trades) {

@@ -17,6 +17,49 @@ namespace NinjaTrader.NinjaScript
         public double? ExitPct { get; set; }
     }
 
+    public class OpenBullTradeLevel
+    {
+        public int Seq { get; set; }
+        public double Price { get; set; }
+        public double Points { get; set; }
+        public double ExitPct { get; set; }
+        public string Status { get; set; }
+    }
+
+    public class OpenBullTradeSnapshot
+    {
+        public int TradeId { get; set; }
+        public string Underlying { get; set; }
+        public string OptionSymbol { get; set; }
+        public string Side { get; set; }
+        public string OptionType { get; set; }
+        public string Status { get; set; }
+        public int Direction { get; set; }
+        public double EntryFuturesPrice { get; set; }
+        public double EntryOptionPrice { get; set; }
+        public double StopLossPrice { get; set; }
+        public double RealizedPnl { get; set; }
+        public int RemainingQty { get; set; }
+        public double LiveOptionPrice { get; set; }
+        public List<OpenBullTradeLevel> Targets { get; set; }
+
+        public OpenBullTradeSnapshot()
+        {
+            Targets = new List<OpenBullTradeLevel>();
+        }
+
+        public double Mtm
+        {
+            get
+            {
+                if (!string.Equals(Status, "active", StringComparison.OrdinalIgnoreCase) || LiveOptionPrice <= 0 || EntryOptionPrice <= 0 || RemainingQty <= 0)
+                    return RealizedPnl;
+                double direction = string.Equals(Side, "BUY", StringComparison.OrdinalIgnoreCase) ? 1.0 : -1.0;
+                return RealizedPnl + ((LiveOptionPrice - EntryOptionPrice) * RemainingQty * direction);
+            }
+        }
+    }
+
     public static class OpenBullFuturesRiskBridge
     {
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
@@ -48,6 +91,49 @@ namespace NinjaTrader.NinjaScript
                     return "Levels synced";
                 return TrimForStatus(body);
             }
+        }
+
+        public static async Task<OpenBullTradeSnapshot> FetchTradeAsync(int tradeId)
+        {
+            if (tradeId <= 0 || string.IsNullOrWhiteSpace(ApiKey))
+                return null;
+
+            string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/trades/" + tradeId.ToString(CultureInfo.InvariantCulture);
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, url))
+            {
+                request.Headers.TryAddWithoutValidation("X-API-KEY", ApiKey);
+                HttpResponseMessage response = await Http.SendAsync(request);
+                string body = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode || body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) < 0)
+                    return null;
+                return ParseTradeSnapshot(body);
+            }
+        }
+
+        public static OpenBullTradeSnapshot ParseTradeSnapshot(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+                return null;
+            string data = ExtractObject(body, "data");
+            if (string.IsNullOrWhiteSpace(data))
+                data = body;
+            OpenBullTradeSnapshot trade = new OpenBullTradeSnapshot();
+            trade.TradeId = (int)ExtractNumber(data, "id");
+            trade.Underlying = ExtractJsonValue(data, "underlying");
+            trade.OptionSymbol = ExtractJsonValue(data, "option_symbol");
+            trade.Side = ExtractJsonValue(data, "side");
+            trade.OptionType = ExtractJsonValue(data, "option_type");
+            trade.Status = ExtractJsonValue(data, "status");
+            trade.Direction = (int)ExtractNumber(data, "direction");
+            trade.EntryFuturesPrice = ExtractNumber(data, "entry_futures_price");
+            trade.EntryOptionPrice = ExtractNumber(data, "entry_option_price");
+            trade.StopLossPrice = ExtractNumber(data, "sl_price");
+            trade.RealizedPnl = ExtractNumber(data, "realized_pnl");
+            trade.RemainingQty = (int)ExtractNumber(data, "remaining_qty");
+            trade.Targets = ExtractTargets(data);
+            if (trade.TradeId <= 0)
+                return null;
+            return trade;
         }
 
         private static string BuildLevelsJson(double slPrice, IList<OpenBullLevelTarget> targets)
@@ -115,6 +201,13 @@ namespace NinjaTrader.NinjaScript
             return value.Length > 90 ? value.Substring(0, 90) + "..." : value;
         }
 
+        private static double ExtractNumber(string body, string key)
+        {
+            double parsed;
+            string raw = ExtractJsonValue(body, key);
+            return double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
+        }
+
         private static string ExtractJsonValue(string body, string key)
         {
             Match m = Regex.Match(
@@ -129,6 +222,80 @@ namespace NinjaTrader.NinjaScript
             if (m.Groups["num"].Success)
                 return m.Groups["num"].Value;
             return "null";
+        }
+
+        private static List<OpenBullTradeLevel> ExtractTargets(string body)
+        {
+            List<OpenBullTradeLevel> targets = new List<OpenBullTradeLevel>();
+            string array = ExtractArray(body, "targets");
+            if (string.IsNullOrWhiteSpace(array))
+                return targets;
+            foreach (Match m in Regex.Matches(array, "\\{(?<obj>.*?)\\}", RegexOptions.Singleline))
+            {
+                string obj = m.Groups["obj"].Value;
+                int seq = (int)ExtractNumber(obj, "seq");
+                double price = ExtractNumber(obj, "trigger_price");
+                if (seq <= 0 || price <= 0)
+                    continue;
+                string status = ExtractJsonValue(obj, "status");
+                if (string.IsNullOrWhiteSpace(status) || status == "null")
+                    status = "pending";
+                targets.Add(new OpenBullTradeLevel
+                {
+                    Seq = seq,
+                    Price = price,
+                    Points = ExtractNumber(obj, "points"),
+                    ExitPct = ExtractNumber(obj, "exit_pct"),
+                    Status = status
+                });
+            }
+            return targets;
+        }
+
+        private static string ExtractArray(string body, string key)
+        {
+            int keyIndex = body.IndexOf("\"" + key + "\"", StringComparison.OrdinalIgnoreCase);
+            if (keyIndex < 0)
+                return "";
+            int start = body.IndexOf('[', keyIndex);
+            if (start < 0)
+                return "";
+            int depth = 0;
+            for (int i = start; i < body.Length; i++)
+            {
+                if (body[i] == '[')
+                    depth++;
+                else if (body[i] == ']')
+                {
+                    depth--;
+                    if (depth == 0)
+                        return body.Substring(start + 1, i - start - 1);
+                }
+            }
+            return "";
+        }
+
+        private static string ExtractObject(string body, string key)
+        {
+            int keyIndex = body.IndexOf("\"" + key + "\"", StringComparison.OrdinalIgnoreCase);
+            if (keyIndex < 0)
+                return "";
+            int start = body.IndexOf('{', keyIndex);
+            if (start < 0)
+                return "";
+            int depth = 0;
+            for (int i = start; i < body.Length; i++)
+            {
+                if (body[i] == '{')
+                    depth++;
+                else if (body[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0)
+                        return body.Substring(start + 1, i - start - 1);
+                }
+            }
+            return "";
         }
     }
 }
