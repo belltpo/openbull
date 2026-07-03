@@ -53,6 +53,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private ComboBox peCombo;
         private ComboBox templateCombo;
         private ComboBox productCombo;
+        private CheckBox previousDrawingsCheck;
         private TextBox urlBox;
         private TextBox lotsBox;
         private TextBox slBox;
@@ -65,6 +66,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool isDragging;
         private bool dragMoved;
         private bool rehydrateAttempted;
+        private bool liveRefreshRunning;
         private int optionsPollTick;
         private Point dragStart;
         private Thickness dragStartMargin;
@@ -114,8 +116,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 SlPoints = 5;
                 Product = "MIS";
                 TargetTemplateId = 0;
+                TargetTemplate = TemplateFallbackLabel(0);
                 UseOverrideTargets = false;
                 AutoSplitTargets = true;
+                ShowPreviousTradeDrawings = false;
+                LivePollMs = 1000;
                 Target1Points = 50;
                 Target2Points = 100;
                 Target3Points = 150;
@@ -366,13 +371,24 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void StartLiveTimer()
         {
             StopLiveTimer();
-            liveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            int pollMs = Math.Max(500, LivePollMs);
+            liveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(pollMs) };
             liveTimer.Tick += async (s, e) =>
             {
-                await FetchLiveAsync();
-                optionsPollTick++;
-                if (settingsPanel != null && settingsPanel.Visibility == Visibility.Visible && optionsPollTick % 5 == 0)
-                    await FetchOptionsAsync();
+                if (liveRefreshRunning)
+                    return;
+                liveRefreshRunning = true;
+                try
+                {
+                    await FetchLiveAsync();
+                    optionsPollTick++;
+                    if (settingsPanel != null && settingsPanel.Visibility == Visibility.Visible && optionsPollTick % Math.Max(5, 10000 / pollMs) == 0)
+                        await FetchOptionsAsync();
+                }
+                finally
+                {
+                    liveRefreshRunning = false;
+                }
             };
             liveTimer.Start();
             Task.Run(async () =>
@@ -757,15 +773,20 @@ namespace NinjaTrader.NinjaScript.Indicators
             });
             stack.Children.Add(Field("Lots", Lots.ToString(CultureInfo.InvariantCulture), value =>
             {
-                Lots = Math.Max(1, ParseInt(value, Lots));
+                if (!string.IsNullOrWhiteSpace(value))
+                    Lots = Math.Max(1, ParseInt(value, Lots));
             }, out lotsBox));
+            WireCommitSave(lotsBox);
             stack.Children.Add(Field("SL pts", SlPoints.ToString(CultureInfo.InvariantCulture), value =>
             {
-                SlPoints = ParseDouble(value, SlPoints);
+                if (!string.IsNullOrWhiteSpace(value))
+                    SlPoints = ParseDouble(value, SlPoints);
             }, out slBox));
+            WireCommitSave(slBox);
             templateCombo = ComboRow(stack, "Template", value =>
             {
                 TargetTemplateId = Math.Max(0, ParseTemplateId(value, TargetTemplateId));
+                TargetTemplate = string.IsNullOrWhiteSpace(value) ? TemplateFallbackLabel(TargetTemplateId) : value;
                 Task.Run(async () => await SaveSettingsAsync());
             });
             productCombo = ComboRow(stack, "Product", value =>
@@ -773,29 +794,39 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Product = string.IsNullOrWhiteSpace(value) ? "NRML" : value.ToUpperInvariant();
                 Task.Run(async () => await SaveSettingsAsync());
             });
+            stack.Children.Add(CheckRow("Prev levels", ShowPreviousTradeDrawings, value =>
+            {
+                ShowPreviousTradeDrawings = value;
+                RefreshDrawingVisibility();
+            }, out previousDrawingsCheck));
 
             SeedCombo(instrumentCombo, Underlying);
             SeedCombo(expiryCombo, Expiry);
             SeedCombo(ceCombo, CeStrike.ToString("0", CultureInfo.InvariantCulture));
             SeedCombo(peCombo, PeStrike.ToString("0", CultureInfo.InvariantCulture));
-            SeedCombo(templateCombo, TemplateFallbackLabel(TargetTemplateId));
+            SeedCombo(templateCombo, string.IsNullOrWhiteSpace(TargetTemplate) ? TemplateFallbackLabel(TargetTemplateId) : TargetTemplate);
             FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
 
             Grid actions = new Grid { Margin = new Thickness(0, 6, 0, 0) };
             actions.ColumnDefinitions.Add(new ColumnDefinition());
             actions.ColumnDefinitions.Add(new ColumnDefinition());
             actions.ColumnDefinitions.Add(new ColumnDefinition());
+            actions.ColumnDefinitions.Add(new ColumnDefinition());
             Button refresh = SmallAction("Refresh");
             Button save = SmallAction("Save");
+            Button remove = SmallAction("Remove");
             Button delete = SmallAction("Delete");
             WireActionButton(refresh, "Refresh", async () => await FetchOptionsAsync());
             WireActionButton(save, "Save", async () => await SaveSettingsAsync());
+            WireActionButton(remove, "Remove", async () => await RemoveCurrentTradeDrawingAsync());
             WireActionButton(delete, "Delete", async () => await DeleteSettingsAsync());
             Grid.SetColumn(refresh, 0);
             Grid.SetColumn(save, 1);
-            Grid.SetColumn(delete, 2);
+            Grid.SetColumn(remove, 2);
+            Grid.SetColumn(delete, 3);
             actions.Children.Add(refresh);
             actions.Children.Add(save);
+            actions.Children.Add(remove);
             actions.Children.Add(delete);
             stack.Children.Add(actions);
 
@@ -853,6 +884,51 @@ namespace NinjaTrader.NinjaScript.Indicators
                     return;
                 onChanged(box.Text);
                 RefreshButtonText();
+            };
+            Grid.SetColumn(box, 1);
+            row.Children.Add(box);
+            return row;
+        }
+
+        private void WireCommitSave(TextBox box)
+        {
+            if (box == null)
+                return;
+            box.LostKeyboardFocus += (s, e) => Task.Run(async () => await SaveSettingsAsync());
+            box.KeyDown += (s, e) =>
+            {
+                if (e.Key == Key.Enter)
+                {
+                    e.Handled = true;
+                    Task.Run(async () => await SaveSettingsAsync());
+                }
+            };
+        }
+
+        private UIElement CheckRow(string label, bool value, Action<bool> onChanged, out CheckBox outBox)
+        {
+            Grid row = FieldRow(label);
+            CheckBox box = new CheckBox
+            {
+                IsChecked = value,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Foreground = Brushes.White
+            };
+            outBox = box;
+            box.Checked += (s, e) =>
+            {
+                if (settingsHydrating)
+                    return;
+                onChanged(true);
+                Task.Run(async () => await SaveSettingsAsync());
+            };
+            box.Unchecked += (s, e) =>
+            {
+                if (settingsHydrating)
+                    return;
+                onChanged(false);
+                Task.Run(async () => await SaveSettingsAsync());
             };
             Grid.SetColumn(box, 1);
             row.Children.Add(box);
@@ -1299,6 +1375,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                                 if (!string.IsNullOrEmpty(template) && template != "null")
                                 {
                                     TargetTemplateId = Math.Max(0, ParseInt(template, TargetTemplateId));
+                                    TargetTemplate = TemplateFallbackLabel(TargetTemplateId);
                                     SelectTemplateCombo(TargetTemplateId);
                                 }
                             }
@@ -1447,6 +1524,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 linkedBellSeenOnChart = false;
                 managedTrade = snapshot;
                 managedTrades[tradeId] = snapshot;
+                if (!ShowPreviousTradeDrawings)
+                    RemoveOtherTradeDrawings(tradeId, false);
                 bool bellLinked = AttachBellDrawingTool(snapshot);
                 SetStatus(bellLinked ? "Order sent - Bell drawing tool linked" : "Order sent - chart levels linked", true);
                 RequestChartRefresh();
@@ -1484,7 +1563,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             ChartControl.Dispatcher.InvokeAsync(() =>
             {
                 int restored = 0;
-                foreach (OpenBullTradeSnapshot snapshot in snapshots)
+                List<OpenBullTradeSnapshot> visibleSnapshots = SelectVisibleSnapshots(snapshots);
+                foreach (OpenBullTradeSnapshot snapshot in visibleSnapshots)
                 {
                     if (snapshot == null || snapshot.TradeId <= 0 || IsDeletedLinkedTradeId(snapshot.TradeId))
                         continue;
@@ -1525,6 +1605,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
                 if (IsDeletedLinkedTradeId(id))
                     continue;
+                if (!ShowPreviousTradeDrawings && LinkedTradeId > 0 && id != LinkedTradeId)
+                {
+                    RemoveTradeDrawing(id, false);
+                    continue;
+                }
                 OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(id);
                 if (snapshot == null)
                     continue;
@@ -1591,6 +1676,134 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (linkedBellSeenOnChart)
                 linkedBellSeenTradeIds.Add(snapshot.TradeId);
             return linkedBellTool != null;
+        }
+
+        private List<OpenBullTradeSnapshot> SelectVisibleSnapshots(List<OpenBullTradeSnapshot> snapshots)
+        {
+            if (ShowPreviousTradeDrawings)
+                return snapshots ?? new List<OpenBullTradeSnapshot>();
+            OpenBullTradeSnapshot selected = null;
+            if (snapshots != null)
+            {
+                foreach (OpenBullTradeSnapshot snapshot in snapshots)
+                {
+                    if (snapshot == null || snapshot.TradeId <= 0 || IsDeletedLinkedTradeId(snapshot.TradeId))
+                        continue;
+                    if (selected == null)
+                    {
+                        selected = snapshot;
+                        continue;
+                    }
+                    bool snapshotActive = string.Equals(snapshot.Status, "active", StringComparison.OrdinalIgnoreCase);
+                    bool selectedActive = string.Equals(selected.Status, "active", StringComparison.OrdinalIgnoreCase);
+                    if ((snapshotActive && !selectedActive) ||
+                        (snapshotActive == selectedActive && snapshot.CreatedAt > selected.CreatedAt) ||
+                        (snapshotActive == selectedActive && snapshot.CreatedAt == selected.CreatedAt && snapshot.TradeId > selected.TradeId))
+                        selected = snapshot;
+                }
+            }
+            if (selected == null)
+                return new List<OpenBullTradeSnapshot>();
+            LinkedTradeId = selected.TradeId;
+            RemoveOtherTradeDrawings(selected.TradeId, false);
+            return new List<OpenBullTradeSnapshot> { selected };
+        }
+
+        private void RefreshDrawingVisibility()
+        {
+            if (ShowPreviousTradeDrawings)
+            {
+                Task.Run(async () => await RehydrateAdditionalTradeDrawingsAsync());
+                return;
+            }
+            int keepId = LinkedTradeId;
+            if (keepId <= 0 && managedTrade != null)
+                keepId = managedTrade.TradeId;
+            RemoveOtherTradeDrawings(keepId, false);
+            RequestChartRefresh();
+        }
+
+        private async Task RehydrateAdditionalTradeDrawingsAsync()
+        {
+            List<OpenBullTradeSnapshot> snapshots = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradesAsync(Underlying);
+            foreach (OpenBullTradeSnapshot snapshot in snapshots)
+                ApplyLiveOptionPrice(snapshot);
+            if (ChartControl == null)
+                return;
+            ChartControl.Dispatcher.InvokeAsync(() =>
+            {
+                foreach (OpenBullTradeSnapshot snapshot in snapshots)
+                {
+                    if (snapshot == null || snapshot.TradeId <= 0 || IsDeletedLinkedTradeId(snapshot.TradeId))
+                        continue;
+                    managedTrades[snapshot.TradeId] = snapshot;
+                    AddLinkedTradeId(snapshot.TradeId);
+                    AttachBellDrawingTool(snapshot);
+                }
+                RequestChartRefresh();
+            });
+        }
+
+        private async Task RemoveCurrentTradeDrawingAsync()
+        {
+            if (ChartControl == null)
+                return;
+            ChartControl.Dispatcher.InvokeAsync(() =>
+            {
+                int id = LinkedTradeId;
+                if (id <= 0 && managedTrade != null)
+                    id = managedTrade.TradeId;
+                if (id <= 0)
+                {
+                    SetStatus("No linked OpenBull drawing to remove", false);
+                    return;
+                }
+                RemoveTradeDrawing(id, true);
+                if (LinkedTradeId == id)
+                    LinkedTradeId = 0;
+                SetStatus("OpenBull trade drawing removed", true);
+                RequestChartRefresh();
+            });
+            await Task.CompletedTask;
+        }
+
+        private void RemoveOtherTradeDrawings(int keepTradeId, bool remember)
+        {
+            List<int> ids = new List<int>(managedTrades.Keys);
+            foreach (int id in ParseTradeIds(LinkedTradeIds))
+                if (!ids.Contains(id))
+                    ids.Add(id);
+            foreach (int id in ids)
+            {
+                if (id > 0 && id != keepTradeId)
+                    RemoveTradeDrawing(id, remember);
+            }
+        }
+
+        private void RemoveTradeDrawing(int tradeId, bool remember)
+        {
+            if (tradeId <= 0)
+                return;
+            string tag = BellTag(tradeId);
+            try
+            {
+                RemoveDrawObject(tag);
+            }
+            catch
+            {
+            }
+            if (remember)
+                AddDeletedLinkedTradeId(tradeId);
+            linkedBellTools.Remove(tradeId);
+            linkedBellSeenTradeIds.Remove(tradeId);
+            managedTrades.Remove(tradeId);
+            if (managedTrade != null && managedTrade.TradeId == tradeId)
+                managedTrade = null;
+            if (linkedBellTag == tag)
+            {
+                linkedBellTag = "";
+                linkedBellTool = null;
+            }
         }
 
         private bool DrawingToolExists(string tag)
@@ -1776,7 +1989,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             JsonNumber(sb, "lots", Lots, false);
             JsonNumber(sb, "sl_points", SlPoints, false);
             JsonString(sb, "product", Product, false);
-            JsonNumber(sb, "target_template_id", TargetTemplateId, false);
+            JsonNumber(sb, "target_template_id", CurrentTargetTemplateId(), false);
             sb.Append("}");
             return sb.ToString();
         }
@@ -1798,8 +2011,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             JsonNumber(sb, "lots", Lots, false);
             JsonNumber(sb, "strike", strike, false);
             JsonNumber(sb, "sl_points", SlPoints, false);
-            if (TargetTemplateId > 0 && !UseOverrideTargets)
-                JsonNumber(sb, "target_template_id", TargetTemplateId, false);
+            int templateId = CurrentTargetTemplateId();
+            if (templateId > 0 && !UseOverrideTargets)
+                JsonNumber(sb, "target_template_id", templateId, false);
             else
                 JsonNull(sb, "target_template_id", false);
 
@@ -2090,12 +2304,23 @@ namespace NinjaTrader.NinjaScript.Indicators
                 string text = item == null ? "" : item.ToString();
                 if (ParseTemplateId(text, -1) == templateId)
                 {
+                    TargetTemplate = text;
                     SelectCombo(templateCombo, text);
                     return;
                 }
             }
+            TargetTemplate = fallback;
             SeedCombo(templateCombo, fallback);
             SelectCombo(templateCombo, fallback);
+        }
+
+        private int CurrentTargetTemplateId()
+        {
+            int id = ParseTemplateId(TargetTemplate, TargetTemplateId);
+            TargetTemplateId = Math.Max(0, id);
+            if (string.IsNullOrWhiteSpace(TargetTemplate))
+                TargetTemplate = TemplateFallbackLabel(TargetTemplateId);
+            return TargetTemplateId;
         }
 
         private static string Unescape(string value)
@@ -2385,7 +2610,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        public class TargetTemplateListConverter : Int32Converter
+        public class TargetTemplateListConverter : StringConverter
         {
             public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
             public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
@@ -2393,47 +2618,19 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 OpenBullQuickOrderIndicator instance = context == null ? null : context.Instance as OpenBullQuickOrderIndicator;
                 TryRefreshTemplateCache(instance);
-                List<int> values = new List<int>();
+                List<string> values = new List<string>();
                 lock (templateCacheLock)
                 {
                     foreach (int id in cachedTemplateIds)
-                        if (!values.Contains(id))
-                            values.Add(id);
+                    {
+                        string label = TemplateFallbackLabel(id);
+                        if (!values.Contains(label))
+                            values.Add(label);
+                    }
                 }
-                if (instance != null && !values.Contains(instance.TargetTemplateId))
-                    values.Add(instance.TargetTemplateId);
+                if (instance != null && !string.IsNullOrWhiteSpace(instance.TargetTemplate) && !values.Contains(instance.TargetTemplate))
+                    values.Add(instance.TargetTemplate);
                 return new TypeConverter.StandardValuesCollection(values);
-            }
-
-            public override bool CanConvertTo(ITypeDescriptorContext context, Type destinationType)
-            {
-                return destinationType == typeof(string) || base.CanConvertTo(context, destinationType);
-            }
-
-            public override object ConvertTo(ITypeDescriptorContext context, CultureInfo culture, object value, Type destinationType)
-            {
-                if (destinationType == typeof(string))
-                {
-                    int id;
-                    if (value is int)
-                        id = (int)value;
-                    else
-                        id = ParseTemplateId(value == null ? "" : value.ToString(), 0);
-                    return TemplateFallbackLabel(id);
-                }
-                return base.ConvertTo(context, culture, value, destinationType);
-            }
-
-            public override bool CanConvertFrom(ITypeDescriptorContext context, Type sourceType)
-            {
-                return sourceType == typeof(string) || base.CanConvertFrom(context, sourceType);
-            }
-
-            public override object ConvertFrom(ITypeDescriptorContext context, CultureInfo culture, object value)
-            {
-                if (value is string)
-                    return ParseTemplateId((string)value, 0);
-                return base.ConvertFrom(context, culture, value);
             }
         }
 
@@ -2486,10 +2683,22 @@ namespace NinjaTrader.NinjaScript.Indicators
         public double SlPoints { get; set; }
 
         [NinjaScriptProperty]
-        [Range(0, int.MaxValue)]
+        [Browsable(false)]
+        public int TargetTemplateId { get; set; }
+
+        [NinjaScriptProperty]
         [TypeConverter(typeof(TargetTemplateListConverter))]
         [Display(Name = "Target Template", GroupName = "Risk", Order = 31)]
-        public int TargetTemplateId { get; set; }
+        public string TargetTemplate { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Show Previous Trade Drawings", GroupName = "Chart Levels", Order = 1)]
+        public bool ShowPreviousTradeDrawings { get; set; }
+
+        [NinjaScriptProperty]
+        [Range(500, 10000)]
+        [Display(Name = "Live Poll Ms", GroupName = "OpenBull", Order = 3)]
+        public int LivePollMs { get; set; }
 
         [NinjaScriptProperty]
         [Browsable(false)]
