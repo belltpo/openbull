@@ -16,6 +16,11 @@ export default function BrokerSelect() {
   });
 
   const handleBrokerClick = async (brokerName: string) => {
+    if (brokerName === "dhan") {
+      navigate("/broker/dhan/token");
+      return;
+    }
+
     setRedirecting(brokerName);
     try {
       const response = await getBrokerRedirectUrl(brokerName);
@@ -85,12 +90,14 @@ export default function BrokerSelect() {
                   >
                     {redirecting === broker.name
                       ? "Redirecting..."
-                      : "Login with " + broker.display_name}
+                      : broker.name === "dhan"
+                        ? "Connect with Dhan Token"
+                        : "Login with " + broker.display_name}
                   </Button>
                 ) : (
-                  <Link to="/broker/config">
+                  <Link to={broker.name === "dhan" ? "/broker/dhan/token" : "/broker/config"}>
                     <Button variant="outline" className="w-full">
-                      Configure
+                      {broker.name === "dhan" ? "Connect Dhan" : "Configure"}
                     </Button>
                   </Link>
                 )}

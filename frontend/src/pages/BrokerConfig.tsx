@@ -53,17 +53,17 @@ const HELP_BY_BROKER: Record<string, BrokerHelp> = {
   },
   dhan: {
     apiKeyLabel: "App ID (API Key)",
-    apiKeyHint: "From your Dhan Partner dashboard.",
+    apiKeyHint: "Only needed for a Dhan Partner app. For normal DhanHQ Trading API access, use the Dhan token page.",
     apiSecretLabel: "App Secret",
-    apiSecretHint: "From your Dhan Partner dashboard.",
-    redirectHint: "e.g. http://127.0.0.1:8000/dhan/callback (must match the URL whitelisted in Dhan Partner).",
+    apiSecretHint: "Only needed for a Dhan Partner app. Leave this unused when connecting with a DhanHQ access token.",
+    redirectHint: "Not required for DhanHQ token login. Dhan requires an access token and a whitelisted public IP.",
     showApiSecret: true,
     showRedirect: true,
     showClientId: true,
     clientIdLabel: "Dhan Client ID",
-    clientIdHint: "Your 9-digit Dhan login (e.g. 1100123456). Used to start the consent flow.",
+    clientIdHint: "Your Dhan client ID. It is required with the access token for order APIs.",
     banner:
-      "Dhan login uses a 3-step consent flow. After saving and clicking Login, you'll be sent to auth.dhan.co, asked to authorise this app, then redirected back here.",
+      "Dhan is connected from the broker selection page using a DhanHQ access token. There is no redirect URL for this flow; whitelist your public IP in Dhan before placing orders.",
   },
   angel: {
     apiKeyLabel: "SmartAPI Key",
