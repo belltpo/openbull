@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from backend.config import get_settings
-from backend.dependencies import get_db, get_current_user
+from backend.dependencies import get_db, get_current_user, invalidate_user_cache
 from backend.models.user import User
 from backend.models.auth import BrokerAuth
 from backend.models.broker_config import BrokerConfig
@@ -404,6 +404,7 @@ async def _finalize_broker_auth(
         broker=broker_name,
     ))
     await db.commit()
+    await invalidate_user_cache(user_id)
 
     _start_master_contract_download(broker_name, access_token)
 

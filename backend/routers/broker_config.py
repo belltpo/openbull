@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from backend.dependencies import get_db, get_current_user
+from backend.dependencies import invalidate_user_cache
 from backend.models.user import User
 from backend.models.broker_config import BrokerConfig
 from backend.schemas.broker import BrokerConfigCreate, BrokerConfigResponse, BrokerListItem
@@ -142,5 +143,6 @@ async def save_broker_credentials(
         ))
 
     await db.commit()
+    await invalidate_user_cache(user.id)
     logger.info("Broker credentials saved for %s by user %s", data.broker_name, user.username)
     return {"status": "success", "message": f"Broker credentials for {data.broker_name} saved."}
