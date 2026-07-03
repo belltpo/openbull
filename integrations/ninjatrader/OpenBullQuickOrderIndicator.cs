@@ -711,17 +711,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 OpenBullUrl = value;
                 NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
-                Task.Run(async () => await FetchOptionsAsync());
             }, out urlBox));
             stack.Children.Add(PasswordField("API Key", value =>
             {
                 ApiKey = value;
                 NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
-                Task.Run(async () =>
-                {
-                    await FetchOptionsAsync();
-                    await FetchLiveAsync();
-                });
             }));
             instrumentCombo = ComboRow(stack, "Instrument", value =>
             {
@@ -747,16 +741,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             stack.Children.Add(Field("Lots", Lots.ToString(CultureInfo.InvariantCulture), value =>
             {
                 Lots = Math.Max(1, ParseInt(value, Lots));
-                Task.Run(async () => await SaveSettingsAsync());
             }, out lotsBox));
             stack.Children.Add(Field("SL pts", SlPoints.ToString(CultureInfo.InvariantCulture), value =>
             {
                 SlPoints = ParseDouble(value, SlPoints);
-                Task.Run(async () => await SaveSettingsAsync());
             }, out slBox));
             templateCombo = ComboRow(stack, "Template", value =>
             {
-                TargetTemplateId = Math.Max(0, ParseInt(value, TargetTemplateId));
+                TargetTemplateId = Math.Max(0, ParseTemplateId(value, TargetTemplateId));
                 Task.Run(async () => await SaveSettingsAsync());
             });
             productCombo = ComboRow(stack, "Product", value =>
@@ -769,7 +761,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             SeedCombo(expiryCombo, Expiry);
             SeedCombo(ceCombo, CeStrike.ToString("0", CultureInfo.InvariantCulture));
             SeedCombo(peCombo, PeStrike.ToString("0", CultureInfo.InvariantCulture));
-            SeedCombo(templateCombo, TargetTemplateId.ToString(CultureInfo.InvariantCulture));
+            SeedCombo(templateCombo, TemplateFallbackLabel(TargetTemplateId));
             FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
 
             Grid actions = new Grid { Margin = new Thickness(0, 6, 0, 0) };
@@ -1014,9 +1006,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 button.Background = new SolidColorBrush(Color.FromRgb(58, 58, 58));
                 e.Handled = false;
             };
-            button.PreviewMouseLeftButtonUp += async (s, e) =>
+            button.PreviewMouseLeftButtonUp += (s, e) =>
             {
-                e.Handled = true;
+                button.ReleaseMouseCapture();
+                Mouse.Capture(null);
+                e.Handled = false;
+            };
+            button.Click += async (s, e) =>
+            {
                 SetStatus(label + " running...", true);
                 try
                 {
@@ -1040,11 +1037,17 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (target == null || target.IsKeyboardFocusWithin)
                     return;
                 e.Handled = true;
-                target.Focus();
-                Keyboard.Focus(target);
-                TextBox textBox = target as TextBox;
-                if (textBox != null)
-                    textBox.CaretIndex = textBox.Text == null ? 0 : textBox.Text.Length;
+                target.Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    Window window = Window.GetWindow(target);
+                    if (window != null)
+                        FocusManager.SetFocusedElement(window, target);
+                    target.Focus();
+                    Keyboard.Focus(target);
+                    TextBox textBox = target as TextBox;
+                    if (textBox != null)
+                        textBox.CaretIndex = textBox.Text == null ? 0 : textBox.Text.Length;
+                }), DispatcherPriority.Input);
             };
         }
 
@@ -1216,7 +1219,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                             List<string> strikes = ParseNumberArray(body, "strikes");
                             FillCombo(ceCombo, strikes, CeStrike.ToString("0", CultureInfo.InvariantCulture));
                             FillCombo(peCombo, strikes, PeStrike.ToString("0", CultureInfo.InvariantCulture));
-                            FillCombo(templateCombo, ParseTemplates(body), TargetTemplateId.ToString(CultureInfo.InvariantCulture));
+                            FillCombo(templateCombo, ParseTemplates(body), TemplateFallbackLabel(TargetTemplateId));
                             FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
                             string mappedExchange = ExtractJsonValue(body, "underlying_exchange");
                             if (!string.IsNullOrWhiteSpace(mappedExchange))
@@ -1274,7 +1277,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                                 if (!string.IsNullOrEmpty(template) && template != "null")
                                 {
                                     TargetTemplateId = Math.Max(0, ParseInt(template, TargetTemplateId));
-                                    SelectCombo(templateCombo, TargetTemplateId.ToString(CultureInfo.InvariantCulture));
+                                    SelectTemplateCombo(TargetTemplateId);
                                 }
                             }
                         }
@@ -1776,13 +1779,56 @@ namespace NinjaTrader.NinjaScript.Indicators
         private static List<string> ParseTemplates(string body)
         {
             List<string> result = new List<string>();
-            result.Add("0");
+            result.Add(TemplateFallbackLabel(0));
             Match array = Regex.Match(body, "\"templates\"\\s*:\\s*\\[(?<body>.*?)\\]", RegexOptions.Singleline | RegexOptions.IgnoreCase);
             if (!array.Success)
                 return result;
-            foreach (Match m in Regex.Matches(array.Groups["body"].Value, "\"id\"\\s*:\\s*(?<id>\\d+)", RegexOptions.IgnoreCase))
-                result.Add(m.Groups["id"].Value);
+            foreach (Match m in Regex.Matches(array.Groups["body"].Value, "\\{(?<obj>.*?)\\}", RegexOptions.Singleline))
+            {
+                string obj = m.Groups["obj"].Value;
+                string id = ExtractJsonValue(obj, "id");
+                if (string.IsNullOrWhiteSpace(id) || id == "null")
+                    continue;
+                string name = ExtractJsonValue(obj, "name");
+                if (string.IsNullOrWhiteSpace(name) || name == "null")
+                    name = "Template";
+                string defaultMark = Regex.IsMatch(obj, "\"is_default\"\\s*:\\s*true", RegexOptions.IgnoreCase) ? " (default)" : "";
+                result.Add(id + " - " + name + defaultMark);
+            }
             return result;
+        }
+
+        private static string TemplateFallbackLabel(int id)
+        {
+            return id <= 0 ? "0 - Saved/default" : id.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static int ParseTemplateId(string value, int fallback)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return fallback;
+            Match m = Regex.Match(value.Trim(), "^(?<id>\\d+)");
+            if (m.Success)
+                return ParseInt(m.Groups["id"].Value, fallback);
+            return ParseInt(value, fallback);
+        }
+
+        private void SelectTemplateCombo(int templateId)
+        {
+            if (templateCombo == null)
+                return;
+            string fallback = TemplateFallbackLabel(templateId);
+            foreach (object item in templateCombo.Items)
+            {
+                string text = item == null ? "" : item.ToString();
+                if (ParseTemplateId(text, -1) == templateId)
+                {
+                    SelectCombo(templateCombo, text);
+                    return;
+                }
+            }
+            SeedCombo(templateCombo, fallback);
+            SelectCombo(templateCombo, fallback);
         }
 
         private static string Unescape(string value)
@@ -2022,6 +2068,36 @@ namespace NinjaTrader.NinjaScript.Indicators
             return int.TryParse(value, NumberStyles.Any, CultureInfo.InvariantCulture, out parsed) ? parsed : fallback;
         }
 
+        public class UnderlyingListConverter : StringConverter
+        {
+            public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
+            public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
+            public override TypeConverter.StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
+            {
+                return new TypeConverter.StandardValuesCollection(new string[] { "NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "SILVER", "GOLD" });
+            }
+        }
+
+        public class UnderlyingExchangeListConverter : StringConverter
+        {
+            public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
+            public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
+            public override TypeConverter.StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
+            {
+                return new TypeConverter.StandardValuesCollection(new string[] { "NSE_INDEX", "BSE_INDEX", "MCX" });
+            }
+        }
+
+        public class ProductListConverter : StringConverter
+        {
+            public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
+            public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
+            public override TypeConverter.StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
+            {
+                return new TypeConverter.StandardValuesCollection(new string[] { "NRML", "MIS", "CNC" });
+            }
+        }
+
         [NinjaScriptProperty]
         [Display(Name = "OpenBull URL", GroupName = "OpenBull", Order = 1)]
         public string OpenBullUrl { get; set; }
@@ -2031,10 +2107,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         public string ApiKey { get; set; }
 
         [NinjaScriptProperty]
+        [TypeConverter(typeof(UnderlyingListConverter))]
         [Display(Name = "Underlying", GroupName = "Contract", Order = 10)]
         public string Underlying { get; set; }
 
         [NinjaScriptProperty]
+        [TypeConverter(typeof(UnderlyingExchangeListConverter))]
         [Display(Name = "Underlying Exchange", GroupName = "Contract", Order = 11)]
         public string UnderlyingExchange { get; set; }
 
@@ -2056,6 +2134,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         public int Lots { get; set; }
 
         [NinjaScriptProperty]
+        [TypeConverter(typeof(ProductListConverter))]
         [Display(Name = "Product", GroupName = "Order", Order = 21)]
         public string Product { get; set; }
 
