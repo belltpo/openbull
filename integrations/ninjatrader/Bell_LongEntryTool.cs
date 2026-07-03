@@ -868,9 +868,11 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                     RadiusY = 6f
                 };
                 Brush finalTextBrush = textBrush;
-                if (text.IndexOf("MTM -", StringComparison.OrdinalIgnoreCase) >= 0)
+                if (text.IndexOf("P&L -", StringComparison.OrdinalIgnoreCase) >= 0
+                    || text.IndexOf("MTM -", StringComparison.OrdinalIgnoreCase) >= 0)
                     finalTextBrush = Brushes.Red;
-                else if (text.IndexOf("MTM +", StringComparison.OrdinalIgnoreCase) >= 0)
+                else if (text.IndexOf("P&L +", StringComparison.OrdinalIgnoreCase) >= 0
+                    || text.IndexOf("MTM +", StringComparison.OrdinalIgnoreCase) >= 0)
                     finalTextBrush = Brushes.LimeGreen;
 
                 using (var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color4(0, 0, 0, 0.7f)))
@@ -898,7 +900,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             if (OpenBullTradeId > 0)
             {
                 string sign = OpenBullMtm >= 0 ? "+" : "";
-                label += $" | MTM {sign}{OpenBullMtm.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}";
+                label += $" | P&L {sign}{OpenBullMtm.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}";
             }
             return label;
         }
