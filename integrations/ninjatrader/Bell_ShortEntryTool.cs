@@ -230,6 +230,24 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         [Display(Name = "OpenBull Sync Status", Description = "Last OpenBull level-sync result", GroupName = "OpenBull", Order = 3)]
         public string OpenBullSyncStatus { get; set; }
 
+        [Browsable(false)]
+        public string T1Status { get; set; }
+
+        [Browsable(false)]
+        public string T2Status { get; set; }
+
+        [Browsable(false)]
+        public string T3Status { get; set; }
+
+        [Browsable(false)]
+        public string T4Status { get; set; }
+
+        [Browsable(false)]
+        public string T5Status { get; set; }
+
+        [Browsable(false)]
+        public string T6Status { get; set; }
+
         public override IEnumerable<ChartAnchor> Anchors
         {
             get
@@ -286,6 +304,12 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 OpenBullTradeId = 0;
                 OpenBullMtm = 0;
                 OpenBullSyncStatus = "";
+                T1Status = "pending";
+                T2Status = "pending";
+                T3Status = "pending";
+                T4Status = "pending";
+                T5Status = "pending";
+                T6Status = "pending";
 
                 LineThickness = 3;
                 FontSize = 15;
@@ -431,6 +455,11 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                         OpenBullSyncStatus = "Entry is fixed after order placement";
                         return;
                     }
+                    if (OpenBullTradeId > 0 && IsCompletedTargetAnchor(closest))
+                    {
+                        OpenBullSyncStatus = "Completed target is locked";
+                        return;
+                    }
                     closest.IsEditing = true;
                     DrawingState = DrawingState.Editing;
                 }
@@ -482,7 +511,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 }
                 else if (SLAnchor.IsEditing)
                 {
-                    if (MoveLinesTogether)
+                    if (MoveLinesTogether && OpenBullTradeId <= 0)
                     {
                         // Move all lines together
                         double priceDelta = dataPoint.Price - SLAnchor.Price;
@@ -512,7 +541,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 }
                 else if (T1Anchor.IsEditing)
                 {
-                    if (MoveLinesTogether)
+                    if (MoveLinesTogether && OpenBullTradeId <= 0)
                     {
                         // Move all lines together
                         double priceDelta = dataPoint.Price - T1Anchor.Price;
@@ -542,7 +571,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 }
                 else if (T2Anchor.IsEditing)
                 {
-                    if (MoveLinesTogether)
+                    if (MoveLinesTogether && OpenBullTradeId <= 0)
                     {
                         // Move all lines together
                         double priceDelta = dataPoint.Price - T2Anchor.Price;
@@ -572,7 +601,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 }
                 else if (T3Anchor.IsEditing)
                 {
-                    if (MoveLinesTogether)
+                    if (MoveLinesTogether && OpenBullTradeId <= 0)
                     {
                         // Move all lines together
                         double priceDelta = dataPoint.Price - T3Anchor.Price;
@@ -602,7 +631,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 }
                 else if (T4Anchor.IsEditing)
                 {
-                    if (MoveLinesTogether)
+                    if (MoveLinesTogether && OpenBullTradeId <= 0)
                     {
                         // Move all lines together
                         double priceDelta = dataPoint.Price - T4Anchor.Price;
@@ -632,7 +661,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 }
                 else if (T5Anchor.IsEditing)
                 {
-                    if (MoveLinesTogether)
+                    if (MoveLinesTogether && OpenBullTradeId <= 0)
                     {
                         // Move all lines together
                         double priceDelta = dataPoint.Price - T5Anchor.Price;
@@ -662,7 +691,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 }
                 else if (T6Anchor.IsEditing)
                 {
-                    if (MoveLinesTogether)
+                    if (MoveLinesTogether && OpenBullTradeId <= 0)
                     {
                         // Move all lines together
                         double priceDelta = dataPoint.Price - T6Anchor.Price;
@@ -743,22 +772,22 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 
             // Draw Target Lines (each with its own end anchor)
             if (ShowT1)
-                DrawLineWithDot(chartControl, chartBars, chartScale, T1Anchor, T1EndAnchor, TargetBrush, dashStyle, $"ME1 @ {FormatPrice(T1Anchor.Price)}");
+                DrawLineWithDot(chartControl, chartBars, chartScale, T1Anchor, T1EndAnchor, TargetBrush, dashStyle, TargetLabel(1, T1Anchor.Price, T1Status));
 
             if (ShowT2)
-                DrawLineWithDot(chartControl, chartBars, chartScale, T2Anchor, T2EndAnchor, TargetBrush, dashStyle, $"ME2 @ {FormatPrice(T2Anchor.Price)}");
+                DrawLineWithDot(chartControl, chartBars, chartScale, T2Anchor, T2EndAnchor, TargetBrush, dashStyle, TargetLabel(2, T2Anchor.Price, T2Status));
 
             if (ShowT3)
-                DrawLineWithDot(chartControl, chartBars, chartScale, T3Anchor, T3EndAnchor, TargetBrush, dashStyle, $"ME3 @ {FormatPrice(T3Anchor.Price)}");
+                DrawLineWithDot(chartControl, chartBars, chartScale, T3Anchor, T3EndAnchor, TargetBrush, dashStyle, TargetLabel(3, T3Anchor.Price, T3Status));
 
             if (ShowT4)
-                DrawLineWithDot(chartControl, chartBars, chartScale, T4Anchor, T4EndAnchor, TargetBrush, dashStyle, $"ME4 @ {FormatPrice(T4Anchor.Price)}");
+                DrawLineWithDot(chartControl, chartBars, chartScale, T4Anchor, T4EndAnchor, TargetBrush, dashStyle, TargetLabel(4, T4Anchor.Price, T4Status));
 
             if (ShowT5)
-                DrawLineWithDot(chartControl, chartBars, chartScale, T5Anchor, T5EndAnchor, TargetBrush, dashStyle, $"ME5 @ {FormatPrice(T5Anchor.Price)}");
+                DrawLineWithDot(chartControl, chartBars, chartScale, T5Anchor, T5EndAnchor, TargetBrush, dashStyle, TargetLabel(5, T5Anchor.Price, T5Status));
 
             if (ShowT6)
-                DrawLineWithDot(chartControl, chartBars, chartScale, T6Anchor, T6EndAnchor, TargetBrush, dashStyle, $"ME6 @ {FormatPrice(T6Anchor.Price)}");
+                DrawLineWithDot(chartControl, chartBars, chartScale, T6Anchor, T6EndAnchor, TargetBrush, dashStyle, TargetLabel(6, T6Anchor.Price, T6Status));
         }
 
         private void DrawLineWithDot(ChartControl chartControl, ChartBars chartBars, ChartScale chartScale,
@@ -862,17 +891,43 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             return label;
         }
 
+        private string TargetLabel(int seq, double price, string status)
+        {
+            string label = $"ME{seq} @ {FormatPrice(price)}";
+            if (!string.IsNullOrWhiteSpace(status) && !string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase))
+                label += $" {status}";
+            return label;
+        }
+
+        private bool IsPendingStatus(string status)
+        {
+            return string.IsNullOrWhiteSpace(status) || string.Equals(status, "pending", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsCompletedTargetAnchor(ChartAnchor anchor)
+        {
+            if (anchor == null)
+                return false;
+            if ((anchor == T1Anchor || anchor == T1EndAnchor) && !IsPendingStatus(T1Status)) return true;
+            if ((anchor == T2Anchor || anchor == T2EndAnchor) && !IsPendingStatus(T2Status)) return true;
+            if ((anchor == T3Anchor || anchor == T3EndAnchor) && !IsPendingStatus(T3Status)) return true;
+            if ((anchor == T4Anchor || anchor == T4EndAnchor) && !IsPendingStatus(T4Status)) return true;
+            if ((anchor == T5Anchor || anchor == T5EndAnchor) && !IsPendingStatus(T5Status)) return true;
+            if ((anchor == T6Anchor || anchor == T6EndAnchor) && !IsPendingStatus(T6Status)) return true;
+            return false;
+        }
+
         private void SyncLevelsToOpenBull()
         {
             if (OpenBullTradeId <= 0 || SLAnchor == null)
                 return;
             var targets = new List<NinjaTrader.NinjaScript.OpenBullLevelTarget>();
-            if (ShowT1 && T1Anchor != null) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 1, Price = T1Anchor.Price });
-            if (ShowT2 && T2Anchor != null) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 2, Price = T2Anchor.Price });
-            if (ShowT3 && T3Anchor != null) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 3, Price = T3Anchor.Price });
-            if (ShowT4 && T4Anchor != null) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 4, Price = T4Anchor.Price });
-            if (ShowT5 && T5Anchor != null) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 5, Price = T5Anchor.Price });
-            if (ShowT6 && T6Anchor != null) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 6, Price = T6Anchor.Price });
+            if (ShowT1 && T1Anchor != null && IsPendingStatus(T1Status)) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 1, Price = T1Anchor.Price });
+            if (ShowT2 && T2Anchor != null && IsPendingStatus(T2Status)) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 2, Price = T2Anchor.Price });
+            if (ShowT3 && T3Anchor != null && IsPendingStatus(T3Status)) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 3, Price = T3Anchor.Price });
+            if (ShowT4 && T4Anchor != null && IsPendingStatus(T4Status)) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 4, Price = T4Anchor.Price });
+            if (ShowT5 && T5Anchor != null && IsPendingStatus(T5Status)) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 5, Price = T5Anchor.Price });
+            if (ShowT6 && T6Anchor != null && IsPendingStatus(T6Status)) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 6, Price = T6Anchor.Price });
             System.Threading.Tasks.Task.Run(async () =>
             {
                 try
@@ -884,6 +939,90 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                     OpenBullSyncStatus = ex.Message;
                 }
             });
+        }
+
+        public void LoadOpenBullTrade(DateTime entryTime, DateTime endTime, double entryPrice, double slPrice,
+            IList<NinjaTrader.NinjaScript.OpenBullTradeLevel> targets, int tradeId, double mtm)
+        {
+            if (entryTime == DateTime.MinValue)
+                entryTime = DateTime.Now;
+            if (endTime == DateTime.MinValue || endTime <= entryTime)
+                endTime = entryTime.AddMinutes(10);
+
+            OpenBullTradeId = tradeId;
+            OpenBullMtm = mtm;
+            OpenBullSyncStatus = "Linked to OpenBull";
+            MoveLinesTogether = false;
+            DrawingState = DrawingState.Normal;
+
+            SetAnchor(EntryAnchor, entryTime, entryPrice, false);
+            SetAnchor(EndAnchor, endTime, entryPrice, false);
+            SetAnchor(SLAnchor, entryTime, slPrice, false);
+            SetAnchor(SLEndAnchor, endTime, slPrice, false);
+            slDistancePoints = Math.Max(1, (int)Math.Round(Math.Abs(entryPrice - slPrice)));
+
+            HideAllTargets();
+            if (targets != null)
+            {
+                foreach (NinjaTrader.NinjaScript.OpenBullTradeLevel target in targets)
+                {
+                    if (target == null || target.Seq < 1 || target.Seq > 6 || target.Price <= 0)
+                        continue;
+                    ApplyTarget(target.Seq, entryTime, endTime, entryPrice, target.Price, target.Status);
+                }
+            }
+        }
+
+        private void SetAnchor(ChartAnchor anchor, DateTime time, double price, bool editing)
+        {
+            if (anchor == null)
+                return;
+            anchor.Time = time;
+            anchor.Price = price;
+            anchor.IsEditing = editing;
+            anchor.DrawingTool = this;
+        }
+
+        private void HideAllTargets()
+        {
+            ShowT1 = ShowT2 = ShowT3 = ShowT4 = ShowT5 = ShowT6 = false;
+            T1Status = T2Status = T3Status = T4Status = T5Status = T6Status = "pending";
+        }
+
+        private void ApplyTarget(int seq, DateTime entryTime, DateTime endTime, double entryPrice, double targetPrice, string status)
+        {
+            int distance = Math.Max(1, (int)Math.Round(Math.Abs(targetPrice - entryPrice)));
+            string cleanStatus = string.IsNullOrWhiteSpace(status) || status == "null" ? "pending" : status;
+            if (seq == 1)
+            {
+                ShowT1 = true; t1DistancePoints = distance; T1Status = cleanStatus;
+                SetAnchor(T1Anchor, entryTime, targetPrice, false); SetAnchor(T1EndAnchor, endTime, targetPrice, false);
+            }
+            else if (seq == 2)
+            {
+                ShowT2 = true; t2DistancePoints = distance; T2Status = cleanStatus;
+                SetAnchor(T2Anchor, entryTime, targetPrice, false); SetAnchor(T2EndAnchor, endTime, targetPrice, false);
+            }
+            else if (seq == 3)
+            {
+                ShowT3 = true; t3DistancePoints = distance; T3Status = cleanStatus;
+                SetAnchor(T3Anchor, entryTime, targetPrice, false); SetAnchor(T3EndAnchor, endTime, targetPrice, false);
+            }
+            else if (seq == 4)
+            {
+                ShowT4 = true; t4DistancePoints = distance; T4Status = cleanStatus;
+                SetAnchor(T4Anchor, entryTime, targetPrice, false); SetAnchor(T4EndAnchor, endTime, targetPrice, false);
+            }
+            else if (seq == 5)
+            {
+                ShowT5 = true; t5DistancePoints = distance; T5Status = cleanStatus;
+                SetAnchor(T5Anchor, entryTime, targetPrice, false); SetAnchor(T5EndAnchor, endTime, targetPrice, false);
+            }
+            else if (seq == 6)
+            {
+                ShowT6 = true; t6DistancePoints = distance; T6Status = cleanStatus;
+                SetAnchor(T6Anchor, entryTime, targetPrice, false); SetAnchor(T6EndAnchor, endTime, targetPrice, false);
+            }
         }
 
         private void RecalculateLevels()
@@ -934,6 +1073,26 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 T6Anchor.Price = entryPrice - T6DistancePoints;
                 if (T6EndAnchor != null) T6EndAnchor.Price = entryPrice - T6DistancePoints;
             }
+        }
+    }
+
+    public static partial class Draw
+    {
+        public static Bell_ShortEntryTool BellShortEntry(NinjaScriptBase owner, string tag, bool isAutoScale,
+            DateTime entryTime, DateTime endTime, double entryPrice, double slPrice,
+            IList<NinjaTrader.NinjaScript.OpenBullTradeLevel> targets, int tradeId, double mtm)
+        {
+            if (owner == null)
+                throw new ArgumentException("owner");
+            if (string.IsNullOrWhiteSpace(tag))
+                throw new ArgumentException(@"tag cant be null or empty", nameof(tag));
+            Bell_ShortEntryTool tool = DrawingTool.GetByTagOrNew(owner, typeof(Bell_ShortEntryTool), tag, null) as Bell_ShortEntryTool;
+            if (tool == null)
+                return null;
+            DrawingTool.SetDrawingToolCommonValues(tool, tag, isAutoScale, owner, false);
+            tool.LoadOpenBullTrade(entryTime, endTime, entryPrice, slPrice, targets, tradeId, mtm);
+            tool.SetState(State.Active);
+            return tool;
         }
     }
 }

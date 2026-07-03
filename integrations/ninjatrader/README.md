@@ -85,10 +85,11 @@ to the OpenBull target template id you want this chart to use.
 - Futures, CE, and PE LTP values are polled from OpenBull every five seconds via
   `/api/v1/futures-risk/quick-order/preview`.
 - After a successful quick order, the indicator fetches the created Futures-Risk
-  trade and draws the linked entry, stop-loss, and target levels on the chart.
+  trade and creates/updates a tagged `Bell_LongEntryTool` or
+  `Bell_ShortEntryTool` on the chart.
 - The entry line is fixed after order placement. Stop-loss and pending target
-  lines can be dragged vertically; on mouse release the indicator syncs the
-  updated futures prices to OpenBull through
+  lines can be dragged vertically; on mouse release the Bell drawing tool syncs
+  the updated futures prices to OpenBull through
   `PUT /api/v1/futures-risk/trades/{trade_id}/levels`.
 - The entry label shows `L React` / `S React` with the current linked-trade MTM.
   MTM and target status refresh through OpenBull polling. OpenBull remains the
@@ -102,24 +103,25 @@ to the OpenBull target template id you want this chart to use.
 - `Buy PE` sends `option_type=PE`, `side=BUY`
 - `Sell PE` sends `option_type=PE`, `side=SELL`
 
-The first version is intentionally independent from `Bell_LongEntryTool.cs` and
-`Bell_ShortEntryTool.cs`. Those drawing tools can be integrated later as a level
-provider after the API path is proven stable.
+Bullish Futures-Risk direction creates `Bell_LongEntryTool`; bearish direction
+creates `Bell_ShortEntryTool`.
 
 ## Advanced Level Management
 
-The current indicator now includes its own chart-level manager:
+The indicator now uses the Bell drawing tools as its chart-level manager:
 
 1. Click a quick-order button.
 2. OpenBull places/records the Futures-Risk trade.
-3. NT loads that trade id and renders entry, SL, and target lines.
-4. Drag SL or a pending target line.
+3. NT loads that trade id and creates a tagged Bell long/short drawing tool.
+4. Drag SL or a pending target line on the Bell tool.
 5. Release the mouse; OpenBull immediately receives the new level plan.
+6. OpenBull refresh updates the same tagged Bell tool with MTM and target
+   status, so completed targets become visible but locked.
 
 Use a chart with a price scale matching the selected underlying futures contract
 for accurate level placement. If the chart instrument has a completely different
 price scale, the OpenBull futures levels may render outside the visible panel.
 
-The copied Bell drawing tools also support manual linking through
-`OpenBull Trade ID`, but the quick-order indicator does not need them for the
-new auto-linked level overlay.
+The copied Bell drawing tools still support manual linking through
+`OpenBull Trade ID`; quick orders now auto-create and auto-link those same
+tools using tag `OpenBull_FR_<trade_id>`.

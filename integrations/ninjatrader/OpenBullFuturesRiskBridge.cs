@@ -41,6 +41,7 @@ namespace NinjaTrader.NinjaScript
         public double RealizedPnl { get; set; }
         public int RemainingQty { get; set; }
         public double LiveOptionPrice { get; set; }
+        public DateTime CreatedAt { get; set; }
         public List<OpenBullTradeLevel> Targets { get; set; }
 
         public OpenBullTradeSnapshot()
@@ -130,6 +131,7 @@ namespace NinjaTrader.NinjaScript
             trade.StopLossPrice = ExtractNumber(data, "sl_price");
             trade.RealizedPnl = ExtractNumber(data, "realized_pnl");
             trade.RemainingQty = (int)ExtractNumber(data, "remaining_qty");
+            trade.CreatedAt = ExtractDateTime(data, "created_at");
             trade.Targets = ExtractTargets(data);
             if (trade.TradeId <= 0)
                 return null;
@@ -206,6 +208,15 @@ namespace NinjaTrader.NinjaScript
             double parsed;
             string raw = ExtractJsonValue(body, key);
             return double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
+        }
+
+        private static DateTime ExtractDateTime(string body, string key)
+        {
+            DateTime parsed;
+            string raw = ExtractJsonValue(body, key);
+            if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out parsed))
+                return parsed;
+            return DateTime.MinValue;
         }
 
         private static string ExtractJsonValue(string body, string key)

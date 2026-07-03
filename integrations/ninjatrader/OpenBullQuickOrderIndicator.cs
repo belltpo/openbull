@@ -17,6 +17,7 @@ using NinjaTrader.Gui;
 using NinjaTrader.Gui.Chart;
 using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
+using NinjaTrader.NinjaScript.DrawingTools;
 using NinjaTrader.NinjaScript.Indicators;
 #endregion
 
@@ -65,6 +66,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double mtmValue;
         private ChartScale activeChartScale;
         private OpenBullTradeSnapshot managedTrade;
+        private DrawingTool linkedBellTool;
+        private string linkedBellTag;
         private bool levelDragging;
         private string draggedLevelKey;
         private string tradingMode = "--";
@@ -130,6 +133,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             base.OnRender(chartControl, chartScale);
             activeChartScale = chartScale;
+            if (linkedBellTool != null)
+                return;
             if (managedTrade == null || managedTrade.EntryFuturesPrice <= 0 || ChartBars == null || ChartBars.Bars == null)
                 return;
 
@@ -260,7 +265,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void OnChartMouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (managedTrade == null || activeChartScale == null || root == null || root.IsMouseOver)
+            if (linkedBellTool != null || managedTrade == null || activeChartScale == null || root == null || root.IsMouseOver)
                 return;
             Point point = e.GetPosition(ChartControl);
             string hit = HitTestManagedLevel(point);
@@ -1356,7 +1361,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             ChartControl.Dispatcher.InvokeAsync(() =>
             {
                 managedTrade = snapshot;
-                SetStatus("Order sent - chart levels linked", true);
+                bool bellLinked = AttachBellDrawingTool(snapshot);
+                SetStatus(bellLinked ? "Order sent - Bell drawing tool linked" : "Order sent - chart levels linked", true);
                 RequestChartRefresh();
             });
         }
@@ -1372,8 +1378,83 @@ namespace NinjaTrader.NinjaScript.Indicators
             ChartControl.Dispatcher.InvokeAsync(() =>
             {
                 managedTrade = snapshot;
+                if (linkedBellTool != null)
+                    AttachBellDrawingTool(snapshot);
                 RequestChartRefresh();
             });
+        }
+
+        private bool AttachBellDrawingTool(OpenBullTradeSnapshot snapshot)
+        {
+            if (snapshot == null || snapshot.TradeId <= 0 || snapshot.EntryFuturesPrice <= 0 || snapshot.StopLossPrice <= 0)
+                return false;
+            if (ChartBars == null || ChartBars.Bars == null || ChartBars.Bars.Count <= 0)
+                return false;
+
+            DateTime entryTime;
+            DateTime endTime;
+            ResolveBellToolTimes(snapshot, out entryTime, out endTime);
+            linkedBellTag = "OpenBull_FR_" + snapshot.TradeId.ToString(CultureInfo.InvariantCulture);
+            if (snapshot.Direction >= 0)
+            {
+                Bell_LongEntryTool tool = Draw.BellLongEntry(
+                    this,
+                    linkedBellTag,
+                    false,
+                    entryTime,
+                    endTime,
+                    snapshot.EntryFuturesPrice,
+                    snapshot.StopLossPrice,
+                    snapshot.Targets,
+                    snapshot.TradeId,
+                    snapshot.Mtm
+                );
+                linkedBellTool = tool;
+            }
+            else
+            {
+                Bell_ShortEntryTool tool = Draw.BellShortEntry(
+                    this,
+                    linkedBellTag,
+                    false,
+                    entryTime,
+                    endTime,
+                    snapshot.EntryFuturesPrice,
+                    snapshot.StopLossPrice,
+                    snapshot.Targets,
+                    snapshot.TradeId,
+                    snapshot.Mtm
+                );
+                linkedBellTool = tool;
+            }
+            return linkedBellTool != null;
+        }
+
+        private void ResolveBellToolTimes(OpenBullTradeSnapshot snapshot, out DateTime entryTime, out DateTime endTime)
+        {
+            entryTime = DateTime.MinValue;
+            endTime = DateTime.MinValue;
+            if (ChartBars == null || ChartBars.Bars == null || ChartBars.Bars.Count <= 0)
+                return;
+
+            int count = ChartBars.Bars.Count;
+            int startIndex = Math.Max(0, count - 12);
+            int endIndex = Math.Max(0, count - 1);
+            if (snapshot != null && snapshot.CreatedAt != DateTime.MinValue)
+            {
+                int createdIndex = ChartBars.Bars.GetBar(snapshot.CreatedAt);
+                if (createdIndex >= 0)
+                {
+                    startIndex = Math.Max(0, Math.Min(createdIndex, count - 1));
+                    endIndex = Math.Min(count - 1, startIndex + 10);
+                    if (endIndex == startIndex && startIndex > 0)
+                        startIndex = Math.Max(0, startIndex - 10);
+                }
+            }
+            entryTime = ChartBars.Bars.GetTime(startIndex);
+            endTime = ChartBars.Bars.GetTime(endIndex);
+            if (endTime <= entryTime)
+                endTime = entryTime.AddMinutes(10);
         }
 
         private async Task SyncManagedLevelsAsync()
