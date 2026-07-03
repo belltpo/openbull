@@ -144,6 +144,70 @@ function PreviousPhaseRow({ phase, liveOpt }: { phase: FrPhase; liveOpt: number 
   );
 }
 
+function groupPhasesByDate(phases: FrPhase[]) {
+  const map = new Map<string, FrPhase[]>();
+  for (const phase of phases) {
+    const key = isoDateKey(phase.entry_time);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(phase);
+  }
+  return Array.from(map.entries())
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([dateKey, items]) => ({
+      dateKey,
+      phases: [...items].sort((a, b) => a.phase_no - b.phase_no || String(a.entry_time).localeCompare(String(b.entry_time))),
+    }));
+}
+
+function PreviousPhaseDateGroup({
+  dateKey,
+  phases,
+  liveOptFor,
+}: {
+  dateKey: string;
+  phases: FrPhase[];
+  liveOptFor?: (phase: FrPhase) => number | undefined;
+}) {
+  const totalMtm = phases.reduce((sum, p) => sum + phaseMtm(p, liveOptFor?.(p)), 0);
+  const bookedPnl = phases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
+  const targetsHit = phases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
+  const targetsTotal = phases.reduce((sum, p) => sum + p.targets_total, 0);
+  const activeCount = phases.filter((p) => p.status === "active").length;
+  const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
+
+  return (
+    <section className="fr-dark-surface rounded-xl border border-border/70 bg-background/35 p-3">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 className="text-base font-semibold">{displayDateLabel(dateKey)}</h4>
+          <p className="text-xs text-muted-foreground">{phases.length} phase(s) for this instrument</p>
+        </div>
+        <p className={cn("text-base font-bold tabular-nums", totalTone)}>Rs. {fmt(totalMtm)}</p>
+      </div>
+
+      <div className="mb-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+        <Metric label="Date MTM" value={`Rs. ${fmt(totalMtm)}`} valueClassName={totalTone} />
+        <Metric label="Booked P&L" value={`Rs. ${fmt(bookedPnl)}`} />
+        <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} />
+        <Metric label="Active" value={String(activeCount)} />
+      </div>
+
+      <details className="group">
+        <summary className="fr-dark-surface fr-dark-surface-hover flex cursor-pointer list-none items-center justify-between rounded-lg border border-border/70 bg-background/35 px-3 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-background/55 hover:text-foreground">
+          <span>View phases for this date ({phases.length})</span>
+          <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="mt-3 grid justify-center gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),360px))]">
+          {phases.map((p) => (
+            <PreviousPhaseRow key={p.trade_id} phase={p} liveOpt={liveOptFor?.(p)} />
+          ))}
+        </div>
+      </details>
+    </section>
+  );
+}
+
 function PhaseCard({
   phase,
   liveOpt,
@@ -158,6 +222,7 @@ function PhaseCard({
   className?: string;
 }) {
   const [showPreviousDetail, setShowPreviousDetail] = useState(false);
+  const previousByDate = useMemo(() => groupPhasesByDate(previousPhases), [previousPhases]);
   const mtm = phaseMtm(phase, liveOpt);
   const pnlTone = mtm >= 0 ? "text-emerald-500" : "text-red-500";
   const statusTone =
@@ -247,13 +312,18 @@ function PhaseCard({
                     {phase.underlying} phase history
                   </DialogTitle>
                   <DialogDescription>
-                    Earlier phases before current Phase {phase.phase_no}. Review MTM, entry, stop-loss, targets, and duration.
+                    Earlier phases grouped by trading date. Each date shows instrument MTM, booked P&L, targets, and phase details.
                   </DialogDescription>
                 </DialogHeader>
 
-                <div className="grid justify-center gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),380px))]">
-                  {previousPhases.map((p) => (
-                    <PreviousPhaseRow key={p.trade_id} phase={p} liveOpt={liveOptFor?.(p)} />
+                <div className="space-y-3">
+                  {previousByDate.map((group) => (
+                    <PreviousPhaseDateGroup
+                      key={group.dateKey}
+                      dateKey={group.dateKey}
+                      phases={group.phases}
+                      liveOptFor={liveOptFor}
+                    />
                   ))}
                 </div>
               </div>

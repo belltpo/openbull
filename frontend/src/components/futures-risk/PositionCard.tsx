@@ -3,7 +3,7 @@
  * Shows real-time futures-vs-option comparison, live P&L, a target progress
  * track, the stop-loss, a lifecycle timeline, and lifecycle actions.
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -45,6 +45,29 @@ interface Props {
   onDelete: (id: number) => void;
   busy?: boolean;
   enableRemoteDetail?: boolean;
+}
+
+function localDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function isoDateKey(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return localDateKey(new Date(iso));
+}
+
+function displayDateLabel(dateKey: string): string {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  if (!year || !month || !day) return dateKey;
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 function Metric({ label, value, tone, sub }: { label: string; value: React.ReactNode; tone?: "good" | "bad"; sub?: React.ReactNode }) {
@@ -111,6 +134,80 @@ function PreviousPhaseCard({ trade, liveOpt }: { trade: FrTrade; liveOpt: number
         <Metric label="Duration" value={durationFmt(trade.duration_sec)} sub={`${timeFmt(trade.created_at)} -> ${trade.closed_at ? timeFmt(trade.closed_at) : "open"}`} />
       </div>
     </div>
+  );
+}
+
+function groupTradesByDate(trades: FrTrade[]) {
+  const map = new Map<string, FrTrade[]>();
+  for (const trade of trades) {
+    const key = isoDateKey(trade.created_at);
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(trade);
+  }
+  return Array.from(map.entries())
+    .sort(([a], [b]) => b.localeCompare(a))
+    .map(([dateKey, items]) => ({
+      dateKey,
+      trades: [...items].sort((a, b) => a.phase_no - b.phase_no || String(a.created_at).localeCompare(String(b.created_at))),
+    }));
+}
+
+function PreviousTradeDateGroup({
+  dateKey,
+  trades,
+  liveOptFor,
+}: {
+  dateKey: string;
+  trades: FrTrade[];
+  liveOptFor?: (trade: FrTrade) => number | undefined;
+}) {
+  const totalMtm = trades.reduce(
+    (sum, item) => sum + (item.status === "active" ? totalPnl(item, liveOptFor?.(item)) : item.realized_pnl),
+    0,
+  );
+  const bookedPnl = trades.reduce((sum, item) => sum + (item.realized_pnl ?? 0), 0);
+  const targetsHit = trades.reduce((sum, item) => sum + item.targets.filter((target) => target.status === "hit").length, 0);
+  const targetsTotal = trades.reduce((sum, item) => sum + item.targets.length, 0);
+  const activeCount = trades.filter((item) => item.status === "active").length;
+  const totalTone = totalMtm >= 0 ? "good" : "bad";
+
+  return (
+    <section className="fr-dark-surface rounded-xl border border-border/70 bg-background/35 p-3">
+      <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h4 className="text-base font-semibold">{displayDateLabel(dateKey)}</h4>
+          <p className="text-xs text-muted-foreground">{trades.length} phase(s) for this instrument</p>
+        </div>
+        <p
+          className={cn(
+            "text-base font-bold tabular-nums",
+            totalMtm >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+          )}
+        >
+          Rs. {fmt(totalMtm)}
+        </p>
+      </div>
+
+      <div className="mb-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+        <Metric label="Date MTM" value={`Rs. ${fmt(totalMtm)}`} tone={totalTone} />
+        <Metric label="Booked P&L" value={`Rs. ${fmt(bookedPnl)}`} tone={bookedPnl >= 0 ? "good" : "bad"} />
+        <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} />
+        <Metric label="Active" value={String(activeCount)} />
+      </div>
+
+      <details className="group">
+        <summary className="fr-dark-surface fr-dark-surface-hover flex cursor-pointer list-none items-center justify-between rounded-lg border border-border/70 bg-background/35 px-3 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:bg-background/55 hover:text-foreground">
+          <span>View phases for this date ({trades.length})</span>
+          <ChevronDown className="h-3.5 w-3.5 transition-transform group-open:rotate-180" />
+        </summary>
+        <div className="mt-3 grid justify-center gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),360px))]">
+          {trades.map((item) => (
+            <PreviousPhaseCard key={item.id} trade={item} liveOpt={liveOptFor?.(item)} />
+          ))}
+        </div>
+      </details>
+    </section>
   );
 }
 
@@ -185,6 +282,7 @@ export function PositionCard({
   const isDraft = trade.status === "draft";
   const isActive = trade.status === "active";
   const isClosed = ["completed", "stopped", "cancelled", "error"].includes(trade.status);
+  const previousByDate = useMemo(() => groupTradesByDate(previousTrades), [previousTrades]);
 
   const futDelta = liveFut !== undefined ? liveFut - trade.entry_futures_price : null;
   const optDelta = liveOpt !== undefined ? liveOpt - trade.entry_option_price : null;
@@ -358,13 +456,18 @@ export function PositionCard({
                     {trade.underlying} phase details
                   </DialogTitle>
                   <DialogDescription>
-                    Earlier phases before current Phase {trade.phase_no}. Review MTM, entry, stop-loss, targets, and duration.
+                    Earlier phases grouped by trading date. Each date shows instrument MTM, booked P&L, targets, and phase details.
                   </DialogDescription>
                 </DialogHeader>
 
-                <div className="grid justify-center gap-3 [grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),380px))]">
-                  {previousTrades.map((item) => (
-                    <PreviousPhaseCard key={item.id} trade={item} liveOpt={liveOptFor?.(item)} />
+                <div className="space-y-3">
+                  {previousByDate.map((group) => (
+                    <PreviousTradeDateGroup
+                      key={group.dateKey}
+                      dateKey={group.dateKey}
+                      trades={group.trades}
+                      liveOptFor={liveOptFor}
+                    />
                   ))}
                 </div>
               </div>
