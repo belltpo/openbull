@@ -266,10 +266,25 @@ async def api_futures_risk_quick_order_settings_delete(request: Request):
 
 def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str, config: dict) -> dict[str, Any]:
     from backend.services.market_data_cache import get_ltp_value
+    from backend.services.market_data_cache import process_market_data
     from backend.services.quotes_service import get_quotes_with_auth
 
     key = (str(symbol).upper(), str(exchange).upper())
     now = time.monotonic()
+
+    def remember_ltp(value: float) -> None:
+        if value <= 0:
+            return
+        try:
+            process_market_data({
+                "symbol": symbol,
+                "exchange": exchange,
+                "mode": 1,
+                "data": {"ltp": value, "timestamp": time.time(), "volume": 0},
+            })
+        except Exception:
+            logger.debug("Unable to seed market-data cache for %s/%s", symbol, exchange, exc_info=True)
+
     try:
         cached_ltp = get_ltp_value(symbol, exchange)
         if cached_ltp and float(cached_ltp) > 0:
@@ -304,6 +319,7 @@ def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str
         ltp = float(data.get("ltp") or 0)
     except (TypeError, ValueError):
         ltp = 0.0
+    remember_ltp(ltp)
     payload = {
         "symbol": symbol,
         "exchange": exchange,

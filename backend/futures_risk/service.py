@@ -879,6 +879,23 @@ def _resolve_trade_plan(
         ok2, oq, _ = get_quotes_with_auth(opt["symbol"], opt["exchange"], auth_token, broker, config)
         if ok2:
             entry_opt = float(oq.get("data", {}).get("ltp") or 0.0)
+            if entry_opt > 0:
+                try:
+                    from backend.services.market_data_cache import process_market_data
+
+                    process_market_data({
+                        "symbol": opt["symbol"],
+                        "exchange": opt["exchange"],
+                        "mode": 1,
+                        "data": {"ltp": entry_opt, "timestamp": time.time(), "volume": 0},
+                    })
+                except Exception:
+                    logger.debug(
+                        "Unable to seed market-data cache for %s/%s",
+                        opt["symbol"],
+                        opt["exchange"],
+                        exc_info=True,
+                    )
     except Exception:
         pass
 
