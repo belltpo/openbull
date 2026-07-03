@@ -2370,46 +2370,56 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [NinjaScriptProperty]
         [Range(0, int.MaxValue)]
-        [Display(Name = "Target Template Id", GroupName = "Risk", Order = 31)]
+        [Display(Name = "Target Template", GroupName = "Risk", Order = 31)]
         public int TargetTemplateId { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "Use Override Targets", GroupName = "Risk", Order = 32)]
         public bool UseOverrideTargets { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "Auto Split Targets", GroupName = "Risk", Order = 33)]
         public bool AutoSplitTargets { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "T1 Points", GroupName = "Override Targets", Order = 40)]
         public double Target1Points { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "T2 Points", GroupName = "Override Targets", Order = 41)]
         public double Target2Points { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "T3 Points", GroupName = "Override Targets", Order = 42)]
         public double Target3Points { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "T4 Points", GroupName = "Override Targets", Order = 43)]
         public double Target4Points { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "T1 Exit %", GroupName = "Override Targets", Order = 50)]
         public double Target1ExitPct { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "T2 Exit %", GroupName = "Override Targets", Order = 51)]
         public double Target2ExitPct { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "T3 Exit %", GroupName = "Override Targets", Order = 52)]
         public double Target3ExitPct { get; set; }
 
         [NinjaScriptProperty]
+        [Browsable(false)]
         [Display(Name = "T4 Exit %", GroupName = "Override Targets", Order = 53)]
         public double Target4ExitPct { get; set; }
 
