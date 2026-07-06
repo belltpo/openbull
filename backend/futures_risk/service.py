@@ -45,6 +45,9 @@ from backend.services.quotes_service import get_quotes_with_auth
 
 logger = logging.getLogger(__name__)
 
+_QUICK_ORDER_STRIKE_OFFSET = 200.0
+_SESSION_OPEN_CACHE: dict[tuple[str, str, str], float] = {}
+
 _MCX_DEFAULT_LOTS: dict[str, int] = {
     "SILVER": 30,
     "SILVERM": 5,
@@ -655,18 +658,38 @@ def list_strikes(
     strikes = _fetch_available_strikes(base, expiry.upper(), option_type.upper(), options_exchange)
 
     atm: float | None = None
+    open_atm: float | None = None
+
+    def positive_float(value: Any) -> float | None:
+        try:
+            out = float(value or 0)
+        except (TypeError, ValueError):
+            return None
+        return out if out > 0 else None
 
     def fresh_cached_ltp(symbol: str, exchange: str) -> float | None:
         try:
             entry = get_market_data_cache().get_all(symbol, exchange)
             last_update = float(entry.get("last_update") or 0)
-            ltp_value = (entry.get("ltp") or {}).get("value")
-            ltp = float(ltp_value or 0)
+            ltp = positive_float((entry.get("ltp") or {}).get("value"))
         except Exception:
             return None
-        if ltp <= 0 or last_update <= 0:
+        if ltp is None or last_update <= 0:
             return None
         return ltp if time.time() - last_update <= 5 else None
+
+    def cached_open(symbol: str, exchange: str) -> float | None:
+        try:
+            entry = get_market_data_cache().get_all(symbol, exchange)
+            last_update = float(entry.get("last_update") or 0)
+            opened = positive_float((entry.get("quote") or {}).get("open"))
+        except Exception:
+            return None
+        if opened is None or last_update <= 0:
+            return None
+        # The session open is stable, but require a recent quote so stale
+        # previous-day cache cannot drive today's quick-order default strikes.
+        return opened if time.time() - last_update <= 300 else None
 
     try:
         if quote_exchange in ("NSE_INDEX", "BSE_INDEX", "NSE", "BSE"):
@@ -674,15 +697,26 @@ def list_strikes(
         else:
             fut = _find_near_month_futures(base, quote_exchange)
             quote_symbol, q_exch = (fut["symbol"], fut["exchange"]) if fut else (base, quote_exchange)
+        open_cache_key = (datetime.now().date().isoformat(), quote_symbol.upper(), q_exch.upper())
+        open_price = _SESSION_OPEN_CACHE.get(open_cache_key) or cached_open(quote_symbol, q_exch)
+        if open_price:
+            _SESSION_OPEN_CACHE[open_cache_key] = open_price
         cached_ltp = fresh_cached_ltp(quote_symbol, q_exch)
         if cached_ltp:
             atm = _find_atm(cached_ltp, strikes)
-        else:
+
+        if not cached_ltp or not open_price:
             ok, q, _ = get_quotes_with_auth(quote_symbol, q_exch, auth_token, broker, config)
             if ok:
-                ltp = q.get("data", {}).get("ltp")
-                if ltp:
-                    atm = _find_atm(float(ltp), strikes)
+                quote_data = q.get("data", {})
+                open_price = open_price or positive_float(quote_data.get("open"))
+                if open_price:
+                    _SESSION_OPEN_CACHE[open_cache_key] = open_price
+                ltp = positive_float(quote_data.get("ltp")) if not cached_ltp else None
+                if atm is None and ltp:
+                    atm = _find_atm(ltp, strikes)
+        if open_price:
+            open_atm = _find_atm(open_price, strikes)
         if atm is None:
             # If REST is rate-limited or unavailable, an older cache value is
             # still useful for strike selection. Live display never uses this
@@ -692,7 +726,18 @@ def list_strikes(
                 atm = _find_atm(float(cached_ltp), strikes)
     except Exception:
         logger.exception("ATM lookup failed for %s", underlying)
-    return {"strikes": strikes, "atm": atm, "options_exchange": options_exchange}
+
+    reference_atm = open_atm or atm
+    ce_default_strike = _find_atm(reference_atm - _QUICK_ORDER_STRIKE_OFFSET, strikes) if reference_atm else None
+    pe_default_strike = _find_atm(reference_atm + _QUICK_ORDER_STRIKE_OFFSET, strikes) if reference_atm else None
+    return {
+        "strikes": strikes,
+        "atm": atm,
+        "open_atm": open_atm,
+        "ce_default_strike": ce_default_strike,
+        "pe_default_strike": pe_default_strike,
+        "options_exchange": options_exchange,
+    }
 
 
 # ---------------------------------------------------------------------------

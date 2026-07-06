@@ -1316,6 +1316,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     List<string> strikeValues = ParseNumberArray(body, "strikes");
                     List<string> templateValues = ParseTemplates(body);
                     double atmStrike = ParseDouble(ExtractJsonValue(body, "atm"), 0);
+                    double ceDefaultStrike = ParseDouble(ExtractJsonValue(body, "ce_default_strike"), atmStrike);
+                    double peDefaultStrike = ParseDouble(ExtractJsonValue(body, "pe_default_strike"), atmStrike);
                     cachedExpiries = expiryValues.ToArray();
                     cachedStrikes = ParseStrikeCache(strikeValues);
                     CacheTemplateLabels(templateValues);
@@ -1333,8 +1335,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                             string saved = ExtractBlock(body, "saved");
                             string selectedExpiry = Expiry;
-                            double selectedCe = SelectValidStrike(strikeValues, CeStrike, atmStrike);
-                            double selectedPe = SelectValidStrike(strikeValues, PeStrike, atmStrike);
+                            double selectedCe = SelectValidStrike(strikeValues, CeStrike, ceDefaultStrike);
+                            double selectedPe = SelectValidStrike(strikeValues, PeStrike, peDefaultStrike);
                             if (!string.IsNullOrEmpty(saved))
                             {
                                 string lots = ExtractJsonValue(saved, "lots");
@@ -1350,9 +1352,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                                 if (!string.IsNullOrEmpty(savedExpiry) && savedExpiry != "null")
                                     selectedExpiry = savedExpiry.ToUpperInvariant();
                                 if (!string.IsNullOrEmpty(savedCe) && savedCe != "null")
-                                    selectedCe = SelectValidStrike(strikeValues, ParseDouble(savedCe, selectedCe), atmStrike);
+                                    selectedCe = SelectValidStrike(strikeValues, ParseDouble(savedCe, selectedCe), ceDefaultStrike);
                                 if (!string.IsNullOrEmpty(savedPe) && savedPe != "null")
-                                    selectedPe = SelectValidStrike(strikeValues, ParseDouble(savedPe, selectedPe), atmStrike);
+                                    selectedPe = SelectValidStrike(strikeValues, ParseDouble(savedPe, selectedPe), peDefaultStrike);
                                 if (!string.IsNullOrEmpty(lots))
                                 {
                                     Lots = Math.Max(1, ParseInt(lots, Lots));

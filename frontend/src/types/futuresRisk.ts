@@ -163,6 +163,9 @@ export interface FrExpiry {
 export interface FrStrikes {
   strikes: number[];
   atm: number | null;
+  open_atm?: number | null;
+  ce_default_strike?: number | null;
+  pe_default_strike?: number | null;
   options_exchange: string;
 }
 

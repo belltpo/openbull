@@ -335,7 +335,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     refetchInterval: open && !!underlying && !!expiry ? 5000 : false,
   });
 
-  // Default the strike to ATM when the strike list (re)loads.
+  // Default quick-order strikes from market-open ATM offsets. Users can still
+  // override CE/PE manually; valid manual selections are preserved.
   useEffect(() => {
     const d = strikesQuery.data;
     if (!d) return;
@@ -343,16 +344,27 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     const currentStrike = strike === "" ? null : Number(strike);
     const hasCurrentStrike = currentStrike != null && validStrikes.includes(currentStrike);
     const atmStrike = d.atm && d.atm > 0 && validStrikes.includes(d.atm) ? d.atm : null;
+    const defaultCeStrike =
+      d.ce_default_strike && d.ce_default_strike > 0 && validStrikes.includes(d.ce_default_strike)
+        ? d.ce_default_strike
+        : atmStrike;
+    const defaultPeStrike =
+      d.pe_default_strike && d.pe_default_strike > 0 && validStrikes.includes(d.pe_default_strike)
+        ? d.pe_default_strike
+        : atmStrike;
+    const hasCurrentCe = ceStrike !== "" && validStrikes.includes(Number(ceStrike));
+    const hasCurrentPe = peStrike !== "" && validStrikes.includes(Number(peStrike));
 
-    if (hasCurrentStrike) return;
+    if (hasCurrentStrike && hasCurrentCe && hasCurrentPe) return;
 
-    if (atmStrike) {
-      setStrike(atmStrike);
-      setCeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? atmStrike : prev));
-      setPeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? atmStrike : prev));
+    if (atmStrike || defaultCeStrike || defaultPeStrike) {
+      const fallbackStrike = atmStrike ?? defaultCeStrike ?? defaultPeStrike;
+      if (fallbackStrike && !hasCurrentStrike) setStrike(fallbackStrike);
+      setCeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? (defaultCeStrike ?? fallbackStrike ?? "") : prev));
+      setPeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? (defaultPeStrike ?? fallbackStrike ?? "") : prev));
     } else if (validStrikes.length) {
       const fallbackStrike = validStrikes[Math.floor(validStrikes.length / 2)];
-      setStrike(fallbackStrike);
+      if (!hasCurrentStrike) setStrike(fallbackStrike);
       setCeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? fallbackStrike : prev));
       setPeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? fallbackStrike : prev));
     } else {
@@ -360,7 +372,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
       setCeStrike("");
       setPeStrike("");
     }
-  }, [strikesQuery.data, strike]);
+  }, [strikesQuery.data, strike, ceStrike, peStrike]);
 
   const mutation = useMutation({
     mutationFn: (payload: PlaceTradePayload) => (asDraft ? createDraft(payload) : placeTrade(payload)),
