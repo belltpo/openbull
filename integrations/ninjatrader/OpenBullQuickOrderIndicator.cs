@@ -154,8 +154,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             base.OnRender(chartControl, chartScale);
             activeChartScale = chartScale;
-            if (linkedBellTool != null)
+            if (linkedBellTool != null && !string.IsNullOrWhiteSpace(linkedBellTag) && DrawingToolExists(linkedBellTag))
+            {
+                linkedBellSeenOnChart = true;
                 return;
+            }
             if (managedTrade == null || managedTrade.EntryFuturesPrice <= 0 || ChartBars == null || ChartBars.Bars == null)
                 return;
 
