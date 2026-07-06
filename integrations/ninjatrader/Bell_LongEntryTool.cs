@@ -788,6 +788,8 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 
             if (ShowT6)
                 DrawLineWithDot(chartControl, chartBars, chartScale, T6Anchor, T6EndAnchor, TargetBrush, dashStyle, TargetLabel(6, T6Anchor.Price, T6Status));
+
+            DrawOpenBullPnlLabel(chartControl, chartBars, chartScale);
         }
 
         private void DrawLineWithDot(ChartControl chartControl, ChartBars chartBars, ChartScale chartScale,
@@ -896,13 +898,28 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 
         private string EntryLabel(string prefix)
         {
-            string label = $"{prefix} @ {FormatPrice(EntryAnchor.Price)}";
-            if (OpenBullTradeId > 0)
-            {
-                string sign = OpenBullMtm >= 0 ? "+" : "";
-                label += $" | P&L {sign}{OpenBullMtm.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}";
-            }
-            return label;
+            return $"{prefix} @ {FormatPrice(EntryAnchor.Price)}";
+        }
+
+        private void DrawOpenBullPnlLabel(ChartControl chartControl, ChartBars chartBars, ChartScale chartScale)
+        {
+            if (OpenBullTradeId <= 0 || EntryAnchor == null || EndAnchor == null || chartBars == null)
+                return;
+
+            int endBarIndex = chartBars.Bars.GetBar(EndAnchor.Time);
+            if (endBarIndex < 0)
+                return;
+
+            float endX = chartControl.GetXByBarIndex(chartBars, endBarIndex);
+            float y = chartScale.GetYByValue(EntryAnchor.Price) + Math.Max(18f, FontSize + 8f);
+            Brush pnlBrush = OpenBullMtm >= 0 ? Brushes.LimeGreen : Brushes.Red;
+            DrawLabel(OpenBullPnlLabel(), endX + 10, y, pnlBrush);
+        }
+
+        private string OpenBullPnlLabel()
+        {
+            string sign = OpenBullMtm >= 0 ? "+" : "";
+            return $"P&L {sign}{OpenBullMtm.ToString("N2", System.Globalization.CultureInfo.InvariantCulture)}";
         }
 
         private string TargetLabel(int seq, double price, string status)
@@ -1003,6 +1020,10 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             if (endTime == DateTime.MinValue || endTime <= entryTime)
                 endTime = entryTime.AddMinutes(10);
 
+            bool preserveTimes = OpenBullTradeId == tradeId && IsValidAnchorTime(EntryAnchor) && IsValidAnchorTime(EndAnchor);
+            DateTime lineEntryTime = ExistingTimeOr(EntryAnchor, entryTime, preserveTimes);
+            DateTime lineEndTime = ExistingTimeOr(EndAnchor, endTime, preserveTimes);
+
             OpenBullTradeId = tradeId;
             OpenBullMtm = mtm;
             OpenBullSyncStatus = "Linked to OpenBull";
@@ -1013,10 +1034,10 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             MoveLinesTogether = false;
             DrawingState = DrawingState.Normal;
 
-            SetAnchor(EntryAnchor, entryTime, entryPrice, false);
-            SetAnchor(EndAnchor, endTime, entryPrice, false);
-            SetAnchor(SLAnchor, entryTime, slPrice, false);
-            SetAnchor(SLEndAnchor, endTime, slPrice, false);
+            SetAnchor(EntryAnchor, lineEntryTime, entryPrice, false);
+            SetAnchor(EndAnchor, lineEndTime, entryPrice, false);
+            SetAnchor(SLAnchor, ExistingTimeOr(SLAnchor, lineEntryTime, preserveTimes), slPrice, false);
+            SetAnchor(SLEndAnchor, ExistingTimeOr(SLEndAnchor, lineEndTime, preserveTimes), slPrice, false);
             slDistancePoints = Math.Max(1, (int)Math.Round(Math.Abs(entryPrice - slPrice)));
 
             HideAllTargets();
@@ -1026,9 +1047,19 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 {
                     if (target == null || target.Seq < 1 || target.Seq > 6 || target.Price <= 0)
                         continue;
-                    ApplyTarget(target.Seq, entryTime, endTime, entryPrice, target.Price, target.Status);
+                    ApplyTarget(target.Seq, lineEntryTime, lineEndTime, entryPrice, target.Price, target.Status, preserveTimes);
                 }
             }
+        }
+
+        private bool IsValidAnchorTime(ChartAnchor anchor)
+        {
+            return anchor != null && anchor.Time != DateTime.MinValue;
+        }
+
+        private DateTime ExistingTimeOr(ChartAnchor anchor, DateTime fallback, bool preserveTimes)
+        {
+            return preserveTimes && IsValidAnchorTime(anchor) ? anchor.Time : fallback;
         }
 
         private void SetAnchor(ChartAnchor anchor, DateTime time, double price, bool editing)
@@ -1047,39 +1078,39 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             T1Status = T2Status = T3Status = T4Status = T5Status = T6Status = "pending";
         }
 
-        private void ApplyTarget(int seq, DateTime entryTime, DateTime endTime, double entryPrice, double targetPrice, string status)
+        private void ApplyTarget(int seq, DateTime entryTime, DateTime endTime, double entryPrice, double targetPrice, string status, bool preserveTimes)
         {
             int distance = Math.Max(1, (int)Math.Round(Math.Abs(targetPrice - entryPrice)));
             string cleanStatus = string.IsNullOrWhiteSpace(status) || status == "null" ? "pending" : status;
             if (seq == 1)
             {
                 ShowT1 = true; t1DistancePoints = distance; T1Status = cleanStatus;
-                SetAnchor(T1Anchor, entryTime, targetPrice, false); SetAnchor(T1EndAnchor, endTime, targetPrice, false);
+                SetAnchor(T1Anchor, ExistingTimeOr(T1Anchor, entryTime, preserveTimes), targetPrice, false); SetAnchor(T1EndAnchor, ExistingTimeOr(T1EndAnchor, endTime, preserveTimes), targetPrice, false);
             }
             else if (seq == 2)
             {
                 ShowT2 = true; t2DistancePoints = distance; T2Status = cleanStatus;
-                SetAnchor(T2Anchor, entryTime, targetPrice, false); SetAnchor(T2EndAnchor, endTime, targetPrice, false);
+                SetAnchor(T2Anchor, ExistingTimeOr(T2Anchor, entryTime, preserveTimes), targetPrice, false); SetAnchor(T2EndAnchor, ExistingTimeOr(T2EndAnchor, endTime, preserveTimes), targetPrice, false);
             }
             else if (seq == 3)
             {
                 ShowT3 = true; t3DistancePoints = distance; T3Status = cleanStatus;
-                SetAnchor(T3Anchor, entryTime, targetPrice, false); SetAnchor(T3EndAnchor, endTime, targetPrice, false);
+                SetAnchor(T3Anchor, ExistingTimeOr(T3Anchor, entryTime, preserveTimes), targetPrice, false); SetAnchor(T3EndAnchor, ExistingTimeOr(T3EndAnchor, endTime, preserveTimes), targetPrice, false);
             }
             else if (seq == 4)
             {
                 ShowT4 = true; t4DistancePoints = distance; T4Status = cleanStatus;
-                SetAnchor(T4Anchor, entryTime, targetPrice, false); SetAnchor(T4EndAnchor, endTime, targetPrice, false);
+                SetAnchor(T4Anchor, ExistingTimeOr(T4Anchor, entryTime, preserveTimes), targetPrice, false); SetAnchor(T4EndAnchor, ExistingTimeOr(T4EndAnchor, endTime, preserveTimes), targetPrice, false);
             }
             else if (seq == 5)
             {
                 ShowT5 = true; t5DistancePoints = distance; T5Status = cleanStatus;
-                SetAnchor(T5Anchor, entryTime, targetPrice, false); SetAnchor(T5EndAnchor, endTime, targetPrice, false);
+                SetAnchor(T5Anchor, ExistingTimeOr(T5Anchor, entryTime, preserveTimes), targetPrice, false); SetAnchor(T5EndAnchor, ExistingTimeOr(T5EndAnchor, endTime, preserveTimes), targetPrice, false);
             }
             else if (seq == 6)
             {
                 ShowT6 = true; t6DistancePoints = distance; T6Status = cleanStatus;
-                SetAnchor(T6Anchor, entryTime, targetPrice, false); SetAnchor(T6EndAnchor, endTime, targetPrice, false);
+                SetAnchor(T6Anchor, ExistingTimeOr(T6Anchor, entryTime, preserveTimes), targetPrice, false); SetAnchor(T6EndAnchor, ExistingTimeOr(T6EndAnchor, endTime, preserveTimes), targetPrice, false);
             }
         }
 
