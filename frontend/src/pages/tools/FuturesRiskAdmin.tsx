@@ -164,11 +164,15 @@ function DefaultOrderSetup() {
   const saveMutation = useMutation({
     mutationFn: async () => {
       if (!local.default_underlying) throw new Error("Select a contract first");
+      const lots = Number(local.default_lots);
+      const slPoints = Number(local.default_sl_points);
+      if (!Number.isFinite(lots) || lots < 1) throw new Error("Lots must be at least 1");
+      if (!Number.isFinite(slPoints) || slPoints <= 0) throw new Error("SL points must be greater than 0");
       const next = {
         ...contractDefaults,
         [local.default_underlying]: {
-          lots: local.default_lots,
-          sl_points: local.default_sl_points,
+          lots: String(Math.floor(lots)),
+          sl_points: String(slPoints),
           product: local.default_product.toUpperCase(),
         },
       };
@@ -184,7 +188,8 @@ function DefaultOrderSetup() {
     },
     onError: (err: unknown) => {
       // @ts-expect-error axios error shape
-      toast.error(String(err?.response?.data?.detail ?? "Save failed"));
+      const detail = err?.response?.data?.detail;
+      toast.error(String(detail ? JSON.stringify(detail) : err instanceof Error ? err.message : "Save failed"));
     },
   });
   const deleteMutation = useMutation({
@@ -260,7 +265,7 @@ function DefaultOrderSetup() {
           <Label className="text-xs font-medium text-muted-foreground">SL Points</Label>
           <input
             type="number"
-            min={0}
+            min={0.5}
             step="0.5"
             className={inputCls}
             value={local.default_sl_points}

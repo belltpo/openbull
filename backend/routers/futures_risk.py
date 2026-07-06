@@ -39,7 +39,7 @@ def _require_admin(user: User) -> None:
 
 class ConfigUpdate(BaseModel):
     key: str = Field(..., min_length=1, max_length=100)
-    value: str = Field(..., max_length=500)
+    value: str = Field(..., max_length=20000)
 
 
 @router.get("/config")
