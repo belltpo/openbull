@@ -174,6 +174,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     label += " " + target.Status;
                 DrawManagedLine(chartScale, startX, endX, target.Price, Brushes.MediumSpringGreen, label, string.Equals(target.Status, "pending", StringComparison.OrdinalIgnoreCase));
             }
+            DrawManagedPnlLabel(chartScale, endX + 8, managedTrade.EntryFuturesPrice);
         }
 
         private Brush EntryBrushForTrade()
@@ -188,8 +189,17 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (managedTrade == null)
                 return "React";
             string prefix = string.Equals(managedTrade.Side, "BUY", StringComparison.OrdinalIgnoreCase) ? "L React" : "S React";
+            return prefix + " @ " + FormatChartPrice(managedTrade.EntryFuturesPrice);
+        }
+
+        private void DrawManagedPnlLabel(ChartScale chartScale, float x, double entryPrice)
+        {
+            if (managedTrade == null || entryPrice <= 0)
+                return;
             string sign = managedTrade.Mtm >= 0 ? "+" : "";
-            return prefix + " @ " + FormatChartPrice(managedTrade.EntryFuturesPrice) + " | MTM " + sign + managedTrade.Mtm.ToString("N2", CultureInfo.InvariantCulture);
+            Brush pnlBrush = managedTrade.Mtm >= 0 ? Brushes.MediumSpringGreen : Brushes.Red;
+            float y = chartScale.GetYByValue(entryPrice) + 20f;
+            DrawManagedLabel("P&L " + sign + managedTrade.Mtm.ToString("N2", CultureInfo.InvariantCulture), x, y, pnlBrush);
         }
 
         private void DrawManagedLine(ChartScale chartScale, float startX, float endX, double price, Brush brush, string label, bool draggable)
@@ -1628,7 +1638,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ApplyLiveOptionPrice(snapshot);
                 ChartControl.Dispatcher.InvokeAsync(() =>
                 {
-                    managedTrade = snapshot;
+                    if (managedTrade == null || snapshot.TradeId == LinkedTradeId)
+                        managedTrade = snapshot;
                     managedTrades[snapshot.TradeId] = snapshot;
                     if (linkedBellTools.ContainsKey(snapshot.TradeId))
                         AttachBellDrawingTool(snapshot);
@@ -1955,6 +1966,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void ApplyLiveOptionPrice(OpenBullTradeSnapshot snapshot)
         {
             if (snapshot == null)
+                return;
+            if (snapshot.LiveOptionPrice > 0)
                 return;
             if (string.Equals(snapshot.OptionType, "CE", StringComparison.OrdinalIgnoreCase))
                 snapshot.LiveOptionPrice = ceLtp;

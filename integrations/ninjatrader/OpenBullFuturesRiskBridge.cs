@@ -84,9 +84,12 @@ namespace NinjaTrader.NinjaScript
 
             string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/trades/" + tradeId.ToString(CultureInfo.InvariantCulture) + "/levels";
             string json = BuildLevelsJson(slPrice, targets);
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Put, url))
             using (StringContent content = new StringContent(json, Encoding.UTF8, "application/json"))
             {
-                HttpResponseMessage response = await Http.PutAsync(url, content);
+                request.Headers.TryAddWithoutValidation("X-API-KEY", ApiKey);
+                request.Content = content;
+                HttpResponseMessage response = await Http.SendAsync(request);
                 string body = await response.Content.ReadAsStringAsync();
                 if (response.IsSuccessStatusCode && body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) >= 0)
                     return "Levels synced";
@@ -157,6 +160,7 @@ namespace NinjaTrader.NinjaScript
             trade.Direction = (int)ExtractNumber(data, "direction");
             trade.EntryFuturesPrice = ExtractNumber(data, "entry_futures_price");
             trade.EntryOptionPrice = ExtractNumber(data, "entry_option_price");
+            trade.LiveOptionPrice = ExtractNumber(data, "live_option_price");
             trade.StopLossPrice = ExtractNumber(data, "sl_price");
             trade.RealizedPnl = ExtractNumber(data, "realized_pnl");
             trade.RemainingQty = (int)ExtractNumber(data, "remaining_qty");

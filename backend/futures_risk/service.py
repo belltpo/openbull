@@ -1577,6 +1577,12 @@ def place_draft(
 # ---------------------------------------------------------------------------
 
 def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
+    live_option_price = None
+    if t.option_symbol and t.option_exchange:
+        try:
+            live_option_price = get_ltp_value(t.option_symbol, t.option_exchange)
+        except Exception:
+            live_option_price = None
     return {
         "id": t.id,
         "mode": t.mode,
@@ -1593,6 +1599,7 @@ def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
         "total_qty": t.total_qty,
         "remaining_qty": t.remaining_qty,
         "entry_option_price": t.entry_option_price,
+        "live_option_price": live_option_price,
         "entry_order_id": t.entry_order_id,
         "futures_symbol": t.futures_symbol,
         "futures_exchange": t.futures_exchange,
