@@ -852,12 +852,15 @@ server {
     #   /api       (/api/v1/* trading API)
     #   /upstox    (/upstox/callback OAuth)
     #   /zerodha   (/zerodha/callback OAuth)
+    #   /fyers     (/fyers/callback OAuth)
+    #   /dhan      (/dhan/callback OAuth)
+    #   /angel     (/angel/login)
     #   /docs, /redoc, /openapi.json  (FastAPI Swagger)
     #
     # If a new top-level router prefix is added in backend/, append it
     # to the regex below or /auth/web/api traffic will 404 to the SPA.
     # ------------------------------------------------------------------
-    location ~ ^/(auth|web|api|upstox|zerodha|docs|redoc|openapi\.json)(/|\$) {
+    location ~ ^/(auth|web|api|upstox|zerodha|fyers|dhan|angel|docs|redoc|openapi\.json)(/|\$) {
         proxy_pass http://openbull_backend;
         proxy_http_version 1.1;
         proxy_read_timeout 300s;
