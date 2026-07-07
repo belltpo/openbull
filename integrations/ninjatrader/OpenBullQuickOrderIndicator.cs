@@ -156,28 +156,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             activeChartScale = chartScale;
             if (linkedBellTool != null && !string.IsNullOrWhiteSpace(linkedBellTag) && DrawingToolExists(linkedBellTag))
                 linkedBellSeenOnChart = true;
-            if (managedTrade == null || managedTrade.EntryFuturesPrice <= 0 || ChartBars == null || ChartBars.Bars == null)
-                return;
-
-            int endBarIndex = Math.Max(0, ChartBars.Bars.Count - 1);
-            int startBarIndex = Math.Max(0, endBarIndex - 22);
-            float startX = chartControl.GetXByBarIndex(ChartBars, startBarIndex);
-            float endX = chartControl.GetXByBarIndex(ChartBars, endBarIndex);
-            DrawManagedLine(chartScale, startX, endX, managedTrade.EntryFuturesPrice, EntryBrushForTrade(), EntryLabelForTrade(), false, "");
-            Brush slBrush = IsEditingLevel("SL") ? Brushes.Red : Brushes.Orange;
-            DrawManagedLine(chartScale, startX, endX, managedTrade.StopLossPrice, slBrush, StopLossLabelForTrade(), true, "SL");
-            foreach (OpenBullTradeLevel target in managedTrade.Targets)
-            {
-                if (target == null || target.Price <= 0)
-                    continue;
-                string label = "T" + target.Seq.ToString(CultureInfo.InvariantCulture) + " @ " + FormatChartPrice(target.Price);
-                if (!string.IsNullOrWhiteSpace(target.Status) && !string.Equals(target.Status, "pending", StringComparison.OrdinalIgnoreCase))
-                    label += " " + target.Status;
-                string levelKey = "T" + target.Seq.ToString(CultureInfo.InvariantCulture);
-                Brush targetBrush = IsEditingLevel(levelKey) ? Brushes.Red : Brushes.MediumSpringGreen;
-                DrawManagedLine(chartScale, startX, endX, target.Price, targetBrush, label, string.Equals(target.Status, "pending", StringComparison.OrdinalIgnoreCase), levelKey);
-            }
-            DrawManagedPnlLabel(chartScale, endX + 8, managedTrade.EntryFuturesPrice);
+            // Trade levels are intentionally owned only by Bell_LongEntryTool /
+            // Bell_ShortEntryTool. The indicator only links and refreshes those
+            // tools; drawing a second SL/T overlay creates duplicate levels and
+            // competing drag handlers.
         }
 
         private Brush EntryBrushForTrade()
@@ -317,45 +299,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void OnChartMouseDown(object sender, MouseButtonEventArgs e)
         {
-            if (managedTrade == null || activeChartScale == null || root == null || root.IsMouseOver)
-                return;
-            Point point = e.GetPosition(ChartControl);
-            if (levelDragging)
-            {
-                UpdateEditedLevel(point);
-                string released = draggedLevelKey;
-                levelDragging = false;
-                draggedLevelKey = null;
-                Mouse.Capture(null);
-                e.Handled = true;
-                RequestChartRefresh();
-                if (!string.IsNullOrWhiteSpace(released))
-                {
-                    SetStatus("Saving " + released + " level...", true);
-                    Task.Run(async () => await SyncManagedLevelsAsync());
-                }
-                return;
-            }
-
-            string hit = HitTestManagedLevel(point);
-            if (string.IsNullOrWhiteSpace(hit))
-                return;
-            levelDragging = true;
-            draggedLevelKey = hit;
-            Mouse.Capture(ChartControl);
-            SetStatus(hit + " edit mode - move mouse, click again to save", true);
-            RequestChartRefresh();
-            e.Handled = true;
+            // Bell drawing tools own RL/ME level editing.
         }
 
         private void OnChartMouseMove(object sender, MouseEventArgs e)
         {
-            if (!levelDragging || managedTrade == null || activeChartScale == null || string.IsNullOrWhiteSpace(draggedLevelKey))
-                return;
-            Point point = e.GetPosition(ChartControl);
-            UpdateEditedLevel(point);
-            RequestChartRefresh();
-            e.Handled = true;
+            // Bell drawing tools own RL/ME level editing.
         }
 
         private void UpdateEditedLevel(Point point)
@@ -380,11 +329,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private void OnChartMouseUp(object sender, MouseButtonEventArgs e)
         {
-            if (!levelDragging)
-                return;
-            // Click-to-edit mode commits on the next mouse down. Mouse-up should
-            // not end the edit; otherwise a normal click feels like a drag.
-            e.Handled = true;
+            // Bell drawing tools own RL/ME level editing.
         }
 
         private string HitTestManagedLevel(Point point)
