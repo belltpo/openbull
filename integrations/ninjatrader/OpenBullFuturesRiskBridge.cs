@@ -38,6 +38,7 @@ namespace NinjaTrader.NinjaScript
         public double EntryFuturesPrice { get; set; }
         public double EntryOptionPrice { get; set; }
         public double StopLossPrice { get; set; }
+        public bool StopLossHit { get; set; }
         public double RealizedPnl { get; set; }
         public int RemainingQty { get; set; }
         public double LiveOptionPrice { get; set; }
@@ -162,6 +163,9 @@ namespace NinjaTrader.NinjaScript
             trade.EntryOptionPrice = ExtractNumber(data, "entry_option_price");
             trade.LiveOptionPrice = ExtractNumber(data, "live_option_price");
             trade.StopLossPrice = ExtractNumber(data, "sl_price");
+            trade.StopLossHit = ExtractBool(data, "sl_hit")
+                || data.IndexOf("\"kind\":\"sl_hit\"", StringComparison.OrdinalIgnoreCase) >= 0
+                || data.IndexOf("\"kind\": \"sl_hit\"", StringComparison.OrdinalIgnoreCase) >= 0;
             trade.RealizedPnl = ExtractNumber(data, "realized_pnl");
             trade.RemainingQty = (int)ExtractNumber(data, "remaining_qty");
             trade.CreatedAt = ExtractDateTime(data, "created_at");
@@ -241,6 +245,16 @@ namespace NinjaTrader.NinjaScript
             double parsed;
             string raw = ExtractJsonValue(body, key);
             return double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
+        }
+
+        private static bool ExtractBool(string body, string key)
+        {
+            Match m = Regex.Match(
+                body,
+                "\"" + Regex.Escape(key) + "\"\\s*:\\s*(?<bool>true|false)",
+                RegexOptions.IgnoreCase
+            );
+            return m.Success && string.Equals(m.Groups["bool"].Value, "true", StringComparison.OrdinalIgnoreCase);
         }
 
         private static DateTime ExtractDateTime(string body, string key)

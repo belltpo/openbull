@@ -46,6 +46,11 @@ interface NavItem {
 const navItems: NavItem[] = [
   { label: "Dashboard", to: "/dashboard" },
   {
+    label: "Positions",
+    to: "/tools/futures-risk",
+    matches: ["/tools/futures-risk"],
+  },
+  {
     label: "Orders",
     matches: ["/orderbook", "/tradebook"],
     groups: [
@@ -86,11 +91,6 @@ const navItems: NavItem[] = [
         ],
       },
     ],
-  },
-  {
-    label: "Futures Risk",
-    to: "/tools/futures-risk",
-    matches: ["/tools/futures-risk"],
   },
   {
     label: "Tools",

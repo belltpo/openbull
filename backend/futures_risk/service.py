@@ -1814,6 +1814,14 @@ def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]
             d = _trade_to_dict(t)
             target_exit_prices, sl_exit_option_price = _trade_exit_option_prices(db, t.id)
             d["sl_exit_option_price"] = sl_exit_option_price
+            d["sl_hit"] = bool(
+                sl_exit_option_price is not None
+                or db.execute(
+                    select(FrTradeEvent.id)
+                    .where(FrTradeEvent.trade_id == t.id, FrTradeEvent.kind == "sl_hit")
+                    .limit(1)
+                ).scalar()
+            )
             if t.id in display_phase:
                 d["phase_group"] = _display_phase_group(user_id, t.underlying, t.created_at)
                 d["phase_no"] = display_phase[t.id]
@@ -1835,6 +1843,14 @@ def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
         d = _trade_to_dict(t)
         target_exit_prices, sl_exit_option_price = _trade_exit_option_prices(db, t.id)
         d["sl_exit_option_price"] = sl_exit_option_price
+        d["sl_hit"] = bool(
+            sl_exit_option_price is not None
+            or db.execute(
+                select(FrTradeEvent.id)
+                .where(FrTradeEvent.trade_id == t.id, FrTradeEvent.kind == "sl_hit")
+                .limit(1)
+            ).scalar()
+        )
         display_phase = _phase_display_numbers(db, user_id)
         if t.id in display_phase:
             d["phase_group"] = _display_phase_group(user_id, t.underlying, t.created_at)
@@ -1902,6 +1918,10 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
                 "sl_price": t.sl_price,
                 "sl_basis": t.sl_basis,
                 "sl_exit_option_price": sl_exit_option_price,
+                "sl_hit": bool(
+                    sl_exit_option_price is not None
+                    or terminal == "sl_hit"
+                ),
                 "targets_total": len(tgts),
                 "targets_achieved": achieved,
                 "targets": [_target_row_to_dict(r, target_exit_prices.get(r.seq)) for r in tgts],

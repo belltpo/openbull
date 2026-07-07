@@ -231,6 +231,9 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         public string OpenBullSyncStatus { get; set; }
 
         [Browsable(false)]
+        public bool StopLossHit { get; set; }
+
+        [Browsable(false)]
         public string T1Status { get; set; }
 
         [Browsable(false)]
@@ -304,6 +307,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 OpenBullTradeId = 0;
                 OpenBullMtm = 0;
                 OpenBullSyncStatus = "";
+                StopLossHit = false;
                 T1Status = "pending";
                 T2Status = "pending";
                 T3Status = "pending";
@@ -312,7 +316,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 T6Status = "pending";
 
                 LineThickness = 3;
-                FontSize = 15;
+                FontSize = 11;
 
                 EntryBrush = Brushes.DeepPink;
                 SLBrush = Brushes.Orange;
@@ -363,6 +367,16 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 
         public override void OnMouseDown(ChartControl chartControl, ChartPanel chartPanel, ChartScale chartScale, ChartAnchor dataPoint)
         {
+            if (DrawingState == DrawingState.Editing)
+            {
+                OnMouseMove(chartControl, chartPanel, chartScale, dataPoint);
+                ClearEditingAnchors();
+                DrawingState = DrawingState.Normal;
+                OpenBullSyncStatus = OpenBullTradeId > 0 ? "Saving levels to OpenBull..." : "";
+                SyncLevelsToOpenBull();
+                return;
+            }
+
             if (DrawingState == DrawingState.Building)
             {
                 if (EntryAnchor.IsEditing)
@@ -462,6 +476,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                     }
                     closest.IsEditing = true;
                     DrawingState = DrawingState.Editing;
+                    OpenBullSyncStatus = "Move level, click again to save";
                 }
             }
         }
@@ -726,25 +741,30 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         {
             if (DrawingState == DrawingState.Editing)
             {
-                EntryAnchor.IsEditing = false;
-                EndAnchor.IsEditing = false;
-                SLAnchor.IsEditing = false;
-                SLEndAnchor.IsEditing = false;
-                T1Anchor.IsEditing = false;
-                T1EndAnchor.IsEditing = false;
-                T2Anchor.IsEditing = false;
-                T2EndAnchor.IsEditing = false;
-                T3Anchor.IsEditing = false;
-                T3EndAnchor.IsEditing = false;
-                T4Anchor.IsEditing = false;
-                T4EndAnchor.IsEditing = false;
-                T5Anchor.IsEditing = false;
-                T5EndAnchor.IsEditing = false;
-                T6Anchor.IsEditing = false;
-                T6EndAnchor.IsEditing = false;
-                DrawingState = DrawingState.Normal;
-                SyncLevelsToOpenBull();
+                // Level edit mode is intentionally two-click: click to select,
+                // move freely, click again to save. Mouse-up must not commit.
+                return;
             }
+        }
+
+        private void ClearEditingAnchors()
+        {
+            EntryAnchor.IsEditing = false;
+            EndAnchor.IsEditing = false;
+            SLAnchor.IsEditing = false;
+            SLEndAnchor.IsEditing = false;
+            T1Anchor.IsEditing = false;
+            T1EndAnchor.IsEditing = false;
+            T2Anchor.IsEditing = false;
+            T2EndAnchor.IsEditing = false;
+            T3Anchor.IsEditing = false;
+            T3EndAnchor.IsEditing = false;
+            T4Anchor.IsEditing = false;
+            T4EndAnchor.IsEditing = false;
+            T5Anchor.IsEditing = false;
+            T5EndAnchor.IsEditing = false;
+            T6Anchor.IsEditing = false;
+            T6EndAnchor.IsEditing = false;
         }
 
         public override void OnRender(ChartControl chartControl, ChartScale chartScale)
@@ -768,7 +788,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             DrawLineWithDot(chartControl, chartBars, chartScale, EntryAnchor, EndAnchor, EntryBrush, dashStyle, EntryLabel("S React"));
 
             // Draw Stop Loss Line (uses SLEndAnchor)
-            DrawLineWithDot(chartControl, chartBars, chartScale, SLAnchor, SLEndAnchor, SLBrush, dashStyle, $"RL @ {FormatPrice(SLAnchor.Price)}");
+            DrawLineWithDot(chartControl, chartBars, chartScale, SLAnchor, SLEndAnchor, SLBrush, dashStyle, StopLossLabel());
 
             // Draw Target Lines (each with its own end anchor)
             if (ShowT1)
@@ -901,6 +921,14 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             return $"{prefix} @ {FormatPrice(EntryAnchor.Price)}";
         }
 
+        private string StopLossLabel()
+        {
+            string label = $"RL @ {FormatPrice(SLAnchor.Price)}";
+            if (StopLossHit)
+                label += " hit";
+            return label;
+        }
+
         private void DrawOpenBullPnlLabel(ChartControl chartControl, ChartBars chartBars, ChartScale chartScale)
         {
             if (OpenBullTradeId <= 0 || EntryAnchor == null || EndAnchor == null || chartBars == null)
@@ -1013,7 +1041,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         }
 
         public void LoadOpenBullTrade(DateTime entryTime, DateTime endTime, double entryPrice, double slPrice,
-            IList<NinjaTrader.NinjaScript.OpenBullTradeLevel> targets, int tradeId, double mtm)
+            IList<NinjaTrader.NinjaScript.OpenBullTradeLevel> targets, int tradeId, double mtm, bool stopLossHit)
         {
             if (entryTime == DateTime.MinValue)
                 entryTime = DateTime.Now;
@@ -1026,6 +1054,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 
             OpenBullTradeId = tradeId;
             OpenBullMtm = mtm;
+            StopLossHit = stopLossHit;
             OpenBullSyncStatus = "Linked to OpenBull";
 
             if (DrawingState == DrawingState.Editing)
@@ -1169,7 +1198,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
     {
         public static Bell_ShortEntryTool BellShortEntry(NinjaScriptBase owner, string tag, bool isAutoScale,
             DateTime entryTime, DateTime endTime, double entryPrice, double slPrice,
-            IList<NinjaTrader.NinjaScript.OpenBullTradeLevel> targets, int tradeId, double mtm)
+            IList<NinjaTrader.NinjaScript.OpenBullTradeLevel> targets, int tradeId, double mtm, bool stopLossHit)
         {
             if (owner == null)
                 throw new ArgumentException("owner");
@@ -1179,7 +1208,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             if (tool == null)
                 return null;
             DrawingTool.SetDrawingToolCommonValues(tool, tag, isAutoScale, owner, false);
-            tool.LoadOpenBullTrade(entryTime, endTime, entryPrice, slPrice, targets, tradeId, mtm);
+            tool.LoadOpenBullTrade(entryTime, endTime, entryPrice, slPrice, targets, tradeId, mtm, stopLossHit);
             tool.SetState(State.Active);
             return tool;
         }

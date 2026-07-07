@@ -653,7 +653,7 @@ async def api_futures_risk_trade_levels(trade_id: int, request: Request):
     Futures-Risk modify service.
     """
     try:
-        user_id, auth_token, broker_name, config = await _resolve_api_user(request)
+        user_id = await _resolve_api_identity(request)
         body = await _request_json(request)
         payload = FuturesRiskTradeLevels.model_validate(body)
     except ValidationError as exc:
@@ -726,9 +726,6 @@ async def api_futures_risk_trade_levels(trade_id: int, request: Request):
             user_id,
             trade_id,
             fields,
-            auth_token=auth_token,
-            broker=broker_name,
-            config=config,
         )
     except FrError as exc:
         return JSONResponse(content={"status": "error", "message": exc.message}, status_code=exc.status)
