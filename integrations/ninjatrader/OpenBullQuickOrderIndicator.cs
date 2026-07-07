@@ -1503,15 +1503,17 @@ namespace NinjaTrader.NinjaScript.Indicators
                     HttpResponseMessage response = await Http.PostAsync(url, content);
                     string body = await response.Content.ReadAsStringAsync();
                     bool ok = response.IsSuccessStatusCode && body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) >= 0;
-                    if (ok)
+                    int tradeId = response.IsSuccessStatusCode ? (int)ExtractNestedNumber(body, "data", "id") : 0;
+                    if (tradeId <= 0 && response.IsSuccessStatusCode)
+                        tradeId = (int)ParseDouble(ExtractJsonValue(body, "id"), 0);
+
+                    if (tradeId > 0)
                     {
-                        int tradeId = (int)ExtractNestedNumber(body, "data", "id");
-                        if (tradeId <= 0)
-                            tradeId = (int)ParseDouble(ExtractJsonValue(body, "id"), 0);
-                        if (tradeId > 0)
-                            await LinkPlacedTradeAsync(tradeId, optionType);
-                        else
-                            SetStatus("Order sent; trade id unavailable for chart levels", true);
+                        await LinkPlacedTradeAsync(tradeId, optionType, ok);
+                    }
+                    else if (ok)
+                    {
+                        SetStatus("Order sent; trade id unavailable for chart levels", true);
                     }
                     else
                     {
@@ -1531,7 +1533,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        private async Task LinkPlacedTradeAsync(int tradeId, string optionType)
+        private async Task LinkPlacedTradeAsync(int tradeId, string optionType, bool orderAccepted = true)
         {
             OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(tradeId);
             if (snapshot == null)
@@ -1552,7 +1554,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (!ShowPreviousTradeDrawings)
                     RemoveOtherTradeDrawings(tradeId, false);
                 bool bellLinked = AttachBellDrawingTool(snapshot);
-                SetStatus(bellLinked ? "Order sent - Bell drawing tool linked" : "Order sent - chart levels linked", true);
+                if (orderAccepted)
+                    SetStatus(bellLinked ? "Order sent - Bell drawing tool linked" : "Order sent - chart levels linked", true);
+                else
+                    SetStatus(bellLinked ? "Order recorded with broker issue - Bell drawing linked" : "Order recorded with broker issue - chart levels linked", false);
                 RequestChartRefresh();
             });
         }

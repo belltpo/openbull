@@ -190,12 +190,15 @@ async def get_broker_context(
     return BrokerContext(user=user, auth_token=auth_token, broker_name=broker_name, broker_config=config)
 
 
-async def get_api_user(
+async def get_api_user_id(
     request: Request,
     db: AsyncSession = Depends(get_db),
-) -> tuple[int, str, str, dict]:
-    """Resolve API key to (user_id, auth_token, broker_name, broker_config).
-    Used by external /api/v1/* endpoints.
+) -> int:
+    """Resolve an external API key to a user id.
+
+    Some /api/v1 endpoints only need OpenBull identity, not a live broker
+    session. Keep this separate so sandbox and read-only integrations do not
+    fail just because broker streaming/auth context is unavailable.
     """
     try:
         body = await request.json()
@@ -232,6 +235,17 @@ async def get_api_user(
     # Tell ApiLogMiddleware this request is authenticated (external API call).
     request.state.user_id = user_id
     request.state.auth_method = "api_key"
+    return int(user_id)
+
+
+async def get_api_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> tuple[int, str, str, dict]:
+    """Resolve API key to (user_id, auth_token, broker_name, broker_config).
+    Used by external /api/v1/* endpoints that need broker access.
+    """
+    user_id = await get_api_user_id(request, db)
 
     # Try full api-context cache (saves 2 more DB hits + 3 decrypts)
     cached_ctx = await cache_get_json(_key_api_ctx(user_id))

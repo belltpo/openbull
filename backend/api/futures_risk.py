@@ -106,6 +106,27 @@ async def _resolve_api_user(request: Request) -> tuple[int, str, str, dict]:
     raise HTTPException(status_code=500, detail="Database session unavailable")
 
 
+async def _resolve_api_identity(request: Request) -> int:
+    from backend.dependencies import get_api_user_id, get_db
+
+    async for db in get_db():
+        return await get_api_user_id(request, db)
+    raise HTTPException(status_code=500, detail="Database session unavailable")
+
+
+async def _resolve_api_user_for_mode(request: Request, mode: str) -> tuple[int, str, str, dict]:
+    if mode != "sandbox":
+        return await _resolve_api_user(request)
+    try:
+        return await _resolve_api_user(request)
+    except HTTPException as exc:
+        if exc.status_code not in (401, 403):
+            raise
+        user_id = await _resolve_api_identity(request)
+        logger.info("Using API-key identity without broker context for sandbox quick-order user_id=%s", user_id)
+        return user_id, "", "sandbox", {}
+
+
 async def _get_trading_mode() -> str:
     from backend.dependencies import get_db
 
@@ -491,9 +512,10 @@ async def api_futures_risk_quick_order(request: Request):
     broker rejection handling stay in one place.
     """
     try:
-        user_id, auth_token, broker_name, config = await _resolve_api_user(request)
         body = await _request_json(request)
         payload = FuturesRiskQuickOrder.model_validate(body)
+        mode = await _get_trading_mode()
+        user_id, auth_token, broker_name, config = await _resolve_api_user_for_mode(request, mode)
     except ValidationError as exc:
         return JSONResponse(
             content={"status": "error", "message": exc.errors()[0].get("msg", "Invalid request")},
@@ -509,7 +531,6 @@ async def api_futures_risk_quick_order(request: Request):
         )
 
     params = payload.model_dump(exclude={"apikey", "client_order_id", "source"})
-    mode = await _get_trading_mode()
 
     try:
         trade = fr.place_trade(
@@ -520,7 +541,25 @@ async def api_futures_risk_quick_order(request: Request):
             config=config,
             params=params,
         )
+        logger.info(
+            "Futures-Risk API quick-order result source=%s mode=%s broker=%s underlying=%s status=%s trade_id=%s entry_order_id=%s message=%s",
+            payload.source,
+            mode,
+            broker_name,
+            payload.underlying,
+            trade.get("status"),
+            trade.get("id"),
+            trade.get("entry_order_id"),
+            trade.get("message"),
+        )
     except FrError as exc:
+        logger.warning(
+            "Futures-Risk API quick-order rejected source=%s mode=%s underlying=%s message=%s",
+            payload.source,
+            mode,
+            payload.underlying,
+            exc.message,
+        )
         return JSONResponse(
             content={"status": "error", "message": exc.message},
             status_code=exc.status,
@@ -538,6 +577,14 @@ async def api_futures_risk_quick_order(request: Request):
             if event.get("severity") == "error":
                 message = event.get("message") or message
                 break
+        logger.warning(
+            "Futures-Risk API quick-order returned broker issue source=%s mode=%s underlying=%s trade_id=%s message=%s",
+            payload.source,
+            mode,
+            payload.underlying,
+            trade.get("id"),
+            message,
+        )
         return JSONResponse(
             content={"status": "error", "message": message, "data": trade},
             status_code=200,
@@ -553,7 +600,7 @@ async def api_futures_risk_quick_order(request: Request):
 async def api_futures_risk_trade_detail(trade_id: int, request: Request):
     """Return one Futures-Risk trade for API-key clients."""
     try:
-        user_id, _auth_token, _broker_name, _config = await _resolve_api_user(request)
+        user_id = await _resolve_api_identity(request)
     except Exception as exc:
         return _error_response(exc)
 
@@ -577,7 +624,7 @@ async def api_futures_risk_trade_list(
     trading-session phases, which matches the Futures-Risk day-wise phase logic.
     """
     try:
-        user_id, _auth_token, _broker_name, _config = await _resolve_api_user(request)
+        user_id = await _resolve_api_identity(request)
     except Exception as exc:
         return _error_response(exc)
 
