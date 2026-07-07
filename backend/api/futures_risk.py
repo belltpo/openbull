@@ -98,6 +98,12 @@ class FuturesRiskTradeLevels(BaseModel):
     targets: list[FuturesRiskLevelTarget] | None = None
 
 
+class FuturesRiskTradeExit(BaseModel):
+    apikey: str | None = None
+    mode: str = Field("full", pattern="^(full|partial|emergency)$")
+    qty: int | None = Field(None, ge=1)
+
+
 async def _resolve_api_user(request: Request) -> tuple[int, str, str, dict]:
     from backend.dependencies import get_api_user, get_db
 
@@ -734,6 +740,56 @@ async def api_futures_risk_trade_levels(trade_id: int, request: Request):
         return JSONResponse(content={"status": "error", "message": "An unexpected error occurred"}, status_code=500)
 
     return JSONResponse(content={"status": "success", "message": "Trade levels updated", "data": updated}, status_code=200)
+
+
+@router.post("/futures-risk/trades/{trade_id}/exit")
+async def api_futures_risk_trade_exit(trade_id: int, request: Request):
+    """Close an active Futures-Risk trade from API-key clients.
+
+    NinjaTrader uses this endpoint instead of placing an opposite quick order.
+    The shared Futures-Risk service still owns sandbox/live dispatch, broker
+    confirmation, phase completion, P&L, and event logging.
+    """
+    try:
+        user_id = await _resolve_api_identity(request)
+        body = await _request_json(request)
+        payload = FuturesRiskTradeExit.model_validate(body)
+    except ValidationError as exc:
+        return JSONResponse(
+            content={"status": "error", "message": exc.errors()[0].get("msg", "Invalid request")},
+            status_code=422,
+        )
+    except Exception as exc:
+        return _error_response(exc)
+
+    trade = fr.get_trade(user_id, trade_id)
+    if trade is None:
+        return JSONResponse(content={"status": "error", "message": "Trade not found"}, status_code=404)
+    if trade.get("status") != "active":
+        return JSONResponse(
+            content={"status": "error", "message": f"Trade is {trade.get('status')}, not active"},
+            status_code=409,
+        )
+
+    try:
+        if payload.mode == "emergency":
+            updated = fr.manual_exit(user_id, trade_id, emergency=True)
+            message = "Emergency exit placed"
+        elif payload.mode == "partial":
+            if payload.qty is None:
+                return JSONResponse(content={"status": "error", "message": "qty is required for partial exit"}, status_code=400)
+            updated = fr.manual_exit(user_id, trade_id, qty=payload.qty)
+            message = "Partial exit placed"
+        else:
+            updated = fr.manual_exit(user_id, trade_id)
+            message = "Full exit placed"
+    except FrError as exc:
+        return JSONResponse(content={"status": "error", "message": exc.message}, status_code=exc.status)
+    except Exception:
+        logger.exception("Unexpected error in Futures-Risk exit API")
+        return JSONResponse(content={"status": "error", "message": "An unexpected error occurred"}, status_code=500)
+
+    return JSONResponse(content={"status": "success", "message": message, "data": updated}, status_code=200)
 
 
 def _error_response(exc: Exception) -> JSONResponse:

@@ -47,6 +47,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         private Button sellCeButton;
         private Button buyPeButton;
         private Button sellPeButton;
+        private Button closeTradeButton;
+        private Border closeTradePanel;
+        private Button closeFullButton;
+        private Button closePartialButton;
+        private Button closeEmergencyButton;
+        private Button closeConfirmButton;
+        private TextBox closeQtyBox;
         private ComboBox instrumentCombo;
         private ComboBox expiryCombo;
         private ComboBox ceCombo;
@@ -67,6 +74,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool dragMoved;
         private bool rehydrateAttempted;
         private bool liveRefreshRunning;
+        private string closeMode = "full";
         private int optionsPollTick;
         private Point dragStart;
         private Thickness dragStartMargin;
@@ -472,6 +480,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             stack.Children.Add(BuildLiveBox());
             stack.Children.Add(BuildButtonGrid());
+            closeTradePanel = BuildCloseTradePanel();
+            closeTradePanel.Visibility = Visibility.Collapsed;
+            stack.Children.Add(closeTradePanel);
 
             statusText = new TextBlock
             {
@@ -642,6 +653,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             buttons.ColumnDefinitions.Add(new ColumnDefinition());
             buttons.RowDefinitions.Add(new RowDefinition());
             buttons.RowDefinitions.Add(new RowDefinition());
+            buttons.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
             buyCeButton = TradeButton("Buy CE", true);
             sellCeButton = TradeButton("Sell CE", false);
@@ -656,8 +668,109 @@ namespace NinjaTrader.NinjaScript.Indicators
             AddButton(buttons, sellCeButton, 0, 1);
             AddButton(buttons, buyPeButton, 1, 0);
             AddButton(buttons, sellPeButton, 1, 1);
+            closeTradeButton = SmallCloseAction("Close / Partial");
+            closeTradeButton.Click += (s, e) => ToggleCloseTradePanel();
+            Grid.SetRow(closeTradeButton, 2);
+            Grid.SetColumn(closeTradeButton, 0);
+            Grid.SetColumnSpan(closeTradeButton, 2);
+            buttons.Children.Add(closeTradeButton);
             RefreshButtonText();
+            UpdateCloseTradeButtonState();
             return buttons;
+        }
+
+        private Border BuildCloseTradePanel()
+        {
+            StackPanel stack = new StackPanel();
+            Grid modes = new Grid { Margin = new Thickness(0, 2, 0, 5) };
+            modes.ColumnDefinitions.Add(new ColumnDefinition());
+            modes.ColumnDefinitions.Add(new ColumnDefinition());
+            modes.ColumnDefinitions.Add(new ColumnDefinition());
+
+            closeFullButton = CloseModeButton("Full", "full");
+            closePartialButton = CloseModeButton("Partial", "partial");
+            closeEmergencyButton = CloseModeButton("Emergency", "emergency");
+            Grid.SetColumn(closeFullButton, 0);
+            Grid.SetColumn(closePartialButton, 1);
+            Grid.SetColumn(closeEmergencyButton, 2);
+            modes.Children.Add(closeFullButton);
+            modes.Children.Add(closePartialButton);
+            modes.Children.Add(closeEmergencyButton);
+            stack.Children.Add(modes);
+
+            Grid qtyRow = FieldRow("Qty");
+            closeQtyBox = new TextBox
+            {
+                Text = Math.Max(1, Lots).ToString(CultureInfo.InvariantCulture),
+                FontSize = 10,
+                Height = 23,
+                Padding = new Thickness(4, 1, 4, 1),
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(10, 10, 10)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(65, 65, 65))
+            };
+            EnableTextEntry(closeQtyBox);
+            Grid.SetColumn(closeQtyBox, 1);
+            qtyRow.Children.Add(closeQtyBox);
+            stack.Children.Add(qtyRow);
+
+            closeConfirmButton = SmallCloseAction("Confirm full exit");
+            closeConfirmButton.Click += async (s, e) => await ConfirmCloseTradeAsync();
+            stack.Children.Add(closeConfirmButton);
+
+            UpdateCloseModeButtons();
+            return new Border
+            {
+                CornerRadius = new CornerRadius(8),
+                Background = new SolidColorBrush(Color.FromRgb(24, 24, 24)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(58, 58, 58)),
+                BorderThickness = new Thickness(1),
+                Padding = new Thickness(7),
+                Margin = new Thickness(3, 5, 3, 0),
+                Child = stack
+            };
+        }
+
+        private Button CloseModeButton(string label, string mode)
+        {
+            Button button = new Button
+            {
+                Content = label,
+                Height = 24,
+                Margin = new Thickness(2),
+                Padding = new Thickness(4, 0, 4, 0),
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(32, 32, 32)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(70, 70, 70)),
+                FontSize = 9,
+                FontWeight = FontWeights.SemiBold,
+                Tag = mode
+            };
+            ApplyRoundedButton(button, 7);
+            button.Click += (s, e) =>
+            {
+                closeMode = mode;
+                UpdateCloseModeButtons();
+            };
+            return button;
+        }
+
+        private Button SmallCloseAction(string text)
+        {
+            Button button = new Button
+            {
+                Content = text,
+                Height = 27,
+                Margin = new Thickness(3, 5, 3, 0),
+                Padding = new Thickness(4, 0, 4, 0),
+                Foreground = Brushes.White,
+                Background = new SolidColorBrush(Color.FromRgb(36, 36, 36)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(72, 72, 72)),
+                FontSize = 10,
+                FontWeight = FontWeights.SemiBold
+            };
+            ApplyRoundedButton(button, 8);
+            return button;
         }
 
         private Button IconButton(string text)
@@ -1266,10 +1379,145 @@ namespace NinjaTrader.NinjaScript.Indicators
                 popup.Visibility = Visibility.Collapsed;
             if (settingsPanel != null)
                 settingsPanel.Visibility = Visibility.Collapsed;
+            if (closeTradePanel != null)
+                closeTradePanel.Visibility = Visibility.Collapsed;
             if (restoreButton != null)
                 restoreButton.Visibility = Visibility.Visible;
             if (root != null)
                 root.Width = 112;
+        }
+
+        private void ToggleCloseTradePanel()
+        {
+            if (!HasActiveLinkedTrade())
+            {
+                SetStatus("No active linked OpenBull trade to close", false);
+                return;
+            }
+            if (closeTradePanel == null)
+                return;
+            if (closeQtyBox != null)
+            {
+                int qty = managedTrade != null && managedTrade.RemainingQty > 0 ? managedTrade.RemainingQty : Math.Max(1, Lots);
+                closeQtyBox.Text = qty.ToString(CultureInfo.InvariantCulture);
+            }
+            closeTradePanel.Visibility = closeTradePanel.Visibility == Visibility.Visible
+                ? Visibility.Collapsed
+                : Visibility.Visible;
+            UpdateCloseModeButtons();
+        }
+
+        private bool HasActiveLinkedTrade()
+        {
+            return managedTrade != null
+                && managedTrade.TradeId > 0
+                && managedTrade.RemainingQty > 0
+                && string.Equals(managedTrade.Status, "active", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private void UpdateCloseTradeButtonState()
+        {
+            if (closeTradeButton != null)
+                closeTradeButton.IsEnabled = HasActiveLinkedTrade();
+            if (closeConfirmButton != null)
+                closeConfirmButton.IsEnabled = HasActiveLinkedTrade();
+        }
+
+        private void UpdateCloseModeButtons()
+        {
+            ApplyCloseModeStyle(closeFullButton, closeMode == "full", false);
+            ApplyCloseModeStyle(closePartialButton, closeMode == "partial", false);
+            ApplyCloseModeStyle(closeEmergencyButton, closeMode == "emergency", true);
+            if (closeQtyBox != null)
+                closeQtyBox.IsEnabled = closeMode == "partial";
+            if (closeConfirmButton != null)
+            {
+                string label = closeMode == "partial" ? "Confirm partial exit"
+                    : closeMode == "emergency" ? "Confirm emergency"
+                    : "Confirm full exit";
+                closeConfirmButton.Content = label;
+                closeConfirmButton.Background = closeMode == "emergency"
+                    ? new SolidColorBrush(Color.FromRgb(115, 22, 22))
+                    : new SolidColorBrush(Color.FromRgb(42, 88, 200));
+                closeConfirmButton.BorderBrush = closeMode == "emergency"
+                    ? new SolidColorBrush(Color.FromRgb(170, 55, 55))
+                    : new SolidColorBrush(Color.FromRgb(75, 115, 220));
+            }
+            UpdateCloseTradeButtonState();
+        }
+
+        private void ApplyCloseModeStyle(Button button, bool selected, bool emergency)
+        {
+            if (button == null)
+                return;
+            button.Background = selected
+                ? emergency
+                    ? new SolidColorBrush(Color.FromRgb(115, 22, 22))
+                    : new SolidColorBrush(Color.FromRgb(42, 88, 200))
+                : new SolidColorBrush(Color.FromRgb(32, 32, 32));
+            button.BorderBrush = selected
+                ? emergency
+                    ? new SolidColorBrush(Color.FromRgb(170, 55, 55))
+                    : new SolidColorBrush(Color.FromRgb(75, 115, 220))
+                : new SolidColorBrush(Color.FromRgb(70, 70, 70));
+        }
+
+        private async Task ConfirmCloseTradeAsync()
+        {
+            if (isBusy)
+                return;
+            if (!HasActiveLinkedTrade())
+            {
+                SetStatus("No active linked OpenBull trade to close", false);
+                return;
+            }
+
+            int tradeId = managedTrade.TradeId;
+            int qty = managedTrade.RemainingQty > 0 ? managedTrade.RemainingQty : Math.Max(1, Lots);
+            if (closeMode == "partial" && closeQtyBox != null)
+                qty = Math.Max(1, Math.Min(ParseInt(closeQtyBox.Text, qty), managedTrade.RemainingQty));
+
+            isBusy = true;
+            SetButtonsEnabled(false);
+            SetStatus("Closing linked trade...", true);
+            try
+            {
+                NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
+                string result = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.CloseTradeAsync(tradeId, closeMode, qty);
+                bool closeOk = !result.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase);
+                if (!closeOk)
+                    result = result.Substring("ERROR:".Length).Trim();
+                OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(tradeId);
+                if (snapshot != null)
+                {
+                    ApplyLiveOptionPrice(snapshot);
+                    ChartControl.Dispatcher.InvokeAsync(() =>
+                    {
+                        managedTrade = snapshot;
+                        managedTrades[tradeId] = snapshot;
+                        AttachBellDrawingTool(snapshot);
+                        if (!string.Equals(snapshot.Status, "active", StringComparison.OrdinalIgnoreCase) || snapshot.RemainingQty <= 0)
+                            closeTradePanel.Visibility = Visibility.Collapsed;
+                        UpdateCloseTradeButtonState();
+                        SetStatus(result, closeOk);
+                        RequestChartRefresh();
+                    });
+                }
+                else
+                {
+                    SetStatus(result, closeOk);
+                }
+            }
+            catch (Exception ex)
+            {
+                SetStatus(ex.Message, false);
+            }
+            finally
+            {
+                isBusy = false;
+                SetButtonsEnabled(true);
+                await FetchLiveAsync();
+            }
         }
 
         private void RefreshButtonText()
@@ -1593,6 +1841,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (!ShowPreviousTradeDrawings)
                     RemoveOtherTradeDrawings(tradeId, false);
                 bool bellLinked = AttachBellDrawingTool(snapshot);
+                UpdateCloseTradeButtonState();
                 if (orderAccepted)
                     SetStatus(bellLinked ? "Order sent - Bell drawing tool linked" : "Order sent - chart levels linked", true);
                 else
@@ -1644,6 +1893,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (AttachBellDrawingTool(snapshot))
                         restored++;
                 }
+                UpdateCloseTradeButtonState();
                 if (restored > 0)
                     SetStatus("Restored " + restored.ToString(CultureInfo.InvariantCulture) + " Bell drawing tool(s)", true);
                 RequestChartRefresh();
@@ -1690,6 +1940,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     managedTrades[snapshot.TradeId] = snapshot;
                     if (linkedBellTools.ContainsKey(snapshot.TradeId))
                         AttachBellDrawingTool(snapshot);
+                    UpdateCloseTradeButtonState();
                     RequestChartRefresh();
                 });
             }
@@ -2590,6 +2841,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (sellCeButton != null) sellCeButton.IsEnabled = enabled;
                 if (buyPeButton != null) buyPeButton.IsEnabled = enabled;
                 if (sellPeButton != null) sellPeButton.IsEnabled = enabled;
+                if (closeTradeButton != null) closeTradeButton.IsEnabled = enabled && HasActiveLinkedTrade();
+                if (closeConfirmButton != null) closeConfirmButton.IsEnabled = enabled && HasActiveLinkedTrade();
             });
         }
 

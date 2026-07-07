@@ -98,6 +98,42 @@ namespace NinjaTrader.NinjaScript
             }
         }
 
+        public static async Task<string> CloseTradeAsync(int tradeId, string mode, int qty)
+        {
+            if (tradeId <= 0)
+                return "No linked OpenBull trade to close";
+            if (string.IsNullOrWhiteSpace(ApiKey))
+                return "OpenBull API key missing";
+
+            string normalizedMode = string.IsNullOrWhiteSpace(mode) ? "full" : mode.Trim().ToLowerInvariant();
+            if (normalizedMode != "full" && normalizedMode != "partial" && normalizedMode != "emergency")
+                normalizedMode = "full";
+
+            string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/trades/" + tradeId.ToString(CultureInfo.InvariantCulture) + "/exit";
+            StringBuilder sb = new StringBuilder();
+            sb.Append("{");
+            JsonString(sb, "apikey", ApiKey, true);
+            JsonString(sb, "mode", normalizedMode, false);
+            if (normalizedMode == "partial")
+                JsonNumber(sb, "qty", Math.Max(1, qty), false);
+            sb.Append("}");
+
+            using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Post, url))
+            using (StringContent content = new StringContent(sb.ToString(), Encoding.UTF8, "application/json"))
+            {
+                request.Headers.TryAddWithoutValidation("X-API-KEY", ApiKey);
+                request.Content = content;
+                HttpResponseMessage response = await Http.SendAsync(request);
+                string body = await response.Content.ReadAsStringAsync();
+                if (response.IsSuccessStatusCode && body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    string message = ExtractJsonValue(body, "message");
+                    return string.IsNullOrWhiteSpace(message) || message == "null" ? "Exit placed" : message;
+                }
+                return "ERROR: " + TrimForStatus(body);
+            }
+        }
+
         public static async Task<OpenBullTradeSnapshot> FetchTradeAsync(int tradeId)
         {
             if (tradeId <= 0 || string.IsNullOrWhiteSpace(ApiKey))
