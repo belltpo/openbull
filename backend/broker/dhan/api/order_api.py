@@ -211,6 +211,10 @@ def place_order_api(data: dict, auth: str) -> tuple:
             headers["client-id"] = client_id
 
         payload = json.dumps(newdata)
+        safe_payload = dict(newdata)
+        if safe_payload.get("dhanClientId"):
+            safe_payload["dhanClientId"] = "[redacted]"
+        logger.info("Placing Dhan order with data: %s", safe_payload)
         client = get_httpx_client()
         response = client.post(_get_url("/v2/orders"), headers=headers, content=payload)
         response.status = response.status_code
@@ -226,6 +230,13 @@ def place_order_api(data: dict, auth: str) -> tuple:
             orderid = response_data.get("orderId")
             if not orderid:
                 logger.error("orderId not found in response: %s", response_data)
+            else:
+                return response, {
+                    "status": "success",
+                    "orderid": orderid,
+                    "data": response_data,
+                    "message": response_data.get("orderStatus") or "Order accepted",
+                }, orderid
         else:
             logger.error("Place order failed (HTTP %d): %s", response.status_code, response_data)
 
