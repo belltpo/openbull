@@ -758,6 +758,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 OpenBullUrl = value;
                 NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
             }, out urlBox));
+            WireCommitSave(urlBox);
             stack.Children.Add(PasswordField("API Key", value =>
             {
                 ApiKey = value;
@@ -796,14 +797,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             });
             stack.Children.Add(Field("Lots", Lots.ToString(CultureInfo.InvariantCulture), value =>
             {
-                if (!string.IsNullOrWhiteSpace(value))
-                    Lots = Math.Max(1, ParseInt(value, Lots));
+                Lots = Math.Max(1, ParseInt(value, Lots));
+                if (lotsBox != null && lotsBox.Text != Lots.ToString(CultureInfo.InvariantCulture))
+                    lotsBox.Text = Lots.ToString(CultureInfo.InvariantCulture);
             }, out lotsBox));
             WireCommitSave(lotsBox);
             stack.Children.Add(Field("SL pts", SlPoints.ToString(CultureInfo.InvariantCulture), value =>
             {
-                if (!string.IsNullOrWhiteSpace(value))
-                    SlPoints = ParseDouble(value, SlPoints);
+                SlPoints = ParseDouble(value, SlPoints);
+                if (slBox != null && slBox.Text != SlPoints.ToString(CultureInfo.InvariantCulture))
+                    slBox.Text = SlPoints.ToString(CultureInfo.InvariantCulture);
             }, out slBox));
             WireCommitSave(slBox);
             templateCombo = ComboRow(stack, "Template", value =>
@@ -840,7 +843,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             Button remove = SmallAction("Remove");
             Button delete = SmallAction("Delete");
             WireActionButton(refresh, "Refresh", async () => await FetchOptionsAsync());
-            WireActionButton(save, "Save", async () => await SaveSettingsAsync());
+            WireActionButton(save, "Save", async () =>
+            {
+                CommitAllSettingInputs();
+                await SaveSettingsAsync();
+            });
             WireActionButton(remove, "Remove", async () => await RemoveCurrentTradeDrawingAsync());
             WireActionButton(delete, "Delete", async () => await DeleteSettingsAsync());
             Grid.SetColumn(refresh, 0);
@@ -901,13 +908,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             };
             outBox = box;
             EnableTextEntry(box);
-            box.TextChanged += (s, e) =>
-            {
-                if (settingsHydrating)
-                    return;
-                onChanged(box.Text);
-                RefreshButtonText();
-            };
+            box.Tag = onChanged;
             Grid.SetColumn(box, 1);
             row.Children.Add(box);
             return row;
@@ -917,15 +918,61 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (box == null)
                 return;
-            box.LostKeyboardFocus += (s, e) => Task.Run(async () => await SaveSettingsAsync());
+            box.LostKeyboardFocus += (s, e) =>
+            {
+                CommitTextBox(box);
+                Task.Run(async () => await SaveSettingsAsync());
+            };
             box.KeyDown += (s, e) =>
             {
                 if (e.Key == Key.Enter)
                 {
                     e.Handled = true;
+                    CommitTextBox(box);
                     Task.Run(async () => await SaveSettingsAsync());
                 }
+                else if (IsTextEditingKey(e.Key))
+                {
+                    e.Handled = true;
+                }
             };
+        }
+
+        private void CommitTextBox(TextBox box)
+        {
+            if (box == null || settingsHydrating)
+                return;
+            string value = box.Text == null ? "" : box.Text.Trim();
+            if (string.IsNullOrWhiteSpace(value))
+                return;
+            Action<string> onChanged = box.Tag as Action<string>;
+            if (onChanged == null)
+                return;
+            onChanged(value);
+            RefreshButtonText();
+        }
+
+        private void CommitAllSettingInputs()
+        {
+            CommitTextBox(urlBox);
+            CommitTextBox(lotsBox);
+            CommitTextBox(slBox);
+        }
+
+        private static bool IsTextEditingKey(Key key)
+        {
+            return (key >= Key.D0 && key <= Key.D9)
+                || (key >= Key.NumPad0 && key <= Key.NumPad9)
+                || key == Key.Back
+                || key == Key.Delete
+                || key == Key.Decimal
+                || key == Key.OemPeriod
+                || key == Key.OemMinus
+                || key == Key.Subtract
+                || key == Key.Left
+                || key == Key.Right
+                || key == Key.Home
+                || key == Key.End;
         }
 
         private UIElement CheckRow(string label, bool value, Action<bool> onChanged, out CheckBox outBox)
@@ -1162,8 +1209,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Keyboard.Focus(target);
                     TextBox textBox = target as TextBox;
                     if (textBox != null)
-                        textBox.CaretIndex = textBox.Text == null ? 0 : textBox.Text.Length;
+                    {
+                        textBox.SelectAll();
+                    }
                 }), DispatcherPriority.Input);
+            };
+            control.PreviewKeyDown += (s, e) =>
+            {
+                if (IsTextEditingKey(e.Key) || e.Key == Key.Enter || e.Key == Key.Tab)
+                    e.Handled = false;
             };
         }
 
@@ -1484,6 +1538,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (isBusy)
                 return;
+            CommitAllSettingInputs();
             if (string.IsNullOrWhiteSpace(ApiKey))
             {
                 SetStatus("API key missing", false);
