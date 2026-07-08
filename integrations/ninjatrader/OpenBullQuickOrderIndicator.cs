@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -1123,7 +1124,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             combo.ItemTemplate = BuildComboItemTemplate();
             combo.ItemContainerStyle = BuildComboItemStyle();
             combo.Loaded += (s, e) => ApplyComboTextColors(combo);
-            combo.DropDownOpened += (s, e) => ApplyComboTextColors(combo);
+            combo.DropDownOpened += (s, e) =>
+            {
+                ApplyComboTextColors(combo);
+                ScrollComboToSelected(combo);
+            };
             combo.SelectionChanged += (s, e) =>
             {
                 RefreshComboDisplay(combo);
@@ -1208,6 +1213,41 @@ namespace NinjaTrader.NinjaScript.Indicators
             text.SetValue(TextBlock.PaddingProperty, new Thickness(3, 1, 3, 1));
             template.VisualTree = text;
             return template;
+        }
+
+        private static void ScrollComboToSelected(ComboBox combo)
+        {
+            if (combo == null || combo.SelectedItem == null || combo.SelectedIndex < 0)
+                return;
+
+            combo.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    combo.ApplyTemplate();
+                    combo.UpdateLayout();
+
+                    Popup popup = combo.Template.FindName("PART_Popup", combo) as Popup;
+                    ScrollViewer viewer = popup != null && popup.Child != null
+                        ? FindVisualChild<ScrollViewer>(popup.Child)
+                        : FindVisualChild<ScrollViewer>(combo);
+
+                    if (viewer != null)
+                    {
+                        int targetIndex = Math.Max(0, combo.SelectedIndex - 3);
+                        viewer.ScrollToVerticalOffset(targetIndex);
+                        combo.UpdateLayout();
+                    }
+
+                    ComboBoxItem item = combo.ItemContainerGenerator.ContainerFromItem(combo.SelectedItem) as ComboBoxItem;
+                    if (item != null)
+                        item.BringIntoView();
+                }
+                catch
+                {
+                    // Best-effort visual positioning only. Trading behavior must never depend on it.
+                }
+            }), DispatcherPriority.ContextIdle);
         }
 
         private static void ApplyComboTextColors(ComboBox combo)
