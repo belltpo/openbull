@@ -628,10 +628,13 @@ def list_expiries(underlying: str, underlying_exchange: str = "NSE_INDEX") -> li
         if sym and exp and exact_pattern.match(str(sym).upper())
     }
     out: list[tuple[datetime, str]] = []
+    today_ist = datetime.now(timezone(timedelta(hours=5, minutes=30))).date()
     for exp in expiries:
         try:
             d = datetime.strptime(exp, "%d-%b-%y")
         except (ValueError, TypeError):
+            continue
+        if d.date() < today_ist:
             continue
         out.append((d, exp))
     out.sort(key=lambda t: t[0])
@@ -1576,6 +1579,24 @@ def place_draft(
 # Reads / serialization
 # ---------------------------------------------------------------------------
 
+def _utc_iso(dt: datetime | None) -> str | None:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
+
+
+def _epoch_ms(dt: datetime | None) -> int | None:
+    if not dt:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return int(dt.timestamp() * 1000)
+
+
 def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
     live_option_price = None
     if t.option_symbol and t.option_exchange:
@@ -1623,6 +1644,9 @@ def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
             else None
         ),
         "created_at": t.created_at.isoformat() if t.created_at else None,
+        "created_at_utc": _utc_iso(t.created_at),
+        "created_at_epoch_ms": _epoch_ms(t.created_at),
+        "entry_time": _utc_iso(t.created_at),
         "updated_at": t.updated_at.isoformat() if t.updated_at else None,
     }
 

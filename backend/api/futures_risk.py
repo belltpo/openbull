@@ -178,6 +178,15 @@ def _save_contract_templates(data: dict[str, Any]) -> None:
         raise FrError("Unable to save contract quick-order settings", 500)
 
 
+def _effective_expiry(underlying: str, underlying_exchange: str, requested_expiry: str | None) -> str:
+    expiries = fr.list_expiries(underlying, underlying_exchange) if underlying else []
+    values = {str(e.get("value") or "").upper() for e in expiries}
+    requested = str(requested_expiry or "").upper()
+    if requested and requested in values:
+        return requested
+    return str(expiries[0].get("value") or "") if expiries else requested
+
+
 @router.post("/futures-risk/quick-order/options")
 async def api_futures_risk_quick_order_options(request: Request):
     """Return dropdown data and saved per-contract quick-order settings."""
@@ -199,7 +208,17 @@ async def api_futures_risk_quick_order_options(request: Request):
     selected_map = next((m for m in maps if str(m.get("underlying", "")).upper() == selected), None)
     underlying_exchange = str((selected_map or {}).get("underlying_exchange") or payload.underlying_exchange or "NSE_INDEX")
     expiries = fr.list_expiries(selected, underlying_exchange) if selected else []
-    selected_expiry = payload.expiry or (expiries[0]["value"] if expiries else "")
+    saved = _contract_templates().get(selected) if selected else None
+    expiry_values = {str(e.get("value") or "").upper() for e in expiries}
+    requested_expiry = str(payload.expiry or "").upper()
+    saved_expiry = str(saved.get("expiry") or "").upper() if isinstance(saved, dict) else ""
+    if requested_expiry and requested_expiry in expiry_values:
+        selected_expiry = requested_expiry
+    elif saved_expiry and saved_expiry in expiry_values:
+        selected_expiry = saved_expiry
+    else:
+        selected_expiry = expiries[0]["value"] if expiries else ""
+    saved_expiry_is_current = bool(saved_expiry and saved_expiry == str(selected_expiry).upper())
     strikes: list[float] = []
     atm: float | None = None
     open_atm: float | None = None
@@ -222,13 +241,12 @@ async def api_futures_risk_quick_order_options(request: Request):
         {"id": t["id"], "name": t["name"], "is_default": t.get("is_default", False)}
         for t in fr.list_target_templates(enabled_only=True)
     ]
-    saved = _contract_templates().get(selected) if selected else None
     config_map = fr.get_config_map()
     defaults = {
         "underlying_exchange": underlying_exchange,
-        "expiry": saved.get("expiry") if isinstance(saved, dict) else selected_expiry,
-        "ce_strike": saved.get("ce_strike") if isinstance(saved, dict) else None,
-        "pe_strike": saved.get("pe_strike") if isinstance(saved, dict) else None,
+        "expiry": selected_expiry,
+        "ce_strike": saved.get("ce_strike") if isinstance(saved, dict) and saved_expiry_is_current else None,
+        "pe_strike": saved.get("pe_strike") if isinstance(saved, dict) and saved_expiry_is_current else None,
         "lots": saved.get("lots") if isinstance(saved, dict) else config_map.get("default_lots", {}).get("value", "1"),
         "sl_points": saved.get("sl_points") if isinstance(saved, dict) else config_map.get("default_sl_points", {}).get("value", "5"),
         "product": saved.get("product") if isinstance(saved, dict) else config_map.get("default_product", {}).get("value", "NRML"),
@@ -338,6 +356,27 @@ def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str
         except Exception:
             logger.debug("Unable to seed market-data cache for %s/%s", symbol, exchange, exc_info=True)
 
+    def coerce_ltp(value: Any) -> float:
+        if isinstance(value, dict):
+            for field in ("ltp", "last_price", "lastPrice", "lastTradedPrice", "last_traded_price", "close"):
+                try:
+                    ltp_value = float(value.get(field) or 0)
+                except (TypeError, ValueError):
+                    ltp_value = 0.0
+                if ltp_value > 0:
+                    return ltp_value
+            nested = value.get("data")
+            if isinstance(nested, dict):
+                if len(nested) == 1:
+                    only_value = next(iter(nested.values()))
+                    nested_ltp = coerce_ltp(only_value)
+                    if nested_ltp > 0:
+                        return nested_ltp
+                nested_ltp = coerce_ltp(nested)
+                if nested_ltp > 0:
+                    return nested_ltp
+        return 0.0
+
     try:
         cached_ltp = fresh_cached_ltp()
         if cached_ltp and cached_ltp > 0:
@@ -368,21 +407,24 @@ def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str
         config=config,
     )
     data = response.get("data", {}) if ok and isinstance(response, dict) else {}
-    try:
-        ltp = float(data.get("ltp") or 0)
-    except (TypeError, ValueError):
-        ltp = 0.0
-    remember_ltp(ltp)
+    ltp = coerce_ltp(data)
+    if ltp > 0:
+        remember_ltp(ltp)
+    message = response.get("message") if isinstance(response, dict) else None
+    status = "success" if ok and ltp > 0 else "error"
+    if ok and ltp <= 0 and not message:
+        message = f"Quote LTP unavailable for {symbol}"
     payload = {
         "symbol": symbol,
         "exchange": exchange,
         "ltp": ltp,
-        "status": "success" if ok else "error",
+        "status": status,
         "source": "rest",
-        "message": response.get("message") if isinstance(response, dict) else None,
+        "message": message,
     }
-    with _quote_cache_lock:
-        _recent_quotes[key] = (now + _QUOTE_CACHE_TTL_SECONDS, payload)
+    if ltp > 0:
+        with _quote_cache_lock:
+            _recent_quotes[key] = (now + _QUOTE_CACHE_TTL_SECONDS, payload)
     return payload
 
 
@@ -409,6 +451,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
             None,
         )
         underlying_exchange = str((selected_map or {}).get("underlying_exchange") or payload.underlying_exchange)
+        effective_expiry = _effective_expiry(payload.underlying, underlying_exchange, payload.expiry)
         fut = fr.resolve_futures(payload.underlying)
         if fut is None:
             return JSONResponse(
@@ -418,6 +461,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
 
         data: dict[str, Any] = {
             "mode": mode,
+            "expiry": effective_expiry,
             "futures": _quote_payload(fut["symbol"], fut["exchange"], auth_token, broker_name, config),
             "ce": None,
             "pe": None,
@@ -426,7 +470,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
             ce = fr._resolve_option(  # type: ignore[attr-defined]
                 payload.underlying,
                 underlying_exchange,
-                payload.expiry,
+                effective_expiry,
                 "CE",
                 "BUY",
                 payload.ce_strike,
@@ -440,7 +484,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
             pe = fr._resolve_option(  # type: ignore[attr-defined]
                 payload.underlying,
                 underlying_exchange,
-                payload.expiry,
+                effective_expiry,
                 "PE",
                 "BUY",
                 payload.pe_strike,
@@ -537,6 +581,11 @@ async def api_futures_risk_quick_order(request: Request):
         )
 
     params = payload.model_dump(exclude={"apikey", "client_order_id", "source"})
+    params["expiry"] = _effective_expiry(
+        payload.underlying,
+        str(params.get("underlying_exchange") or payload.underlying_exchange),
+        str(params.get("expiry") or payload.expiry),
+    )
 
     try:
         trade = fr.place_trade(

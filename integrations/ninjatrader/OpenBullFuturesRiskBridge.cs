@@ -43,6 +43,7 @@ namespace NinjaTrader.NinjaScript
         public int RemainingQty { get; set; }
         public double LiveOptionPrice { get; set; }
         public DateTime CreatedAt { get; set; }
+        public DateTime EntryTime { get; set; }
         public List<OpenBullTradeLevel> Targets { get; set; }
 
         public OpenBullTradeSnapshot()
@@ -205,6 +206,11 @@ namespace NinjaTrader.NinjaScript
             trade.RealizedPnl = ExtractNumber(data, "realized_pnl");
             trade.RemainingQty = (int)ExtractNumber(data, "remaining_qty");
             trade.CreatedAt = ExtractDateTime(data, "created_at");
+            trade.EntryTime = ExtractDateTime(data, "entry_time");
+            if (trade.EntryTime == DateTime.MinValue)
+                trade.EntryTime = ExtractDateTime(data, "created_at_utc");
+            if (trade.EntryTime == DateTime.MinValue)
+                trade.EntryTime = trade.CreatedAt;
             trade.Targets = ExtractTargets(data);
             if (trade.TradeId <= 0)
                 return null;
@@ -295,10 +301,15 @@ namespace NinjaTrader.NinjaScript
 
         private static DateTime ExtractDateTime(string body, string key)
         {
-            DateTime parsed;
             string raw = ExtractJsonValue(body, key);
-            if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out parsed))
-                return parsed;
+            if (string.IsNullOrWhiteSpace(raw) || raw == "null")
+                return DateTime.MinValue;
+            DateTimeOffset parsedOffset;
+            if (DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out parsedOffset))
+                return parsedOffset.ToLocalTime().DateTime;
+            DateTime parsed;
+            if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out parsed))
+                return parsed.ToLocalTime();
             return DateTime.MinValue;
         }
 

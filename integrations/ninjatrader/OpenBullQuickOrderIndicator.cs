@@ -2059,9 +2059,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                     bool snapshotActive = string.Equals(snapshot.Status, "active", StringComparison.OrdinalIgnoreCase);
                     bool selectedActive = string.Equals(selected.Status, "active", StringComparison.OrdinalIgnoreCase);
+                    DateTime snapshotTime = SnapshotTime(snapshot);
+                    DateTime selectedTime = SnapshotTime(selected);
                     if ((snapshotActive && !selectedActive) ||
-                        (snapshotActive == selectedActive && snapshot.CreatedAt > selected.CreatedAt) ||
-                        (snapshotActive == selectedActive && snapshot.CreatedAt == selected.CreatedAt && snapshot.TradeId > selected.TradeId))
+                        (snapshotActive == selectedActive && snapshotTime > selectedTime) ||
+                        (snapshotActive == selectedActive && snapshotTime == selectedTime && snapshot.TradeId > selected.TradeId))
                         selected = snapshot;
                 }
             }
@@ -2354,9 +2356,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             int count = ChartBars.Bars.Count;
             int startIndex = Math.Max(0, count - 12);
             int endIndex = Math.Max(0, count - 1);
-            if (snapshot != null && snapshot.CreatedAt != DateTime.MinValue)
+            DateTime tradeTime = SnapshotTime(snapshot);
+            if (tradeTime != DateTime.MinValue)
             {
-                int createdIndex = ChartBars.Bars.GetBar(snapshot.CreatedAt);
+                int createdIndex = FindNearestBarIndex(tradeTime);
                 if (createdIndex >= 0)
                 {
                     startIndex = Math.Max(0, Math.Min(createdIndex, count - 1));
@@ -2369,6 +2372,40 @@ namespace NinjaTrader.NinjaScript.Indicators
             endTime = ChartBars.Bars.GetTime(endIndex);
             if (endTime <= entryTime)
                 endTime = entryTime.AddMinutes(10);
+        }
+
+        private DateTime SnapshotTime(OpenBullTradeSnapshot snapshot)
+        {
+            if (snapshot == null)
+                return DateTime.MinValue;
+            if (snapshot.EntryTime != DateTime.MinValue)
+                return snapshot.EntryTime;
+            return snapshot.CreatedAt;
+        }
+
+        private int FindNearestBarIndex(DateTime timestamp)
+        {
+            if (ChartBars == null || ChartBars.Bars == null || ChartBars.Bars.Count <= 0 || timestamp == DateTime.MinValue)
+                return -1;
+            int count = ChartBars.Bars.Count;
+            int exact = ChartBars.Bars.GetBar(timestamp);
+            if (exact >= 0)
+                return Math.Max(0, Math.Min(exact, count - 1));
+
+            int start = Math.Max(0, count - 2000);
+            int bestIndex = -1;
+            long bestDiff = long.MaxValue;
+            for (int i = start; i < count; i++)
+            {
+                DateTime barTime = ChartBars.Bars.GetTime(i);
+                long diff = Math.Abs(barTime.Ticks - timestamp.Ticks);
+                if (diff < bestDiff)
+                {
+                    bestDiff = diff;
+                    bestIndex = i;
+                }
+            }
+            return bestIndex;
         }
 
         private async Task SyncManagedLevelsAsync()

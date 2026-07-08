@@ -464,11 +464,6 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 
                 if (closest != null)
                 {
-                    if (OpenBullTradeId > 0 && closest == EntryAnchor)
-                    {
-                        OpenBullSyncStatus = "Entry is fixed after order placement";
-                        return;
-                    }
                     if (OpenBullTradeId > 0 && IsCompletedTargetAnchor(closest))
                     {
                         OpenBullSyncStatus = "Completed target is locked";
@@ -487,25 +482,48 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             {
                 if (EntryAnchor.IsEditing)
                 {
-                    // When dragging entry, ALWAYS move all lines relative to it
-                    double priceDelta = dataPoint.Price - EntryAnchor.Price;
+                    if (OpenBullTradeId > 0)
+                    {
+                        TimeSpan timeDelta = dataPoint.Time - EntryAnchor.Time;
+                        EntryAnchor.Time = EntryAnchor.Time.Add(timeDelta);
+                        EndAnchor.Time = EndAnchor.Time.Add(timeDelta);
+                        SLAnchor.Time = SLAnchor.Time.Add(timeDelta);
+                        SLEndAnchor.Time = SLEndAnchor.Time.Add(timeDelta);
+                        T1Anchor.Time = T1Anchor.Time.Add(timeDelta);
+                        T1EndAnchor.Time = T1EndAnchor.Time.Add(timeDelta);
+                        T2Anchor.Time = T2Anchor.Time.Add(timeDelta);
+                        T2EndAnchor.Time = T2EndAnchor.Time.Add(timeDelta);
+                        T3Anchor.Time = T3Anchor.Time.Add(timeDelta);
+                        T3EndAnchor.Time = T3EndAnchor.Time.Add(timeDelta);
+                        T4Anchor.Time = T4Anchor.Time.Add(timeDelta);
+                        T4EndAnchor.Time = T4EndAnchor.Time.Add(timeDelta);
+                        T5Anchor.Time = T5Anchor.Time.Add(timeDelta);
+                        T5EndAnchor.Time = T5EndAnchor.Time.Add(timeDelta);
+                        T6Anchor.Time = T6Anchor.Time.Add(timeDelta);
+                        T6EndAnchor.Time = T6EndAnchor.Time.Add(timeDelta);
+                    }
+                    else
+                    {
+                        // When dragging entry, ALWAYS move all lines relative to it
+                        double priceDelta = dataPoint.Price - EntryAnchor.Price;
 
-                    dataPoint.CopyDataValues(EntryAnchor);
-                    EndAnchor.Price += priceDelta;
-                    SLAnchor.Price += priceDelta;
-                    SLEndAnchor.Price += priceDelta;
-                    T1Anchor.Price += priceDelta;
-                    T1EndAnchor.Price += priceDelta;
-                    T2Anchor.Price += priceDelta;
-                    T2EndAnchor.Price += priceDelta;
-                    T3Anchor.Price += priceDelta;
-                    T3EndAnchor.Price += priceDelta;
-                    T4Anchor.Price += priceDelta;
-                    T4EndAnchor.Price += priceDelta;
-                    T5Anchor.Price += priceDelta;
-                    T5EndAnchor.Price += priceDelta;
-                    T6Anchor.Price += priceDelta;
-                    T6EndAnchor.Price += priceDelta;
+                        dataPoint.CopyDataValues(EntryAnchor);
+                        EndAnchor.Price += priceDelta;
+                        SLAnchor.Price += priceDelta;
+                        SLEndAnchor.Price += priceDelta;
+                        T1Anchor.Price += priceDelta;
+                        T1EndAnchor.Price += priceDelta;
+                        T2Anchor.Price += priceDelta;
+                        T2EndAnchor.Price += priceDelta;
+                        T3Anchor.Price += priceDelta;
+                        T3EndAnchor.Price += priceDelta;
+                        T4Anchor.Price += priceDelta;
+                        T4EndAnchor.Price += priceDelta;
+                        T5Anchor.Price += priceDelta;
+                        T5EndAnchor.Price += priceDelta;
+                        T6Anchor.Price += priceDelta;
+                        T6EndAnchor.Price += priceDelta;
+                    }
                 }
                 else if (EndAnchor.IsEditing || SLEndAnchor.IsEditing || T1EndAnchor.IsEditing ||
                          T2EndAnchor.IsEditing || T3EndAnchor.IsEditing || T4EndAnchor.IsEditing ||
@@ -986,6 +1004,8 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 
         private ChartAnchor GetClosestLineAnchor(ChartControl chartControl, ChartPanel chartPanel, ChartScale chartScale, Point point)
         {
+            if (IsPointNearLine(chartControl, chartPanel, chartScale, EntryAnchor, EndAnchor, point))
+                return EntryAnchor;
             if (IsPointNearLine(chartControl, chartPanel, chartScale, SLAnchor, SLEndAnchor, point))
                 return SLAnchor;
             if (ShowT1 && IsPointNearLine(chartControl, chartPanel, chartScale, T1Anchor, T1EndAnchor, point))
