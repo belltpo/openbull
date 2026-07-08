@@ -243,7 +243,7 @@ export default function FuturesRisk() {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-2xl font-bold tracking-tight text-transparent">
-            Futures-Risk Options
+            Options
           </h1>
           <p className="text-sm text-muted-foreground">
             Execute in options — targets, stop-loss &amp; trailing all driven by the underlying futures price.

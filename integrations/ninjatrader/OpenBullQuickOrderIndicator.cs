@@ -29,11 +29,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
         private static string[] cachedExpiries = new string[0];
         private static double[] cachedStrikes = new double[0];
+        private static string[] cachedUnderlyings = new string[] { "NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "SILVER", "GOLD" };
         private static int[] cachedTemplateIds = new int[] { 0 };
         private static readonly Dictionary<int, string> cachedTemplateLabels = new Dictionary<int, string> { { 0, "0 - Saved/default" } };
         private static readonly object templateCacheLock = new object();
-        private static string templateCacheKey = "";
-        private static DateTime templateCacheAt = DateTime.MinValue;
+        private static string optionsCacheKey = "";
+        private static DateTime optionsCacheAt = DateTime.MinValue;
 
         private Grid root;
         private Border popup;
@@ -1029,10 +1030,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                     CommitTextBox(box);
                     Task.Run(async () => await SaveSettingsAsync());
                 }
-                else if (IsTextEditingKey(e.Key))
-                {
-                    e.Handled = true;
-                }
             };
         }
 
@@ -1110,6 +1107,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 FontSize = 10,
                 Height = 24,
+                MaxDropDownHeight = 180,
                 IsEditable = false,
                 IsTextSearchEnabled = true,
                 Foreground = Brushes.Transparent,
@@ -1234,14 +1232,27 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                     if (viewer != null)
                     {
-                        int targetIndex = Math.Max(0, combo.SelectedIndex - 3);
+                        int targetIndex = Math.Max(0, combo.SelectedIndex - 5);
                         viewer.ScrollToVerticalOffset(targetIndex);
                         combo.UpdateLayout();
                     }
 
-                    ComboBoxItem item = combo.ItemContainerGenerator.ContainerFromItem(combo.SelectedItem) as ComboBoxItem;
-                    if (item != null)
-                        item.BringIntoView();
+                    combo.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        try
+                        {
+                            combo.ApplyTemplate();
+                            Popup nestedPopup = combo.Template.FindName("PART_Popup", combo) as Popup;
+                            ScrollViewer nestedViewer = nestedPopup != null && nestedPopup.Child != null
+                                ? FindVisualChild<ScrollViewer>(nestedPopup.Child)
+                                : FindVisualChild<ScrollViewer>(combo);
+                            if (nestedViewer != null && combo.SelectedIndex >= 0)
+                                nestedViewer.ScrollToVerticalOffset(Math.Max(0, combo.SelectedIndex - 5));
+                        }
+                        catch
+                        {
+                        }
+                    }), DispatcherPriority.Background);
                 }
                 catch
                 {
@@ -1654,12 +1665,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                     List<string> expiryValues = ParseExpiryValues(body);
                     List<string> strikeValues = ParseNumberArray(body, "strikes");
                     List<string> templateValues = ParseTemplates(body);
+                    List<string> underlyingValues = ParseStringArray(body, "underlyings");
                     double atmStrike = ParseDouble(ExtractJsonValue(body, "atm"), 0);
                     double ceDefaultStrike = ParseDouble(ExtractJsonValue(body, "ce_default_strike"), atmStrike);
                     double peDefaultStrike = ParseDouble(ExtractJsonValue(body, "pe_default_strike"), atmStrike);
-                    cachedExpiries = expiryValues.ToArray();
-                    cachedStrikes = ParseStrikeCache(strikeValues);
-                    CacheTemplateLabels(templateValues);
+                    CacheOptionValues(underlyingValues, expiryValues, strikeValues, templateValues);
                     ChartControl.Dispatcher.InvokeAsync(() =>
                     {
                         settingsHydrating = true;
@@ -1724,7 +1734,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                             string ceText = FormatStrikeText(CeStrike);
                             string peText = FormatStrikeText(PeStrike);
-                            FillCombo(instrumentCombo, ParseStringArray(body, "underlyings"), Underlying);
+                            FillCombo(instrumentCombo, underlyingValues, Underlying);
                             FillCombo(expiryCombo, expiryValues, Expiry);
                             FillCombo(ceCombo, strikeValues, ceText);
                             FillCombo(peCombo, strikeValues, peText);
@@ -2783,17 +2793,55 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        private static void TryRefreshTemplateCache(OpenBullQuickOrderIndicator instance)
+        private static void CacheOptionValues(List<string> underlyings, List<string> expiries, List<string> strikes, List<string> templates)
+        {
+            lock (templateCacheLock)
+            {
+                if (underlyings != null && underlyings.Count > 0)
+                    cachedUnderlyings = UniqueStrings(underlyings).ToArray();
+                if (expiries != null && expiries.Count > 0)
+                    cachedExpiries = UniqueStrings(expiries).ToArray();
+                if (strikes != null && strikes.Count > 0)
+                    cachedStrikes = ParseStrikeCache(strikes);
+            }
+            CacheTemplateLabels(templates);
+        }
+
+        private static List<string> UniqueStrings(List<string> values)
+        {
+            List<string> result = new List<string>();
+            if (values == null)
+                return result;
+            foreach (string value in values)
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                    continue;
+                bool exists = false;
+                foreach (string current in result)
+                {
+                    if (string.Equals(current, value, StringComparison.OrdinalIgnoreCase))
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists)
+                    result.Add(value.Trim());
+            }
+            return result;
+        }
+
+        private static void TryRefreshOptionsCache(OpenBullQuickOrderIndicator instance)
         {
             if (instance == null || string.IsNullOrWhiteSpace(instance.ApiKey) || string.IsNullOrWhiteSpace(instance.OpenBullUrl))
                 return;
             string key = instance.OpenBullUrl.TrimEnd('/') + "|" + instance.ApiKey + "|" + instance.Underlying + "|" + instance.UnderlyingExchange + "|" + instance.Expiry;
             lock (templateCacheLock)
             {
-                if (key == templateCacheKey && (DateTime.UtcNow - templateCacheAt).TotalSeconds < 20)
+                if (key == optionsCacheKey && (DateTime.UtcNow - optionsCacheAt).TotalSeconds < 20)
                     return;
-                templateCacheKey = key;
-                templateCacheAt = DateTime.UtcNow;
+                optionsCacheKey = key;
+                optionsCacheAt = DateTime.UtcNow;
             }
             try
             {
@@ -2803,7 +2851,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                     HttpResponseMessage response = Http.PostAsync(url, content).GetAwaiter().GetResult();
                     string body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
                     if (response.IsSuccessStatusCode && body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) >= 0)
-                        CacheTemplateLabels(ParseTemplates(body));
+                        CacheOptionValues(
+                            ParseStringArray(body, "underlyings"),
+                            ParseExpiryValues(body),
+                            ParseNumberArray(body, "strikes"),
+                            ParseTemplates(body)
+                        );
                 }
             }
             catch
@@ -3106,7 +3159,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return false; }
             public override TypeConverter.StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
             {
-                return new TypeConverter.StandardValuesCollection(new string[] { "NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "SILVER", "GOLD" });
+                OpenBullQuickOrderIndicator instance = context == null ? null : context.Instance as OpenBullQuickOrderIndicator;
+                TryRefreshOptionsCache(instance);
+                List<string> values = new List<string>();
+                lock (templateCacheLock)
+                {
+                    values.AddRange(cachedUnderlyings);
+                }
+                if (instance != null && !string.IsNullOrWhiteSpace(instance.Underlying) && !ContainsText(values, instance.Underlying))
+                    values.Add(instance.Underlying);
+                return new TypeConverter.StandardValuesCollection(values);
             }
         }
 
@@ -3157,7 +3219,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             public override TypeConverter.StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
             {
                 OpenBullQuickOrderIndicator instance = context == null ? null : context.Instance as OpenBullQuickOrderIndicator;
-                TryRefreshTemplateCache(instance);
+                TryRefreshOptionsCache(instance);
                 List<string> values = new List<string>();
                 lock (templateCacheLock)
                 {
