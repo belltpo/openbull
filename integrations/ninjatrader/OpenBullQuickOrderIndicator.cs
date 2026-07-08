@@ -2004,6 +2004,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return false;
             if (ChartBars == null || ChartBars.Bars == null || ChartBars.Bars.Count <= 0)
                 return false;
+            if (IsBellRefreshBlocked(snapshot.TradeId))
+                return true;
 
             DateTime entryTime;
             DateTime endTime;
@@ -2049,6 +2051,23 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (linkedBellSeenOnChart)
                 linkedBellSeenTradeIds.Add(snapshot.TradeId);
             return linkedBellTool != null;
+        }
+
+        private bool IsBellRefreshBlocked(int tradeId)
+        {
+            DrawingTool tool;
+            if (!linkedBellTools.TryGetValue(tradeId, out tool) || tool == null)
+                return false;
+
+            Bell_LongEntryTool longTool = tool as Bell_LongEntryTool;
+            if (longTool != null)
+                return longTool.IsOpenBullRefreshBlocked;
+
+            Bell_ShortEntryTool shortTool = tool as Bell_ShortEntryTool;
+            if (shortTool != null)
+                return shortTool.IsOpenBullRefreshBlocked;
+
+            return false;
         }
 
         private List<OpenBullTradeSnapshot> SelectVisibleSnapshots(List<OpenBullTradeSnapshot> snapshots)

@@ -231,6 +231,34 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         public string OpenBullSyncStatus { get; set; }
 
         [Browsable(false)]
+        public bool IsOpenBullLevelEditing { get; private set; }
+
+        [Browsable(false)]
+        public bool IsOpenBullLevelSyncing { get; private set; }
+
+        [Browsable(false)]
+        public string EditingOpenBullLevelName { get; private set; }
+
+        [Browsable(false)]
+        public DateTime LastOpenBullLevelEditUtc { get; private set; }
+
+        [Browsable(false)]
+        public bool IsOpenBullRefreshBlocked
+        {
+            get
+            {
+                if (OpenBullTradeId <= 0)
+                    return false;
+                if (IsOpenBullLevelEditing)
+                    return true;
+                if (IsOpenBullLevelSyncing)
+                    return true;
+                return LastOpenBullLevelEditUtc != DateTime.MinValue
+                    && (DateTime.UtcNow - LastOpenBullLevelEditUtc).TotalSeconds < 2.0;
+            }
+        }
+
+        [Browsable(false)]
         public bool StopLossHit { get; set; }
 
         [Browsable(false)]
@@ -307,6 +335,10 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 OpenBullTradeId = 0;
                 OpenBullMtm = 0;
                 OpenBullSyncStatus = "";
+                IsOpenBullLevelEditing = false;
+                IsOpenBullLevelSyncing = false;
+                EditingOpenBullLevelName = "";
+                LastOpenBullLevelEditUtc = DateTime.MinValue;
                 StopLossHit = false;
                 T1Status = "pending";
                 T2Status = "pending";
@@ -369,9 +401,12 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         {
             if (DrawingState == DrawingState.Editing)
             {
-                OnMouseMove(chartControl, chartPanel, chartScale, dataPoint);
                 ClearEditingAnchors();
                 DrawingState = DrawingState.Normal;
+                IsOpenBullLevelEditing = false;
+                IsOpenBullLevelSyncing = OpenBullTradeId > 0;
+                EditingOpenBullLevelName = "";
+                LastOpenBullLevelEditUtc = OpenBullTradeId > 0 ? DateTime.UtcNow : DateTime.MinValue;
                 OpenBullSyncStatus = OpenBullTradeId > 0 ? "Saving levels to OpenBull..." : "";
                 SyncLevelsToOpenBull();
                 return;
@@ -471,7 +506,11 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                     }
                     closest.IsEditing = true;
                     DrawingState = DrawingState.Editing;
-                    OpenBullSyncStatus = "Move level, click again to save";
+                    IsOpenBullLevelEditing = OpenBullTradeId > 0;
+                    EditingOpenBullLevelName = AnchorEditName(closest);
+                    OpenBullSyncStatus = string.IsNullOrWhiteSpace(EditingOpenBullLevelName)
+                        ? "Move level, click again to save"
+                        : "Move " + EditingOpenBullLevelName + ", click again to save";
                 }
             }
         }
@@ -785,6 +824,21 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             T6EndAnchor.IsEditing = false;
         }
 
+        private string AnchorEditName(ChartAnchor anchor)
+        {
+            if (anchor == EntryAnchor || anchor == EndAnchor)
+                return "entry label";
+            if (anchor == SLAnchor || anchor == SLEndAnchor)
+                return "risk limit";
+            if (anchor == T1Anchor || anchor == T1EndAnchor) return "target 1";
+            if (anchor == T2Anchor || anchor == T2EndAnchor) return "target 2";
+            if (anchor == T3Anchor || anchor == T3EndAnchor) return "target 3";
+            if (anchor == T4Anchor || anchor == T4EndAnchor) return "target 4";
+            if (anchor == T5Anchor || anchor == T5EndAnchor) return "target 5";
+            if (anchor == T6Anchor || anchor == T6EndAnchor) return "target 6";
+            return "";
+        }
+
         public override void OnRender(ChartControl chartControl, ChartScale chartScale)
         {
             if (EntryAnchor == null || EntryAnchor.Time == DateTime.MinValue)
@@ -835,7 +889,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         {
             if (startAnchor == null || endAnchor == null)
                 return;
-            Brush renderBrush = startAnchor.IsEditing ? Brushes.Red : brush;
+            Brush renderBrush = (startAnchor.IsEditing || endAnchor.IsEditing) ? Brushes.Red : brush;
 
             int startBarIndex = chartBars.Bars.GetBar(startAnchor.Time);
             int endBarIndex = chartBars.Bars.GetBar(endAnchor.Time);
@@ -890,7 +944,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             using (var textFormat = font.ToDirectWriteTextFormat())
             using (var layout = new SharpDX.DirectWrite.TextLayout(Core.Globals.DirectWriteFactory, text, textFormat, 200, 50))
             {
-                float padding = 4f;
+                float padding = 5f;
                 float textX = x;
                 float textY = y - layout.Metrics.Height / 2;
 
@@ -904,8 +958,8 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 var rounded = new SharpDX.Direct2D1.RoundedRectangle
                 {
                     Rect = bgRect,
-                    RadiusX = 6f,
-                    RadiusY = 6f
+                    RadiusX = 8f,
+                    RadiusY = 8f
                 };
                 Brush finalTextBrush = textBrush;
                 if (text.IndexOf("P&L -", StringComparison.OrdinalIgnoreCase) >= 0
@@ -915,7 +969,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                     || text.IndexOf("MTM +", StringComparison.OrdinalIgnoreCase) >= 0)
                     finalTextBrush = Brushes.LimeGreen;
 
-                using (var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color4(0, 0, 0, 0.7f)))
+                using (var bgBrush = new SharpDX.Direct2D1.SolidColorBrush(RenderTarget, new SharpDX.Color4(0, 0, 0, 0.78f)))
                 using (var textBrushDx = finalTextBrush.ToDxBrush(RenderTarget))
                 {
                     RenderTarget.FillRoundedRectangle(rounded, bgBrush);
@@ -1039,7 +1093,10 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         private void SyncLevelsToOpenBull()
         {
             if (OpenBullTradeId <= 0 || SLAnchor == null)
+            {
+                IsOpenBullLevelSyncing = false;
                 return;
+            }
             var targets = new List<NinjaTrader.NinjaScript.OpenBullLevelTarget>();
             if (ShowT1 && T1Anchor != null && IsPendingStatus(T1Status)) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 1, Price = T1Anchor.Price });
             if (ShowT2 && T2Anchor != null && IsPendingStatus(T2Status)) targets.Add(new NinjaTrader.NinjaScript.OpenBullLevelTarget { Seq = 2, Price = T2Anchor.Price });
@@ -1056,6 +1113,11 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 catch (Exception ex)
                 {
                     OpenBullSyncStatus = ex.Message;
+                }
+                finally
+                {
+                    LastOpenBullLevelEditUtc = DateTime.UtcNow;
+                    IsOpenBullLevelSyncing = false;
                 }
             });
         }
@@ -1075,7 +1137,8 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             OpenBullTradeId = tradeId;
             OpenBullMtm = mtm;
             StopLossHit = stopLossHit;
-            OpenBullSyncStatus = "Linked to OpenBull";
+            if (!IsOpenBullLevelEditing)
+                OpenBullSyncStatus = "Linked to OpenBull";
 
             if (DrawingState == DrawingState.Editing)
                 return;
