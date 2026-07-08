@@ -175,6 +175,7 @@ def _make_api_call(
         error_mapping = {
             "805": "Rate limit exceeded.",
             "806": "Data APIs not subscribed.",
+            "808": "Authentication failed: Client ID or token invalid",
             "810": "Authentication failed: Invalid client ID",
             "401": "Invalid or expired access token",
             "820": "Market data subscription required",

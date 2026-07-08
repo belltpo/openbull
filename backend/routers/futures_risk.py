@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.api.futures_risk import _quote_payload
+from backend.api.futures_risk import _broker_quote_error, _quote_key, _quote_payloads
 from backend.dependencies import BrokerContext, get_broker_context, get_current_user, get_db
 from backend.futures_risk import service as fr
 from backend.futures_risk.service import FrError
@@ -288,12 +288,9 @@ async def quick_order_preview(
         if fut is None:
             raise FrError(f"No futures mapping configured for {payload.underlying}", 404)
 
-        data: dict[str, Any] = {
-            "mode": mode,
-            "futures": _quote_payload(fut["symbol"], fut["exchange"], ctx.auth_token, ctx.broker_name, ctx.broker_config),
-            "ce": None,
-            "pe": None,
-        }
+        ce: dict[str, Any] | None = None
+        pe: dict[str, Any] | None = None
+        instruments: list[dict[str, Any]] = [{"symbol": fut["symbol"], "exchange": fut["exchange"]}]
         if payload.ce_strike:
             ce = fr._resolve_option(  # type: ignore[attr-defined]
                 payload.underlying,
@@ -307,7 +304,7 @@ async def quick_order_preview(
                 ctx.broker_name,
                 ctx.broker_config,
             )
-            data["ce"] = _quote_payload(ce["symbol"], ce["exchange"], ctx.auth_token, ctx.broker_name, ctx.broker_config)
+            instruments.append({"symbol": ce["symbol"], "exchange": ce["exchange"]})
         if payload.pe_strike:
             pe = fr._resolve_option(  # type: ignore[attr-defined]
                 payload.underlying,
@@ -321,7 +318,20 @@ async def quick_order_preview(
                 ctx.broker_name,
                 ctx.broker_config,
             )
-            data["pe"] = _quote_payload(pe["symbol"], pe["exchange"], ctx.auth_token, ctx.broker_name, ctx.broker_config)
+            instruments.append({"symbol": pe["symbol"], "exchange": pe["exchange"]})
+        quote_map = _quote_payloads(instruments, ctx.auth_token, ctx.broker_name, ctx.broker_config)
+        broker_error = _broker_quote_error(quote_map)
+        if broker_error:
+            raise HTTPException(
+                status_code=broker_error["status_code"],
+                detail=broker_error["body"].get("message", "Broker quote service temporarily unavailable"),
+            )
+        data: dict[str, Any] = {
+            "mode": mode,
+            "futures": quote_map.get(_quote_key(fut["symbol"], fut["exchange"])),
+            "ce": quote_map.get(_quote_key(ce["symbol"], ce["exchange"])) if ce else None,
+            "pe": quote_map.get(_quote_key(pe["symbol"], pe["exchange"])) if pe else None,
+        }
     except FrError as e:
         raise HTTPException(status_code=e.status, detail=e.message)
     return {"status": "success", "data": data}

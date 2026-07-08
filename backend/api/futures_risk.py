@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _DEDUP_TTL_SECONDS = 10.0
-_QUOTE_CACHE_TTL_SECONDS = 3.0
+_QUOTE_CACHE_TTL_SECONDS = 5.0
 _dedup_lock = threading.Lock()
 _quote_cache_lock = threading.Lock()
 _recent_client_orders: dict[str, float] = {}
@@ -321,111 +321,201 @@ async def api_futures_risk_quick_order_settings_delete(request: Request):
     return JSONResponse(content={"status": "success"}, status_code=200)
 
 
-def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str, config: dict) -> dict[str, Any]:
-    from backend.services.market_data_cache import get_market_data_cache
-    from backend.services.market_data_cache import process_market_data
-    from backend.services.quotes_service import get_quotes_with_auth
+def _quote_key(symbol: str, exchange: str) -> tuple[str, str]:
+    return (str(symbol or "").upper(), str(exchange or "").upper())
 
-    key = (str(symbol).upper(), str(exchange).upper())
-    now = time.monotonic()
 
-    def fresh_cached_ltp() -> float | None:
-        try:
-            entry = get_market_data_cache().get_all(symbol, exchange)
-            last_update = float(entry.get("last_update") or 0)
-            ltp_value = (entry.get("ltp") or {}).get("value")
-            ltp = float(ltp_value or 0)
-        except Exception:
-            return None
-        if ltp <= 0 or last_update <= 0:
-            return None
-        if time.time() - last_update > _QUOTE_CACHE_TTL_SECONDS:
-            return None
-        return ltp
-
-    def remember_ltp(value: float) -> None:
-        if value <= 0:
-            return
-        try:
-            process_market_data({
-                "symbol": symbol,
-                "exchange": exchange,
-                "mode": 1,
-                "data": {"ltp": value, "timestamp": time.time(), "volume": 0},
-            })
-        except Exception:
-            logger.debug("Unable to seed market-data cache for %s/%s", symbol, exchange, exc_info=True)
-
-    def coerce_ltp(value: Any) -> float:
-        if isinstance(value, dict):
-            for field in ("ltp", "last_price", "lastPrice", "lastTradedPrice", "last_traded_price", "close"):
-                try:
-                    ltp_value = float(value.get(field) or 0)
-                except (TypeError, ValueError):
-                    ltp_value = 0.0
-                if ltp_value > 0:
-                    return ltp_value
-            nested = value.get("data")
-            if isinstance(nested, dict):
-                if len(nested) == 1:
-                    only_value = next(iter(nested.values()))
-                    nested_ltp = coerce_ltp(only_value)
-                    if nested_ltp > 0:
-                        return nested_ltp
-                nested_ltp = coerce_ltp(nested)
+def _coerce_ltp(value: Any) -> float:
+    if isinstance(value, dict):
+        for field in ("ltp", "last_price", "lastPrice", "lastTradedPrice", "last_traded_price", "close"):
+            try:
+                ltp_value = float(value.get(field) or 0)
+            except (TypeError, ValueError):
+                ltp_value = 0.0
+            if ltp_value > 0:
+                return ltp_value
+        nested = value.get("data")
+        if isinstance(nested, dict):
+            if len(nested) == 1:
+                only_value = next(iter(nested.values()))
+                nested_ltp = _coerce_ltp(only_value)
                 if nested_ltp > 0:
                     return nested_ltp
-        return 0.0
+            nested_ltp = _coerce_ltp(nested)
+            if nested_ltp > 0:
+                return nested_ltp
+    return 0.0
+
+
+def _quote_payload_from_ltp(
+    symbol: str,
+    exchange: str,
+    ltp: float,
+    source: str,
+    message: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "exchange": exchange,
+        "ltp": ltp,
+        "status": "success" if ltp > 0 else "error",
+        "source": source,
+        "message": message,
+    }
+
+
+def _fresh_cached_quote(symbol: str, exchange: str) -> dict[str, Any] | None:
+    from backend.services.market_data_cache import get_market_data_cache
 
     try:
-        cached_ltp = fresh_cached_ltp()
-        if cached_ltp and cached_ltp > 0:
-            payload = {
-                "symbol": symbol,
-                "exchange": exchange,
-                "ltp": cached_ltp,
-                "status": "success",
-                "source": "websocket_cache",
-                "message": None,
-            }
-            with _quote_cache_lock:
-                _recent_quotes[key] = (now + _QUOTE_CACHE_TTL_SECONDS, payload)
-            return payload
+        entry = get_market_data_cache().get_all(symbol, exchange)
+        last_update = float(entry.get("last_update") or 0)
+        ltp_value = (entry.get("ltp") or {}).get("value")
+        ltp = float(ltp_value or 0)
     except Exception:
-        pass
+        return None
+    if ltp <= 0 or last_update <= 0:
+        return None
+    if time.time() - last_update > _QUOTE_CACHE_TTL_SECONDS:
+        return None
+    return _quote_payload_from_ltp(symbol, exchange, ltp, "websocket_cache")
 
+
+def _remember_ltp(symbol: str, exchange: str, value: float) -> None:
+    from backend.services.market_data_cache import process_market_data
+
+    if value <= 0:
+        return
+    try:
+        process_market_data({
+            "symbol": symbol,
+            "exchange": exchange,
+            "mode": 1,
+            "data": {"ltp": value, "timestamp": time.time(), "volume": 0},
+        })
+    except Exception:
+        logger.debug("Unable to seed market-data cache for %s/%s", symbol, exchange, exc_info=True)
+
+
+def _store_recent_quote(symbol: str, exchange: str, payload: dict[str, Any]) -> None:
+    if float(payload.get("ltp") or 0) <= 0:
+        return
     with _quote_cache_lock:
-        cached = _recent_quotes.get(key)
-        if cached and cached[0] > now:
-            return dict(cached[1])
+        _recent_quotes[_quote_key(symbol, exchange)] = (
+            time.monotonic() + _QUOTE_CACHE_TTL_SECONDS,
+            dict(payload),
+        )
 
-    ok, response, _ = get_quotes_with_auth(
-        symbol=symbol,
-        exchange=exchange,
+
+def _quote_payloads(
+    instruments: list[dict[str, Any]],
+    auth_token: str,
+    broker_name: str,
+    config: dict,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    from backend.services.quotes_service import get_multi_quotes_with_auth
+
+    unique: dict[tuple[str, str], dict[str, str]] = {}
+    for item in instruments:
+        symbol = str(item.get("symbol") or "").strip()
+        exchange = str(item.get("exchange") or "").strip()
+        if not symbol or not exchange:
+            continue
+        unique.setdefault(_quote_key(symbol, exchange), {"symbol": symbol, "exchange": exchange})
+
+    now = time.monotonic()
+    payloads: dict[tuple[str, str], dict[str, Any]] = {}
+    pending: list[dict[str, str]] = []
+    for key, item in unique.items():
+        cached_ws = _fresh_cached_quote(item["symbol"], item["exchange"])
+        if cached_ws:
+            _store_recent_quote(item["symbol"], item["exchange"], cached_ws)
+            payloads[key] = cached_ws
+            continue
+        with _quote_cache_lock:
+            cached = _recent_quotes.get(key)
+        if cached and cached[0] > now:
+            payloads[key] = dict(cached[1])
+            continue
+        pending.append(item)
+
+    if not pending:
+        return payloads
+
+    ok, response, status_code = get_multi_quotes_with_auth(
+        symbols_list=pending,
         auth_token=auth_token,
         broker=broker_name,
         config=config,
     )
-    data = response.get("data", {}) if ok and isinstance(response, dict) else {}
-    ltp = coerce_ltp(data)
-    if ltp > 0:
-        remember_ltp(ltp)
     message = response.get("message") if isinstance(response, dict) else None
-    status = "success" if ok and ltp > 0 else "error"
-    if ok and ltp <= 0 and not message:
-        message = f"Quote LTP unavailable for {symbol}"
-    payload = {
-        "symbol": symbol,
-        "exchange": exchange,
-        "ltp": ltp,
-        "status": status,
-        "source": "rest",
-        "message": message,
-    }
-    if ltp > 0:
-        with _quote_cache_lock:
-            _recent_quotes[key] = (now + _QUOTE_CACHE_TTL_SECONDS, payload)
-    return payload
+    retry_after = response.get("retry_after_seconds") if isinstance(response, dict) else None
+    results_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    if ok and isinstance(response, dict):
+        for quote in response.get("results", []) or []:
+            if not isinstance(quote, dict):
+                continue
+            symbol = str(quote.get("symbol") or "").strip()
+            exchange = str(quote.get("exchange") or "").strip()
+            if not symbol or not exchange:
+                continue
+            results_by_key[_quote_key(symbol, exchange)] = quote
+
+    for item in pending:
+        key = _quote_key(item["symbol"], item["exchange"])
+        quote = results_by_key.get(key) or {}
+        ltp = _coerce_ltp(quote)
+        if ltp > 0:
+            _remember_ltp(item["symbol"], item["exchange"], ltp)
+            payload = _quote_payload_from_ltp(item["symbol"], item["exchange"], ltp, "rest_multi")
+            _store_recent_quote(item["symbol"], item["exchange"], payload)
+        else:
+            quote_message = quote.get("error") if isinstance(quote, dict) else None
+            payload = _quote_payload_from_ltp(
+                item["symbol"],
+                item["exchange"],
+                0.0,
+                "rest_multi",
+                quote_message or message or f"Quote LTP unavailable for {item['symbol']}",
+            )
+            if status_code:
+                payload["status_code"] = status_code
+            if retry_after:
+                payload["retry_after_seconds"] = retry_after
+        payloads[key] = payload
+
+    return payloads
+
+
+def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str, config: dict) -> dict[str, Any]:
+    payloads = _quote_payloads(
+        [{"symbol": symbol, "exchange": exchange}],
+        auth_token,
+        broker_name,
+        config,
+    )
+    key = _quote_key(symbol, exchange)
+    if key in payloads:
+        return payloads[key]
+    return _quote_payload_from_ltp(symbol, exchange, 0.0, "rest_multi", f"Quote LTP unavailable for {symbol}")
+
+
+def _broker_quote_error(payloads: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any] | None:
+    for payload in payloads.values():
+        try:
+            status_code = int(payload.get("status_code") or 0)
+        except (TypeError, ValueError):
+            status_code = 0
+        if status_code not in (401, 403, 429):
+            continue
+        result = {
+            "status": "error",
+            "message": payload.get("message") or "Broker quote service temporarily unavailable",
+        }
+        if payload.get("retry_after_seconds"):
+            result["retry_after_seconds"] = payload.get("retry_after_seconds")
+        return {"body": result, "status_code": status_code}
+    return None
 
 
 @router.post("/futures-risk/quick-order/preview")
@@ -459,13 +549,9 @@ async def api_futures_risk_quick_order_preview(request: Request):
                 status_code=404,
             )
 
-        data: dict[str, Any] = {
-            "mode": mode,
-            "expiry": effective_expiry,
-            "futures": _quote_payload(fut["symbol"], fut["exchange"], auth_token, broker_name, config),
-            "ce": None,
-            "pe": None,
-        }
+        ce: dict[str, Any] | None = None
+        pe: dict[str, Any] | None = None
+        instruments: list[dict[str, Any]] = [{"symbol": fut["symbol"], "exchange": fut["exchange"]}]
         if payload.ce_strike:
             ce = fr._resolve_option(  # type: ignore[attr-defined]
                 payload.underlying,
@@ -479,7 +565,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
                 broker_name,
                 config,
             )
-            data["ce"] = _quote_payload(ce["symbol"], ce["exchange"], auth_token, broker_name, config)
+            instruments.append({"symbol": ce["symbol"], "exchange": ce["exchange"]})
         if payload.pe_strike:
             pe = fr._resolve_option(  # type: ignore[attr-defined]
                 payload.underlying,
@@ -493,41 +579,49 @@ async def api_futures_risk_quick_order_preview(request: Request):
                 broker_name,
                 config,
             )
-            data["pe"] = _quote_payload(pe["symbol"], pe["exchange"], auth_token, broker_name, config)
+            instruments.append({"symbol": pe["symbol"], "exchange": pe["exchange"]})
+        session_suffix = ":" + fr._session_date_ist()  # type: ignore[attr-defined]
+        session_trades = [
+            trade for trade in fr.list_trades(user_id, status="all")
+            if str(trade.get("underlying", "")).upper() == payload.underlying.upper()
+            and int(trade.get("phase_no") or 0) > 0
+            and str(trade.get("phase_group") or "").endswith(session_suffix)
+        ]
+        for trade in session_trades:
+            if trade.get("status") != "active":
+                continue
+            option_symbol = trade.get("option_symbol")
+            option_exchange = trade.get("option_exchange")
+            if option_symbol and option_exchange:
+                instruments.append({"symbol": option_symbol, "exchange": option_exchange})
+
+        quote_map = _quote_payloads(instruments, auth_token, broker_name, config)
+        broker_error = _broker_quote_error(quote_map)
+        if broker_error:
+            return JSONResponse(content=broker_error["body"], status_code=broker_error["status_code"])
+        data: dict[str, Any] = {
+            "mode": mode,
+            "expiry": effective_expiry,
+            "futures": quote_map.get(_quote_key(fut["symbol"], fut["exchange"])),
+            "ce": quote_map.get(_quote_key(ce["symbol"], ce["exchange"])) if ce else None,
+            "pe": quote_map.get(_quote_key(pe["symbol"], pe["exchange"])) if pe else None,
+        }
         quotes_by_symbol = {
             (data["ce"] or {}).get("symbol"): (data["ce"] or {}).get("ltp"),
             (data["pe"] or {}).get("symbol"): (data["pe"] or {}).get("ltp"),
         }
-        session_suffix = ":" + fr._session_date_ist()  # type: ignore[attr-defined]
+        for key, quote in quote_map.items():
+            quotes_by_symbol.setdefault(quote.get("symbol"), quote.get("ltp"))
+
         booked_pnl = 0.0
         open_pnl = 0.0
         active_count = 0
-        for trade in fr.list_trades(user_id, status="all"):
-            if str(trade.get("underlying", "")).upper() != payload.underlying.upper():
-                continue
-            if int(trade.get("phase_no") or 0) <= 0:
-                continue
-            if not str(trade.get("phase_group") or "").endswith(session_suffix):
-                continue
+        for trade in session_trades:
             booked_pnl += float(trade.get("realized_pnl") or 0)
             if trade.get("status") != "active":
                 continue
             active_count += 1
             live_opt = quotes_by_symbol.get(trade.get("option_symbol"))
-            if live_opt is None:
-                option_symbol = trade.get("option_symbol")
-                option_exchange = trade.get("option_exchange")
-                if not option_symbol or not option_exchange:
-                    continue
-                quote = _quote_payload(
-                    option_symbol,
-                    option_exchange,
-                    auth_token,
-                    broker_name,
-                    config,
-                )
-                live_opt = quote.get("ltp") if quote.get("status") == "success" else None
-                quotes_by_symbol[option_symbol] = live_opt
             if live_opt is None:
                 continue
             entry_opt = float(trade.get("entry_option_price") or 0)

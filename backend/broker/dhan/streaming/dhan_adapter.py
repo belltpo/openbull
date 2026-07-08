@@ -344,6 +344,11 @@ class DhanAdapter(BaseBrokerAdapter):
         self._connected = False
         if self._is_fatal_auth_error(error):
             self._mark_fatal_error(str(error))
+        elif self._is_rate_limit_error(error):
+            self._mark_fatal_error(
+                "Dhan rate limit reached. Stop streaming retries and reconnect after broker cooldown. "
+                f"({error})"
+            )
 
     def _on_close(self, ws, code, msg) -> None:
         logger.info("Dhan WS closed (code=%s, msg=%s)", code, msg)
@@ -368,6 +373,12 @@ class DhanAdapter(BaseBrokerAdapter):
         "808",
         "unauthorized",
         "invalid_authentication",
+    )
+    _RATE_LIMIT_INDICATORS = (
+        "429",
+        "too many requests",
+        "rate limit",
+        "client id is blocked",
     )
 
     def _start_health_check(self) -> None:
@@ -398,6 +409,13 @@ class DhanAdapter(BaseBrokerAdapter):
             return False
         text = str(payload).lower()
         return any(tok in text for tok in self._AUTH_FAILURE_INDICATORS)
+
+    def _is_rate_limit_error(self, payload) -> bool:
+        """True iff Dhan is refusing the stream because of rate limiting."""
+        if not payload:
+            return False
+        text = str(payload).lower()
+        return any(tok in text for tok in self._RATE_LIMIT_INDICATORS)
 
     def _mark_fatal_error(self, message: str) -> None:
         """Flag a non-retryable auth failure (idempotent)."""

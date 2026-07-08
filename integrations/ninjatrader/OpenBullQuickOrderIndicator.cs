@@ -76,6 +76,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool dragMoved;
         private bool rehydrateAttempted;
         private bool liveRefreshRunning;
+        private DateTime liveBackoffUntilUtc = DateTime.MinValue;
         private string closeMode = "full";
         private int optionsPollTick;
         private Point dragStart;
@@ -1594,6 +1595,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             if (string.IsNullOrWhiteSpace(ApiKey) || string.IsNullOrWhiteSpace(OpenBullUrl))
                 return;
+            if (DateTime.UtcNow < liveBackoffUntilUtc)
+                return;
 
             try
             {
@@ -1604,10 +1607,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                     string body = await response.Content.ReadAsStringAsync();
                     if (!response.IsSuccessStatusCode || body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) < 0)
                     {
+                        MaybeBackoffLivePolling(response, body);
                         if (!isBusy)
                             SetStatus(TrimForStatus(body), false);
                         return;
                     }
+                    liveBackoffUntilUtc = DateTime.MinValue;
                     double nextFut = ExtractLtp(body, "futures");
                     double nextCe = ExtractLtp(body, "ce");
                     double nextPe = ExtractLtp(body, "pe");
@@ -1636,6 +1641,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             catch (Exception ex)
             {
+                MaybeBackoffLivePolling(null, ex.Message);
                 if (!isBusy)
                     SetStatus(ex.Message, false);
             }
@@ -3032,6 +3038,51 @@ namespace NinjaTrader.NinjaScript.Indicators
                 : value == "SANDBOX"
                     ? new SolidColorBrush(Color.FromRgb(150, 118, 255))
                     : new SolidColorBrush(Color.FromRgb(150, 150, 150));
+        }
+
+        private void MaybeBackoffLivePolling(HttpResponseMessage response, string body)
+        {
+            int statusCode = response == null ? 0 : (int)response.StatusCode;
+            if (!ShouldBackoffLivePolling(statusCode, body))
+                return;
+
+            int retryAfter = ParseRetryAfterSeconds(body);
+            if (retryAfter <= 0 && response != null && response.Headers.RetryAfter != null)
+            {
+                if (response.Headers.RetryAfter.Delta.HasValue)
+                    retryAfter = Math.Max(1, (int)response.Headers.RetryAfter.Delta.Value.TotalSeconds);
+                else if (response.Headers.RetryAfter.Date.HasValue)
+                    retryAfter = Math.Max(1, (int)(response.Headers.RetryAfter.Date.Value.UtcDateTime - DateTime.UtcNow).TotalSeconds);
+            }
+            if (retryAfter <= 0)
+                retryAfter = statusCode == 429 ? 90 : 300;
+
+            liveBackoffUntilUtc = DateTime.UtcNow.AddSeconds(retryAfter);
+        }
+
+        private static bool ShouldBackoffLivePolling(int statusCode, string body)
+        {
+            if (statusCode == 401 || statusCode == 403 || statusCode == 429)
+                return true;
+            string text = (body ?? "").ToLowerInvariant();
+            return text.Contains("authentication failed")
+                || text.Contains("token invalid")
+                || text.Contains("invalid or expired")
+                || text.Contains("unauthorized")
+                || text.Contains("too many requests")
+                || text.Contains("rate limit")
+                || text.Contains("retry_after_seconds");
+        }
+
+        private static int ParseRetryAfterSeconds(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body))
+                return 0;
+            Match match = Regex.Match(body, "\"retry_after_seconds\"\\s*:\\s*(\\d+)", RegexOptions.IgnoreCase);
+            if (!match.Success)
+                return 0;
+            int seconds;
+            return int.TryParse(match.Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out seconds) ? seconds : 0;
         }
 
         private void SetStatus(string message, bool ok)
