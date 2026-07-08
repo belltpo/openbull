@@ -938,7 +938,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             actions.ColumnDefinitions.Add(new ColumnDefinition());
             Button refresh = SmallAction("Refresh");
             Button save = SmallAction("Save");
-            Button remove = SmallAction("Remove");
+            Button remove = SmallAction("Clear");
             Button delete = SmallAction("Delete");
             WireActionButton(refresh, "Refresh", async () => await FetchOptionsAsync());
             WireActionButton(save, "Save", async () =>
@@ -946,7 +946,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 CommitAllSettingInputs();
                 await SaveSettingsAsync();
             });
-            WireActionButton(remove, "Remove", async () => await RemoveCurrentTradeDrawingAsync());
+            WireActionButton(remove, "Clear", async () => await RemoveAllTradeDrawingsAsync());
             WireActionButton(delete, "Delete", async () => await DeleteSettingsAsync());
             Grid.SetColumn(refresh, 0);
             Grid.SetColumn(save, 1);
@@ -2130,6 +2130,63 @@ namespace NinjaTrader.NinjaScript.Indicators
             await Task.CompletedTask;
         }
 
+        private async Task RemoveAllTradeDrawingsAsync()
+        {
+            if (ChartControl == null)
+                return;
+            ChartControl.Dispatcher.InvokeAsync(() =>
+            {
+                HashSet<int> ids = CollectKnownTradeIds();
+                List<string> tags = new List<string>();
+                try
+                {
+                    foreach (DrawingTool tool in DrawObjects)
+                    {
+                        if (tool == null || string.IsNullOrWhiteSpace(tool.Tag))
+                            continue;
+                        int id;
+                        if (TryParseBellTradeId(tool.Tag, out id))
+                        {
+                            ids.Add(id);
+                            if (!tags.Contains(tool.Tag))
+                                tags.Add(tool.Tag);
+                        }
+                    }
+                }
+                catch
+                {
+                }
+
+                foreach (string tag in tags)
+                {
+                    try
+                    {
+                        RemoveDrawObject(tag);
+                    }
+                    catch
+                    {
+                    }
+                }
+
+                foreach (int id in ids)
+                    RemoveTradeDrawing(id, true);
+
+                linkedBellTools.Clear();
+                linkedBellSeenTradeIds.Clear();
+                managedTrades.Clear();
+                managedTrade = null;
+                linkedBellTool = null;
+                linkedBellTag = "";
+                linkedBellSeenOnChart = false;
+                LinkedTradeId = 0;
+                LinkedTradeIds = "";
+
+                SetStatus(ids.Count > 0 ? "All OpenBull trade drawings removed" : "No OpenBull trade drawings to remove", ids.Count > 0);
+                RequestChartRefresh();
+            });
+            await Task.CompletedTask;
+        }
+
         private void RemoveOtherTradeDrawings(int keepTradeId, bool remember)
         {
             List<int> ids = new List<int>(managedTrades.Keys);
@@ -2191,6 +2248,34 @@ namespace NinjaTrader.NinjaScript.Indicators
         private static string BellTag(int tradeId)
         {
             return "OpenBull_FR_" + tradeId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static bool TryParseBellTradeId(string tag, out int tradeId)
+        {
+            tradeId = 0;
+            const string prefix = "OpenBull_FR_";
+            if (string.IsNullOrWhiteSpace(tag) || !tag.StartsWith(prefix, StringComparison.Ordinal))
+                return false;
+            return int.TryParse(tag.Substring(prefix.Length), NumberStyles.Integer, CultureInfo.InvariantCulture, out tradeId) && tradeId > 0;
+        }
+
+        private HashSet<int> CollectKnownTradeIds()
+        {
+            HashSet<int> ids = new HashSet<int>();
+            foreach (int id in managedTrades.Keys)
+                if (id > 0)
+                    ids.Add(id);
+            foreach (int id in linkedBellTools.Keys)
+                if (id > 0)
+                    ids.Add(id);
+            foreach (int id in ParseTradeIds(LinkedTradeIds))
+                if (id > 0)
+                    ids.Add(id);
+            if (LinkedTradeId > 0)
+                ids.Add(LinkedTradeId);
+            if (managedTrade != null && managedTrade.TradeId > 0)
+                ids.Add(managedTrade.TradeId);
+            return ids;
         }
 
         private static HashSet<int> ParseTradeIds(string value)
