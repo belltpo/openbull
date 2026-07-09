@@ -113,6 +113,11 @@ def get_trade_book(auth: str) -> dict:
     return get_api_response("/v2/trades", auth)
 
 
+def get_trades_by_order_id(auth: str, orderid: str) -> dict:
+    """Fetch executed trades for one order."""
+    return get_api_response(f"/v2/trades/{orderid}", auth)
+
+
 def get_positions(auth: str) -> dict:
     """Fetch positions."""
     return get_api_response("/v2/positions", auth)

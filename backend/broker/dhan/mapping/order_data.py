@@ -20,6 +20,20 @@ from backend.broker.upstox.mapping.order_data import (
 logger = logging.getLogger(__name__)
 
 
+def _to_float(value, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _resolve_symbol(security_id, exchange: str) -> str | None:
     """Look up OpenBull symbol from token in shared symtoken cache."""
     if security_id is None:
@@ -127,17 +141,24 @@ def transform_order_data(orders) -> list[dict]:
         elif order_type == "STOP_LOSS_MARKET":
             order_type = "SL-M"
 
+        average_price = _to_float(order.get("averageTradedPrice") or 0.0)
+        filled_qty = _to_int(order.get("filledQty") or 0)
+
         transformed_orders.append({
             "symbol": order.get("tradingSymbol", ""),
             "exchange": order.get("exchangeSegment", ""),
             "action": order.get("transactionType", ""),
-            "quantity": int(order.get("quantity") or 0),
-            "price": float(order.get("price") or 0.0),
-            "trigger_price": float(order.get("triggerPrice") or 0.0),
+            "quantity": _to_int(order.get("quantity") or 0),
+            "price": _to_float(order.get("price") or 0.0),
+            "trigger_price": _to_float(order.get("triggerPrice") or 0.0),
             "pricetype": order_type,
             "product": order.get("productType", ""),
             "orderid": order.get("orderId", ""),
             "order_status": order.get("orderStatus", ""),
+            "average_price": average_price,
+            "fill_price": average_price,
+            "filled_quantity": filled_qty,
+            "remaining_quantity": _to_int(order.get("remainingQuantity") or 0),
             "timestamp": order.get("updateTime", ""),
         })
 
@@ -146,6 +167,8 @@ def transform_order_data(orders) -> list[dict]:
 
 def map_trade_data(trade_data) -> list:
     """Map trade data (same logic as order data for Dhan)."""
+    if isinstance(trade_data, dict):
+        trade_data = [trade_data]
     return map_order_data(trade_data)
 
 
@@ -155,12 +178,14 @@ def transform_tradebook_data(tradebook_data: list) -> list[dict]:
     quantity -> int, average_price/trade_value -> float.
     """
     transformed_data: list[dict] = []
+    if isinstance(tradebook_data, dict):
+        tradebook_data = [tradebook_data]
     if not isinstance(tradebook_data, list):
         return transformed_data
 
     for trade in tradebook_data:
-        qty = int(trade.get("tradedQuantity") or 0)
-        avg_price = float(trade.get("tradedPrice") or 0.0)
+        qty = _to_int(trade.get("tradedQuantity") or 0)
+        avg_price = _to_float(trade.get("tradedPrice") or 0.0)
         transformed_data.append({
             "symbol": trade.get("tradingSymbol", ""),
             "exchange": trade.get("exchangeSegment", ""),
@@ -168,6 +193,7 @@ def transform_tradebook_data(tradebook_data: list) -> list[dict]:
             "action": trade.get("transactionType", ""),
             "quantity": qty,
             "average_price": avg_price,
+            "fill_price": avg_price,
             "trade_value": float(qty * avg_price),
             "orderid": trade.get("orderId", ""),
             "timestamp": trade.get("updateTime", ""),
