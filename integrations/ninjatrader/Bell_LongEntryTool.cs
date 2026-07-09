@@ -402,7 +402,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         {
             if (DrawingState != DrawingState.Building && ShouldCommitLevelEdit())
             {
-                CommitLevelEdit();
+                CommitLevelEdit(chartControl);
                 return;
             }
 
@@ -539,10 +539,9 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                 || (T6EndAnchor != null && T6EndAnchor.IsEditing);
         }
 
-        private void CommitLevelEdit()
+        private void CommitLevelEdit(ChartControl chartControl)
         {
-            ClearEditingAnchors();
-            DrawingState = DrawingState.Normal;
+            ExitLevelEditMode(chartControl);
             IsOpenBullLevelEditing = false;
             IsOpenBullLevelSyncing = OpenBullTradeId > 0;
             EditingOpenBullLevelName = "";
@@ -560,6 +559,49 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             bool shouldConsume = DateTime.UtcNow <= consumeCommittedLevelClickUntilUtc;
             consumeCommittedLevelClickUntilUtc = DateTime.MinValue;
             return shouldConsume;
+        }
+
+        private void ExitLevelEditMode(ChartControl chartControl)
+        {
+            ClearEditingAnchors();
+            DrawingState = DrawingState.Normal;
+            TrySetSelected(false);
+
+            try
+            {
+                if (chartControl != null)
+                    chartControl.InvalidateVisual();
+            }
+            catch
+            {
+            }
+        }
+
+        private void TrySetSelected(bool selected)
+        {
+            try
+            {
+                Type type = GetType();
+                while (type != null)
+                {
+                    System.Reflection.PropertyInfo property = type.GetProperty(
+                        "IsSelected",
+                        System.Reflection.BindingFlags.Instance
+                        | System.Reflection.BindingFlags.Public
+                        | System.Reflection.BindingFlags.NonPublic);
+
+                    if (property != null && property.PropertyType == typeof(bool) && property.CanWrite)
+                    {
+                        property.SetValue(this, selected, null);
+                        return;
+                    }
+
+                    type = type.BaseType;
+                }
+            }
+            catch
+            {
+            }
         }
 
         public override void OnMouseMove(ChartControl chartControl, ChartPanel chartPanel, ChartScale chartScale, ChartAnchor dataPoint)
