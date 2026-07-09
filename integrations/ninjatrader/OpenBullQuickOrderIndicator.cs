@@ -1363,11 +1363,121 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
                 }), DispatcherPriority.Input);
             };
+            TextBox editableTextBox = control as TextBox;
+            if (editableTextBox != null)
+            {
+                editableTextBox.AddHandler(Keyboard.PreviewKeyDownEvent, new KeyEventHandler((s, e) =>
+                {
+                    TextBox textBox = s as TextBox;
+                    if (textBox == null)
+                        return;
+                    if (HandleTextBoxKey(textBox, e.Key))
+                        e.Handled = true;
+                }), true);
+                editableTextBox.AddHandler(TextCompositionManager.PreviewTextInputEvent, new TextCompositionEventHandler((s, e) =>
+                {
+                    TextBox textBox = s as TextBox;
+                    if (textBox == null || string.IsNullOrEmpty(e.Text))
+                        return;
+                    InsertTextBoxText(textBox, e.Text);
+                    e.Handled = true;
+                }), true);
+                DataObject.AddPastingHandler(editableTextBox, OnTextBoxPaste);
+            }
             control.PreviewKeyDown += (s, e) =>
             {
                 if (IsTextEditingKey(e.Key) || e.Key == Key.Enter || e.Key == Key.Tab)
                     e.Handled = false;
             };
+        }
+
+        private static bool HandleTextBoxKey(TextBox textBox, Key key)
+        {
+            string text = KeyToText(key);
+            if (!string.IsNullOrEmpty(text))
+            {
+                InsertTextBoxText(textBox, text);
+                return true;
+            }
+            if (key == Key.Back)
+            {
+                DeleteTextBoxText(textBox, -1);
+                return true;
+            }
+            if (key == Key.Delete)
+            {
+                DeleteTextBoxText(textBox, 1);
+                return true;
+            }
+            return false;
+        }
+
+        private static string KeyToText(Key key)
+        {
+            if (key >= Key.D0 && key <= Key.D9)
+                return ((int)(key - Key.D0)).ToString(CultureInfo.InvariantCulture);
+            if (key >= Key.NumPad0 && key <= Key.NumPad9)
+                return ((int)(key - Key.NumPad0)).ToString(CultureInfo.InvariantCulture);
+            if (key == Key.Decimal || key == Key.OemPeriod)
+                return ".";
+            if (key == Key.Subtract || key == Key.OemMinus)
+                return "-";
+            return "";
+        }
+
+        private static void InsertTextBoxText(TextBox textBox, string text)
+        {
+            if (textBox == null || string.IsNullOrEmpty(text))
+                return;
+            int selectionStart = Math.Max(0, textBox.SelectionStart);
+            int selectionLength = Math.Max(0, textBox.SelectionLength);
+            string existing = textBox.Text ?? "";
+            if (selectionStart > existing.Length)
+                selectionStart = existing.Length;
+            if (selectionStart + selectionLength > existing.Length)
+                selectionLength = existing.Length - selectionStart;
+            textBox.Text = existing.Remove(selectionStart, selectionLength).Insert(selectionStart, text);
+            textBox.CaretIndex = selectionStart + text.Length;
+            textBox.SelectionLength = 0;
+        }
+
+        private static void DeleteTextBoxText(TextBox textBox, int direction)
+        {
+            if (textBox == null)
+                return;
+            string existing = textBox.Text ?? "";
+            int selectionStart = Math.Max(0, textBox.SelectionStart);
+            int selectionLength = Math.Max(0, textBox.SelectionLength);
+            if (selectionLength > 0)
+            {
+                if (selectionStart + selectionLength > existing.Length)
+                    selectionLength = existing.Length - selectionStart;
+                textBox.Text = existing.Remove(selectionStart, selectionLength);
+                textBox.CaretIndex = selectionStart;
+                return;
+            }
+            if (direction < 0 && selectionStart > 0)
+            {
+                textBox.Text = existing.Remove(selectionStart - 1, 1);
+                textBox.CaretIndex = selectionStart - 1;
+            }
+            else if (direction > 0 && selectionStart < existing.Length)
+            {
+                textBox.Text = existing.Remove(selectionStart, 1);
+                textBox.CaretIndex = selectionStart;
+            }
+        }
+
+        private static void OnTextBoxPaste(object sender, DataObjectPastingEventArgs e)
+        {
+            TextBox textBox = sender as TextBox;
+            if (textBox == null || !e.DataObject.GetDataPresent(DataFormats.Text))
+                return;
+            string text = e.DataObject.GetData(DataFormats.Text) as string;
+            if (string.IsNullOrEmpty(text))
+                return;
+            InsertTextBoxText(textBox, text);
+            e.CancelCommand();
         }
 
         private static void ApplyRoundedButton(Button button, double radius)
