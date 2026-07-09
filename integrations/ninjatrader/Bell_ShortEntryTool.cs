@@ -26,6 +26,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         private int t4DistancePoints = 200;
         private int t5DistancePoints = 250;
         private int t6DistancePoints = 300;
+        private DateTime consumeCommittedLevelClickUntilUtc = DateTime.MinValue;
 
         [Range(1, 1000)]
         [Display(Name = "SL Distance (Points)", Description = "Stop Loss distance in points from Entry", GroupName = "Parameters", Order = 1)]
@@ -399,16 +400,9 @@ namespace NinjaTrader.NinjaScript.DrawingTools
 
         public override void OnMouseDown(ChartControl chartControl, ChartPanel chartPanel, ChartScale chartScale, ChartAnchor dataPoint)
         {
-            if (DrawingState == DrawingState.Editing)
+            if (DrawingState != DrawingState.Building && ShouldCommitLevelEdit())
             {
-                ClearEditingAnchors();
-                DrawingState = DrawingState.Normal;
-                IsOpenBullLevelEditing = false;
-                IsOpenBullLevelSyncing = OpenBullTradeId > 0;
-                EditingOpenBullLevelName = "";
-                LastOpenBullLevelEditUtc = OpenBullTradeId > 0 ? DateTime.UtcNow : DateTime.MinValue;
-                OpenBullSyncStatus = OpenBullTradeId > 0 ? "Saving levels to OpenBull..." : "";
-                SyncLevelsToOpenBull();
+                CommitLevelEdit();
                 return;
             }
 
@@ -494,6 +488,9 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             }
             else if (DrawingState == DrawingState.Normal)
             {
+                if (ShouldConsumeCommittedLevelClick())
+                    return;
+
                 Point point = dataPoint.GetPoint(chartControl, chartPanel, chartScale);
                 ChartAnchor closest = GetClosestEditableAnchor(chartControl, chartPanel, chartScale, point);
 
@@ -513,6 +510,56 @@ namespace NinjaTrader.NinjaScript.DrawingTools
                         : "Move " + EditingOpenBullLevelName + ", click again to save";
                 }
             }
+        }
+
+        private bool ShouldCommitLevelEdit()
+        {
+            return DrawingState == DrawingState.Editing
+                || IsOpenBullLevelEditing
+                || HasEditingAnchor();
+        }
+
+        private bool HasEditingAnchor()
+        {
+            return (EntryAnchor != null && EntryAnchor.IsEditing)
+                || (EndAnchor != null && EndAnchor.IsEditing)
+                || (SLAnchor != null && SLAnchor.IsEditing)
+                || (SLEndAnchor != null && SLEndAnchor.IsEditing)
+                || (T1Anchor != null && T1Anchor.IsEditing)
+                || (T1EndAnchor != null && T1EndAnchor.IsEditing)
+                || (T2Anchor != null && T2Anchor.IsEditing)
+                || (T2EndAnchor != null && T2EndAnchor.IsEditing)
+                || (T3Anchor != null && T3Anchor.IsEditing)
+                || (T3EndAnchor != null && T3EndAnchor.IsEditing)
+                || (T4Anchor != null && T4Anchor.IsEditing)
+                || (T4EndAnchor != null && T4EndAnchor.IsEditing)
+                || (T5Anchor != null && T5Anchor.IsEditing)
+                || (T5EndAnchor != null && T5EndAnchor.IsEditing)
+                || (T6Anchor != null && T6Anchor.IsEditing)
+                || (T6EndAnchor != null && T6EndAnchor.IsEditing);
+        }
+
+        private void CommitLevelEdit()
+        {
+            ClearEditingAnchors();
+            DrawingState = DrawingState.Normal;
+            IsOpenBullLevelEditing = false;
+            IsOpenBullLevelSyncing = OpenBullTradeId > 0;
+            EditingOpenBullLevelName = "";
+            LastOpenBullLevelEditUtc = OpenBullTradeId > 0 ? DateTime.UtcNow : DateTime.MinValue;
+            OpenBullSyncStatus = OpenBullTradeId > 0 ? "Saving levels to OpenBull..." : "";
+            consumeCommittedLevelClickUntilUtc = DateTime.UtcNow.AddMilliseconds(350);
+            SyncLevelsToOpenBull();
+        }
+
+        private bool ShouldConsumeCommittedLevelClick()
+        {
+            if (consumeCommittedLevelClickUntilUtc == DateTime.MinValue)
+                return false;
+
+            bool shouldConsume = DateTime.UtcNow <= consumeCommittedLevelClickUntilUtc;
+            consumeCommittedLevelClickUntilUtc = DateTime.MinValue;
+            return shouldConsume;
         }
 
         public override void OnMouseMove(ChartControl chartControl, ChartPanel chartPanel, ChartScale chartScale, ChartAnchor dataPoint)
