@@ -55,6 +55,14 @@ export interface FrTrade {
   sl_basis: string;
   status: TradeStatus;
   realized_pnl: number;
+  open_pnl?: number | null;
+  total_pnl?: number | null;
+  broker_quantity?: number | null;
+  broker_average_price?: number | null;
+  broker_ltp?: number | null;
+  broker_pnl?: number | null;
+  pnl_qty?: number | null;
+  pnl_source?: "broker_position" | "local" | string | null;
   created_by: number | null;
   modified_by: number | null;
   params: PlaceTradePayload | null;
@@ -95,6 +103,9 @@ export interface FrPhase {
   targets_achieved: number[];
   targets: FrTradeTarget[];
   realized_pnl: number;
+  open_pnl?: number | null;
+  total_pnl?: number | null;
+  pnl_qty?: number | null;
   remaining_qty: number;
   duration_sec: number | null;
   exit_kind: "auto" | "manual" | "open";

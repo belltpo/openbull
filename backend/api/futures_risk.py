@@ -621,6 +621,9 @@ async def api_futures_risk_quick_order_preview(request: Request):
             if trade.get("status") != "active":
                 continue
             active_count += 1
+            if trade.get("open_pnl") is not None:
+                open_pnl += float(trade.get("open_pnl") or 0)
+                continue
             live_opt = quotes_by_symbol.get(trade.get("option_symbol"))
             if live_opt is None:
                 continue

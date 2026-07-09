@@ -61,12 +61,14 @@ function rangeFor(filter: DateFilter, customFrom: string, customTo: string): { f
 }
 
 function phaseOpenPnl(p: FrPhase, liveOpt: number | undefined): number {
+  if (p.open_pnl !== null && p.open_pnl !== undefined) return Number(p.open_pnl);
   if (p.status !== "active" || liveOpt === undefined || !p.entry_option_price || p.remaining_qty <= 0) return 0;
   const dir = p.side === "BUY" ? 1 : -1;
   return (liveOpt - p.entry_option_price) * p.remaining_qty * dir;
 }
 
 function phaseMtm(p: FrPhase, liveOpt: number | undefined): number {
+  if (p.total_pnl !== null && p.total_pnl !== undefined) return Number(p.total_pnl);
   return (p.realized_pnl ?? 0) + phaseOpenPnl(p, liveOpt);
 }
 
