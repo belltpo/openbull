@@ -178,6 +178,7 @@ export function makeFuturesRiskDemoData(baseDate = new Date()): DemoData {
     .sort((a, b) => a.underlying.localeCompare(b.underlying) || String(a.created_at).localeCompare(String(b.created_at)))
     .map((trade) => ({
       trade_id: trade.id,
+      mode: trade.mode,
       underlying: trade.underlying,
       phase_group: trade.phase_group,
       phase_no: trade.phase_no,

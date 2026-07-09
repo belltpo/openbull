@@ -7,6 +7,7 @@ import { Activity, History, LayoutGrid, Plus, Settings, TrendingUp, Wallet, Zap 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTradingMode } from "@/contexts/TradingModeContext";
 import { useMarketData } from "@/hooks/useMarketData";
 import { deleteTrade, listTrades, placeDraft } from "@/api/futuresRisk";
 import type { FrTrade } from "@/types/futuresRisk";
@@ -105,6 +106,7 @@ function InstrumentStat({
 
 export default function FuturesRisk() {
   const { user } = useAuth();
+  const { mode } = useTradingMode();
   const qc = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const demoEnabled = searchParams.get("demo") === "1";
@@ -118,22 +120,22 @@ export default function FuturesRisk() {
   const [exitMode, setExitMode] = useState<"full" | "emergency">("full");
 
   const tradesQuery = useQuery({
-    queryKey: ["fr-trades", statusFilter],
-    queryFn: () => listTrades(statusFilter),
+    queryKey: ["fr-trades", mode, statusFilter],
+    queryFn: () => listTrades(statusFilter, mode),
     refetchInterval: 4000,
     enabled: !demoEnabled,
   });
   const trades = demoEnabled
-    ? demoData.trades.filter((trade) => statusFilter === "all" || trade.status === statusFilter)
+    ? demoData.trades.filter((trade) => trade.mode === mode && (statusFilter === "all" || trade.status === statusFilter))
     : tradesQuery.data ?? [];
 
   const allTradesQuery = useQuery({
-    queryKey: ["fr-trades", "all"],
-    queryFn: () => listTrades("all"),
+    queryKey: ["fr-trades", mode, "all"],
+    queryFn: () => listTrades("all", mode),
     refetchInterval: 4000,
     enabled: !demoEnabled,
   });
-  const allTrades = demoEnabled ? demoData.trades : allTradesQuery.data ?? (statusFilter === "all" ? trades : []);
+  const allTrades = demoEnabled ? demoData.trades.filter((trade) => trade.mode === mode) : allTradesQuery.data ?? (statusFilter === "all" ? trades : []);
 
   // Subscribe to every active trade's futures + option symbol.
   const subscriptionSymbols = useMemo(() => {
@@ -422,7 +424,7 @@ export default function FuturesRisk() {
           )}
         </>
       ) : (
-        <PhaseHistory dataOverride={demoEnabled ? demoData.phases : undefined} />
+        <PhaseHistory mode={mode} dataOverride={demoEnabled ? demoData.phases.filter((phase) => phase.mode === mode) : undefined} />
       )}
 
       {/* Dialogs */}

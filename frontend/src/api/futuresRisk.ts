@@ -18,6 +18,8 @@ import type {
   PlaceTradePayload,
 } from "@/types/futuresRisk";
 
+type TradingMode = "live" | "sandbox";
+
 interface Wrapped<T> {
   status: string;
   data: T;
@@ -149,12 +151,12 @@ export async function placeTrade(payload: PlaceTradePayload): Promise<FrTrade> {
   const r = await api.post<Wrapped<FrTrade>>("/web/fr/trade", payload);
   return r.data.data;
 }
-export async function listTrades(status = "all"): Promise<FrTrade[]> {
-  const r = await api.get<Wrapped<FrTrade[]>>("/web/fr/trades", { params: { status } });
+export async function listTrades(status = "all", mode?: TradingMode): Promise<FrTrade[]> {
+  const r = await api.get<Wrapped<FrTrade[]>>("/web/fr/trades", { params: { status, mode } });
   return r.data.data;
 }
-export async function getTrade(id: number): Promise<FrTrade> {
-  const r = await api.get<Wrapped<FrTrade>>(`/web/fr/trades/${id}`);
+export async function getTrade(id: number, mode?: TradingMode): Promise<FrTrade> {
+  const r = await api.get<Wrapped<FrTrade>>(`/web/fr/trades/${id}`, { params: { mode } });
   return r.data.data;
 }
 export async function exitTrade(id: number): Promise<FrTrade> {
@@ -192,9 +194,9 @@ export async function deleteTrade(id: number): Promise<void> {
 }
 
 // ---- Phase history ----
-export async function listPhases(underlying?: string): Promise<FrPhase[]> {
+export async function listPhases(underlying?: string, mode?: TradingMode): Promise<FrPhase[]> {
   const r = await api.get<Wrapped<FrPhase[]>>("/web/fr/phases", {
-    params: underlying ? { underlying } : {},
+    params: { ...(underlying ? { underlying } : {}), mode },
   });
   return r.data.data;
 }

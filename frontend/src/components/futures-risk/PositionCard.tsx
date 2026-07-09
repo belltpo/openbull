@@ -272,8 +272,8 @@ export function PositionCard({
   const [showLog, setShowLog] = useState(false);
   const [showPreviousDetail, setShowPreviousDetail] = useState(false);
   const detail = useQuery({
-    queryKey: ["fr-trade-detail", trade.id],
-    queryFn: () => getTrade(trade.id),
+    queryKey: ["fr-trade-detail", trade.mode, trade.id],
+    queryFn: () => getTrade(trade.id, trade.mode),
     enabled: showLog && enableRemoteDetail,
     refetchInterval: showLog && trade.status === "active" ? 4000 : false,
   });

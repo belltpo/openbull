@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -424,20 +424,36 @@ async def create_draft(
 
 
 @router.get("/trades")
-async def list_trades(status: str = "all", user: User = Depends(get_current_user)):
-    return {"status": "success", "data": fr.list_trades(user.id, status)}
+async def list_trades(
+    status: str = "all",
+    mode: str | None = Query(None, pattern="^(live|sandbox)$"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    selected_mode = mode or await get_trading_mode(db)
+    return {"status": "success", "data": fr.list_trades(user.id, status, mode=selected_mode)}
 
 
 @router.get("/phases")
-async def list_phases(underlying: str | None = None, user: User = Depends(get_current_user)):
+async def list_phases(
+    underlying: str | None = None,
+    mode: str | None = Query(None, pattern="^(live|sandbox)$"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Phase history grouped by (underlying, session) with per-phase lifecycle
     summary (entry/exit, P&L, duration, achieved targets, exit kind)."""
-    return {"status": "success", "data": fr.list_phases(user.id, underlying)}
+    selected_mode = mode or await get_trading_mode(db)
+    return {"status": "success", "data": fr.list_phases(user.id, underlying, mode=selected_mode)}
 
 
 @router.get("/trades/{trade_id}")
-async def get_trade(trade_id: int, user: User = Depends(get_current_user)):
-    trade = fr.get_trade(user.id, trade_id)
+async def get_trade(
+    trade_id: int,
+    mode: str | None = Query(None, pattern="^(live|sandbox)$"),
+    user: User = Depends(get_current_user),
+):
+    trade = fr.get_trade(user.id, trade_id, mode=mode)
     if trade is None:
         raise HTTPException(status_code=404, detail="Trade not found")
     return {"status": "success", "data": trade}

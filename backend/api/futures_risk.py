@@ -582,7 +582,7 @@ async def api_futures_risk_quick_order_preview(request: Request):
             instruments.append({"symbol": pe["symbol"], "exchange": pe["exchange"]})
         session_suffix = ":" + fr._session_date_ist()  # type: ignore[attr-defined]
         session_trades = [
-            trade for trade in fr.list_trades(user_id, status="all")
+            trade for trade in fr.list_trades(user_id, status="all", mode=mode)
             if str(trade.get("underlying", "")).upper() == payload.underlying.upper()
             and int(trade.get("phase_no") or 0) > 0
             and str(trade.get("phase_group") or "").endswith(session_suffix)
@@ -746,14 +746,19 @@ async def api_futures_risk_quick_order(request: Request):
 
 
 @router.get("/futures-risk/trades/{trade_id}")
-async def api_futures_risk_trade_detail(trade_id: int, request: Request):
+async def api_futures_risk_trade_detail(
+    trade_id: int,
+    request: Request,
+    mode: str | None = Query(None, pattern="^(live|sandbox)$"),
+):
     """Return one Futures-Risk trade for API-key clients."""
     try:
         user_id = await _resolve_api_identity(request)
     except Exception as exc:
         return _error_response(exc)
 
-    trade = fr.get_trade(user_id, trade_id)
+    selected_mode = mode or await _get_trading_mode()
+    trade = fr.get_trade(user_id, trade_id, mode=selected_mode)
     if trade is None:
         return JSONResponse(content={"status": "error", "message": "Trade not found"}, status_code=404)
     return JSONResponse(content={"status": "success", "data": trade}, status_code=200)
@@ -765,6 +770,7 @@ async def api_futures_risk_trade_list(
     underlying: str | None = Query(None),
     status: str = Query("all"),
     current_session: bool = Query(True),
+    mode: str | None = Query(None, pattern="^(live|sandbox)$"),
 ):
     """Return Futures-Risk trades for API-key clients.
 
@@ -777,10 +783,11 @@ async def api_futures_risk_trade_list(
     except Exception as exc:
         return _error_response(exc)
 
+    selected_mode = mode or await _get_trading_mode()
     normalized_underlying = (underlying or "").strip().upper()
     session_suffix = ":" + fr._session_date_ist() if current_session else ""  # type: ignore[attr-defined]
     trades = []
-    for trade in fr.list_trades(user_id, status=status):
+    for trade in fr.list_trades(user_id, status=status, mode=selected_mode):
         if normalized_underlying and str(trade.get("underlying") or "").upper() != normalized_underlying:
             continue
         if current_session and not str(trade.get("phase_group") or "").endswith(session_suffix):

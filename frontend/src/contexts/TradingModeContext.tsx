@@ -75,7 +75,10 @@ export function TradingModeProvider({ children }: { children: ReactNode }) {
             k === "positions" ||
             k === "holdings" ||
             k === "funds" ||
-            k === "dashboard"
+            k === "dashboard" ||
+            k === "fr-trades" ||
+            k === "fr-phases" ||
+            k === "fr-trade-detail"
           );
         },
       });

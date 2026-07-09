@@ -162,8 +162,8 @@ class FrTrade(Base):
     created_by = Column(Integer, nullable=True)
     modified_by = Column(Integer, nullable=True)
 
-    # --- phase tracking (sequential positions on the same underlying+session) ---
-    # phase_group = "{user_id}:{underlying}:{session_date}"; phase_no increments
+    # --- phase tracking (sequential positions on the same mode+underlying+session) ---
+    # phase_group = "{user_id}:{mode}:{underlying}:{session_date}"; phase_no increments
     # 1,2,3… as each position closes and a new one opens within that group.
     phase_group = Column(String(120), nullable=True, index=True)
     phase_no = Column(Integer, nullable=False, default=0)

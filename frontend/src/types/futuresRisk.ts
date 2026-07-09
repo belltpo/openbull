@@ -72,6 +72,7 @@ export interface FrTrade {
 
 export interface FrPhase {
   trade_id: number;
+  mode: "live" | "sandbox";
   underlying: string;
   phase_group: string | null;
   phase_no: number;

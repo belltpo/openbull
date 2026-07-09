@@ -335,15 +335,23 @@ function PhaseCard({
   );
 }
 
-export function PhaseHistory({ underlying, dataOverride }: { underlying?: string; dataOverride?: FrPhase[] }) {
+export function PhaseHistory({
+  underlying,
+  mode,
+  dataOverride,
+}: {
+  underlying?: string;
+  mode?: "live" | "sandbox";
+  dataOverride?: FrPhase[];
+}) {
   const [filter, setFilter] = useState<DateFilter>("today");
   const today = localDateKey(new Date());
   const [customFrom, setCustomFrom] = useState(today);
   const [customTo, setCustomTo] = useState(today);
 
   const { data } = useQuery({
-    queryKey: ["fr-phases", underlying ?? "all"],
-    queryFn: () => listPhases(underlying),
+    queryKey: ["fr-phases", mode ?? "current", underlying ?? "all"],
+    queryFn: () => listPhases(underlying, mode),
     refetchInterval: 8000,
     enabled: !dataOverride,
   });

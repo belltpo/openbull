@@ -1023,38 +1023,61 @@ def _session_date_for_dt(dt: datetime | None) -> str:
     return (dt + timedelta(hours=5, minutes=30)).date().isoformat()
 
 
-def _phase_group_key(user_id: int, underlying: str, session_date: str) -> str:
+def _normalize_mode_filter(mode: str | None) -> str | None:
+    if mode is None:
+        return None
+    value = str(mode).strip().lower()
+    return value if value in {"live", "sandbox"} else None
+
+
+def _phase_group_key(user_id: int, underlying: str, session_date: str, mode: str | None = None) -> str:
+    normalized = _normalize_mode_filter(mode)
+    if normalized:
+        return f"{user_id}:{normalized}:{underlying}:{session_date}"
     return f"{user_id}:{underlying}:{session_date}"
 
 
-def _display_phase_group(user_id: int, underlying: str, created_at: datetime | None) -> str:
-    return _phase_group_key(user_id, underlying, _session_date_for_dt(created_at))
+def _display_phase_group(user_id: int, underlying: str, created_at: datetime | None, mode: str | None = None) -> str:
+    return _phase_group_key(user_id, underlying, _session_date_for_dt(created_at), mode)
 
 
-def _assign_phase(db, user_id: int, underlying: str) -> tuple[str, int]:
+def _assign_phase(db, user_id: int, underlying: str, mode: str | None = None) -> tuple[str, int]:
     """Return (phase_group, next_phase_no) for this instrument's IST session."""
     session_date = _session_date_ist()
-    group = _phase_group_key(user_id, underlying, session_date)
-    rows = db.execute(
-        select(FrTrade.created_at)
-        .where(FrTrade.user_id == user_id, FrTrade.underlying == underlying, FrTrade.phase_no > 0)
-        .order_by(FrTrade.created_at, FrTrade.id)
-    ).scalars().all()
+    normalized_mode = _normalize_mode_filter(mode)
+    group = _phase_group_key(user_id, underlying, session_date, normalized_mode)
+    q = select(FrTrade.created_at).where(
+        FrTrade.user_id == user_id,
+        FrTrade.underlying == underlying,
+        FrTrade.phase_no > 0,
+    )
+    if normalized_mode:
+        q = q.where(FrTrade.mode == normalized_mode)
+    rows = db.execute(q.order_by(FrTrade.created_at, FrTrade.id)).scalars().all()
     same_day_count = sum(1 for created_at in rows if _session_date_for_dt(created_at) == session_date)
     return group, same_day_count + 1
 
 
-def _assert_no_active_phase(db, user_id: int, underlying: str, exclude_trade_id: int | None = None) -> None:
+def _assert_no_active_phase(
+    db,
+    user_id: int,
+    underlying: str,
+    exclude_trade_id: int | None = None,
+    mode: str | None = None,
+) -> None:
+    normalized_mode = _normalize_mode_filter(mode)
     q = select(FrTrade).where(
         FrTrade.user_id == user_id,
         FrTrade.underlying == underlying,
         FrTrade.status == "active",
     )
+    if normalized_mode:
+        q = q.where(FrTrade.mode == normalized_mode)
     if exclude_trade_id is not None:
         q = q.where(FrTrade.id != exclude_trade_id)
     existing = db.execute(q.order_by(FrTrade.phase_no.desc()).limit(1)).scalar_one_or_none()
     if existing is not None:
-        display_phase = _phase_display_numbers(db, user_id).get(existing.id, existing.phase_no)
+        display_phase = _phase_display_numbers(db, user_id, normalized_mode).get(existing.id, existing.phase_no)
         raise FrError(
             f"{underlying} Phase {display_phase} is still active. Complete it before starting the next phase.",
             409,
@@ -1273,7 +1296,7 @@ def place_trade(
     """
     p = _normalise_params(params)
     with session_scope() as db:
-        _assert_no_active_phase(db, user_id, p["underlying"])
+        _assert_no_active_phase(db, user_id, p["underlying"], mode=mode)
     plan = _resolve_trade_plan(auth_token, broker, config, p, require_price=True)
 
     # Place the entry order
@@ -1327,7 +1350,7 @@ def place_trade(
             plan["entry_opt"] = fill_price
 
     with session_scope() as db:
-        group, phase_no = _assign_phase(db, user_id, p["underlying"])
+        group, phase_no = _assign_phase(db, user_id, p["underlying"], mode)
         trade = FrTrade(
             user_id=user_id,
             mode=mode,
@@ -1470,7 +1493,7 @@ def place_draft(
 
     p = _normalise_params(p)
     with session_scope() as db:
-        _assert_no_active_phase(db, user_id, p["underlying"], exclude_trade_id=trade_id)
+        _assert_no_active_phase(db, user_id, p["underlying"], exclude_trade_id=trade_id, mode=mode)
     plan = _resolve_trade_plan(auth_token, broker, config, p, require_price=True)
 
     order_data = {
@@ -1527,7 +1550,7 @@ def place_draft(
 
     with session_scope() as db:
         t = db.get(FrTrade, trade_id)
-        group, phase_no = _assign_phase(db, user_id, p["underlying"])
+        group, phase_no = _assign_phase(db, user_id, p["underlying"], mode)
         t.mode = mode
         t.option_symbol = plan["option_symbol"]
         t.option_exchange = plan["option_exchange"]
@@ -1808,31 +1831,34 @@ def _event_to_dict(e: FrTradeEvent) -> dict[str, Any]:
     }
 
 
-def _phase_display_numbers(db, user_id: int) -> dict[int, int]:
-    rows = db.execute(
-        select(FrTrade)
-        .where(FrTrade.user_id == user_id, FrTrade.phase_no > 0)
-        .order_by(FrTrade.created_at, FrTrade.id)
-    ).scalars().all()
-    counters: dict[tuple[str, str], int] = {}
+def _phase_display_numbers(db, user_id: int, mode: str | None = None) -> dict[int, int]:
+    normalized_mode = _normalize_mode_filter(mode)
+    q = select(FrTrade).where(FrTrade.user_id == user_id, FrTrade.phase_no > 0)
+    if normalized_mode:
+        q = q.where(FrTrade.mode == normalized_mode)
+    rows = db.execute(q.order_by(FrTrade.created_at, FrTrade.id)).scalars().all()
+    counters: dict[tuple[str, str, str], int] = {}
     out: dict[int, int] = {}
     for trade in rows:
-        key = (trade.underlying, _session_date_for_dt(trade.created_at))
+        key = (trade.mode, trade.underlying, _session_date_for_dt(trade.created_at))
         counters[key] = counters.get(key, 0) + 1
         out[trade.id] = counters[key]
     return out
 
 
-def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]:
+def list_trades(user_id: int, status: str | None = None, mode: str | None = None) -> list[dict[str, Any]]:
     with session_scope() as db:
         _mark_missing_entry_order_ids_failed(db, user_id)
         _sync_active_entry_order_statuses(db, user_id)
+        normalized_mode = _normalize_mode_filter(mode)
         q = select(FrTrade).where(FrTrade.user_id == user_id)
+        if normalized_mode:
+            q = q.where(FrTrade.mode == normalized_mode)
         if status and status != "all":
             q = q.where(FrTrade.status == status)
         q = q.order_by(FrTrade.created_at.desc())
         trades = db.execute(q).scalars().all()
-        display_phase = _phase_display_numbers(db, user_id)
+        display_phase = _phase_display_numbers(db, user_id, normalized_mode)
         out = []
         for t in trades:
             d = _trade_to_dict(t)
@@ -1847,7 +1873,7 @@ def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]
                 ).scalar()
             )
             if t.id in display_phase:
-                d["phase_group"] = _display_phase_group(user_id, t.underlying, t.created_at)
+                d["phase_group"] = _display_phase_group(user_id, t.underlying, t.created_at, t.mode)
                 d["phase_no"] = display_phase[t.id]
             tgts = db.execute(
                 select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
@@ -1857,12 +1883,15 @@ def list_trades(user_id: int, status: str | None = None) -> list[dict[str, Any]]
         return out
 
 
-def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
+def get_trade(user_id: int, trade_id: int, mode: str | None = None) -> dict[str, Any] | None:
     with session_scope() as db:
         _mark_missing_entry_order_ids_failed(db, user_id)
         _sync_active_entry_order_statuses(db, user_id)
+        normalized_mode = _normalize_mode_filter(mode)
         t = db.get(FrTrade, trade_id)
         if t is None or t.user_id != user_id:
+            return None
+        if normalized_mode and t.mode != normalized_mode:
             return None
         d = _trade_to_dict(t)
         target_exit_prices, sl_exit_option_price = _trade_exit_option_prices(db, t.id)
@@ -1875,9 +1904,9 @@ def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
                 .limit(1)
             ).scalar()
         )
-        display_phase = _phase_display_numbers(db, user_id)
+        display_phase = _phase_display_numbers(db, user_id, normalized_mode)
         if t.id in display_phase:
-            d["phase_group"] = _display_phase_group(user_id, t.underlying, t.created_at)
+            d["phase_group"] = _display_phase_group(user_id, t.underlying, t.created_at, t.mode)
             d["phase_no"] = display_phase[t.id]
         tgts = db.execute(
             select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
@@ -1890,20 +1919,23 @@ def get_trade(user_id: int, trade_id: int) -> dict[str, Any] | None:
         return d
 
 
-def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, Any]]:
+def list_phases(user_id: int, underlying: str | None = None, mode: str | None = None) -> list[dict[str, Any]]:
     """Phase history grouped by (underlying, session). Each entry is one
     position (phase) with its lifecycle summary: entry/exit, P&L, duration,
     achieved targets, and how it closed."""
     with session_scope() as db:
         _mark_missing_entry_order_ids_failed(db, user_id)
         _sync_active_entry_order_statuses(db, user_id)
+        normalized_mode = _normalize_mode_filter(mode)
         q = select(FrTrade).where(FrTrade.user_id == user_id, FrTrade.phase_no > 0)
+        if normalized_mode:
+            q = q.where(FrTrade.mode == normalized_mode)
         if underlying:
             q = q.where(FrTrade.underlying == underlying.strip().upper())
         q = q.order_by(FrTrade.underlying, FrTrade.created_at, FrTrade.id)
         trades = db.execute(q).scalars().all()
         out: list[dict[str, Any]] = []
-        display_phase = _phase_display_numbers(db, user_id)
+        display_phase = _phase_display_numbers(db, user_id, normalized_mode)
         for t in trades:
             target_exit_prices, sl_exit_option_price = _trade_exit_option_prices(db, t.id)
             tgts = db.execute(
@@ -1924,8 +1956,9 @@ def list_phases(user_id: int, underlying: str | None = None) -> list[dict[str, A
             )
             out.append({
                 "trade_id": t.id,
+                "mode": t.mode,
                 "underlying": t.underlying,
-                "phase_group": _display_phase_group(user_id, t.underlying, t.created_at),
+                "phase_group": _display_phase_group(user_id, t.underlying, t.created_at, t.mode),
                 "phase_no": display_phase.get(t.id, t.phase_no),
                 "status": t.status,
                 "option_symbol": t.option_symbol,

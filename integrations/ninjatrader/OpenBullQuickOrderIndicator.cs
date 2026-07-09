@@ -1649,7 +1649,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 bool closeOk = !result.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase);
                 if (!closeOk)
                     result = result.Substring("ERROR:".Length).Trim();
-                OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(tradeId);
+                OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(tradeId, CurrentOpenBullModeParam());
                 if (snapshot != null)
                 {
                     ApplyLiveOptionPrice(snapshot);
@@ -1988,7 +1988,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private async Task LinkPlacedTradeAsync(int tradeId, string optionType, bool orderAccepted = true)
         {
-            OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(tradeId);
+            OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(tradeId, CurrentOpenBullModeParam());
             if (snapshot == null)
             {
                 SetStatus("Order sent; unable to load linked trade levels", false);
@@ -2016,6 +2016,16 @@ namespace NinjaTrader.NinjaScript.Indicators
             });
         }
 
+        private string CurrentOpenBullModeParam()
+        {
+            if (string.IsNullOrWhiteSpace(tradingMode))
+                return null;
+            string value = tradingMode.Trim().ToLowerInvariant();
+            if (value == "live" || value == "sandbox")
+                return value;
+            return null;
+        }
+
         private async Task RehydrateLinkedTradeAsync()
         {
             if (rehydrateAttempted || string.IsNullOrWhiteSpace(ApiKey))
@@ -2024,20 +2034,21 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (LinkedTradeRemovedByUser && LinkedTradeId > 0)
                 AddDeletedLinkedTradeId(LinkedTradeId);
             await Task.Delay(500);
-            List<OpenBullTradeSnapshot> snapshots = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradesAsync(Underlying);
+            string modeParam = CurrentOpenBullModeParam();
+            List<OpenBullTradeSnapshot> snapshots = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradesAsync(Underlying, modeParam);
             if (snapshots.Count == 0)
             {
                 foreach (int id in ParseTradeIds(LinkedTradeIds))
                 {
                     if (IsDeletedLinkedTradeId(id))
                         continue;
-                    OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(id);
+                    OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(id, modeParam);
                     if (snapshot != null)
                         snapshots.Add(snapshot);
                 }
                 if (LinkedTradeId > 0 && !IsDeletedLinkedTradeId(LinkedTradeId))
                 {
-                    OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(LinkedTradeId);
+                    OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(LinkedTradeId, modeParam);
                     if (snapshot != null)
                         snapshots.Add(snapshot);
                 }
@@ -2095,7 +2106,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     RemoveTradeDrawing(id, false);
                     continue;
                 }
-                OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(id);
+                OpenBullTradeSnapshot snapshot = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradeAsync(id, CurrentOpenBullModeParam());
                 if (snapshot == null)
                     continue;
                 ApplyLiveOptionPrice(snapshot);
@@ -2235,7 +2246,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private async Task RehydrateAdditionalTradeDrawingsAsync()
         {
-            List<OpenBullTradeSnapshot> snapshots = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradesAsync(Underlying);
+            List<OpenBullTradeSnapshot> snapshots = await NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.FetchTradesAsync(Underlying, CurrentOpenBullModeParam());
             foreach (OpenBullTradeSnapshot snapshot in snapshots)
                 ApplyLiveOptionPrice(snapshot);
             if (ChartControl == null)

@@ -29,6 +29,7 @@ namespace NinjaTrader.NinjaScript
     public class OpenBullTradeSnapshot
     {
         public int TradeId { get; set; }
+        public string Mode { get; set; }
         public string Underlying { get; set; }
         public string OptionSymbol { get; set; }
         public string Side { get; set; }
@@ -135,12 +136,15 @@ namespace NinjaTrader.NinjaScript
             }
         }
 
-        public static async Task<OpenBullTradeSnapshot> FetchTradeAsync(int tradeId)
+        public static async Task<OpenBullTradeSnapshot> FetchTradeAsync(int tradeId, string mode = null)
         {
             if (tradeId <= 0 || string.IsNullOrWhiteSpace(ApiKey))
                 return null;
 
             string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/trades/" + tradeId.ToString(CultureInfo.InvariantCulture);
+            string normalizedMode = NormalizeMode(mode);
+            if (!string.IsNullOrWhiteSpace(normalizedMode))
+                url += "?mode=" + Uri.EscapeDataString(normalizedMode);
             using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, url))
             {
                 request.Headers.TryAddWithoutValidation("X-API-KEY", ApiKey);
@@ -152,13 +156,16 @@ namespace NinjaTrader.NinjaScript
             }
         }
 
-        public static async Task<List<OpenBullTradeSnapshot>> FetchTradesAsync(string underlying)
+        public static async Task<List<OpenBullTradeSnapshot>> FetchTradesAsync(string underlying, string mode = null)
         {
             List<OpenBullTradeSnapshot> trades = new List<OpenBullTradeSnapshot>();
             if (string.IsNullOrWhiteSpace(ApiKey))
                 return trades;
 
             string url = OpenBullUrl.TrimEnd('/') + "/api/v1/futures-risk/trades?status=all&current_session=true";
+            string normalizedMode = NormalizeMode(mode);
+            if (!string.IsNullOrWhiteSpace(normalizedMode))
+                url += "&mode=" + Uri.EscapeDataString(normalizedMode);
             if (!string.IsNullOrWhiteSpace(underlying))
                 url += "&underlying=" + Uri.EscapeDataString(underlying.Trim().ToUpperInvariant());
             using (HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, url))
@@ -190,6 +197,7 @@ namespace NinjaTrader.NinjaScript
                 data = body;
             OpenBullTradeSnapshot trade = new OpenBullTradeSnapshot();
             trade.TradeId = (int)ExtractNumber(data, "id");
+            trade.Mode = ExtractJsonValue(data, "mode");
             trade.Underlying = ExtractJsonValue(data, "underlying");
             trade.OptionSymbol = ExtractJsonValue(data, "option_symbol");
             trade.Side = ExtractJsonValue(data, "side");
@@ -215,6 +223,16 @@ namespace NinjaTrader.NinjaScript
             if (trade.TradeId <= 0)
                 return null;
             return trade;
+        }
+
+        private static string NormalizeMode(string mode)
+        {
+            if (string.IsNullOrWhiteSpace(mode))
+                return null;
+            string value = mode.Trim().ToLowerInvariant();
+            if (value == "live" || value == "sandbox")
+                return value;
+            return null;
         }
 
         private static string BuildLevelsJson(double slPrice, IList<OpenBullLevelTarget> targets)
