@@ -203,7 +203,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
             ok, oid, msg, fill_price = _place_exit(t, qty, "sl", ctx) if qty > 0 else (True, None, "ok", None)
             if ok:
                 exit_px = fill_price or fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
-                pnl_inc = fr_service._leg_exit_pnl(t.side, t.entry_option_price, exit_px, qty)
+                pnl_inc = fr_service._trade_exit_pnl(t, exit_px, qty)
                 t.remaining_qty = 0
                 t.realized_pnl = round((t.realized_pnl or 0.0) + pnl_inc, 2)
                 t.status = "stopped"
@@ -275,7 +275,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                 )
                 continue
             exit_px = fill_price or fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
-            pnl_inc = fr_service._leg_exit_pnl(t.side, t.entry_option_price, exit_px, qty)
+            pnl_inc = fr_service._trade_exit_pnl(t, exit_px, qty)
             tgt.status = "hit"
             tgt.hit_futures_price = fut
             tgt.exit_order_id = oid

@@ -41,10 +41,8 @@ namespace NinjaTrader.NinjaScript
         public double StopLossPrice { get; set; }
         public bool StopLossHit { get; set; }
         public double RealizedPnl { get; set; }
-        public double OpenPnl { get; set; }
-        public double TotalPnl { get; set; }
-        public bool HasServerPnl { get; set; }
         public int RemainingQty { get; set; }
+        public int PnlQty { get; set; }
         public double LiveOptionPrice { get; set; }
         public DateTime CreatedAt { get; set; }
         public DateTime EntryTime { get; set; }
@@ -59,12 +57,11 @@ namespace NinjaTrader.NinjaScript
         {
             get
             {
-                if (HasServerPnl)
-                    return TotalPnl;
                 if (!string.Equals(Status, "active", StringComparison.OrdinalIgnoreCase) || LiveOptionPrice <= 0 || EntryOptionPrice <= 0 || RemainingQty <= 0)
                     return RealizedPnl;
                 double direction = string.Equals(Side, "BUY", StringComparison.OrdinalIgnoreCase) ? 1.0 : -1.0;
-                return RealizedPnl + ((LiveOptionPrice - EntryOptionPrice) * RemainingQty * direction);
+                int qty = PnlQty > 0 ? PnlQty : RemainingQty;
+                return RealizedPnl + ((LiveOptionPrice - EntryOptionPrice) * qty * direction);
             }
         }
     }
@@ -217,10 +214,8 @@ namespace NinjaTrader.NinjaScript
                 || data.IndexOf("\"kind\":\"sl_hit\"", StringComparison.OrdinalIgnoreCase) >= 0
                 || data.IndexOf("\"kind\": \"sl_hit\"", StringComparison.OrdinalIgnoreCase) >= 0;
             trade.RealizedPnl = ExtractNumber(data, "realized_pnl");
-            trade.HasServerPnl = HasJsonKey(data, "total_pnl");
-            trade.OpenPnl = ExtractNumber(data, "open_pnl");
-            trade.TotalPnl = ExtractNumber(data, "total_pnl");
             trade.RemainingQty = (int)ExtractNumber(data, "remaining_qty");
+            trade.PnlQty = (int)ExtractNumber(data, "pnl_qty");
             trade.CreatedAt = ExtractDateTime(data, "created_at");
             trade.EntryTime = ExtractDateTime(data, "entry_time");
             if (trade.EntryTime == DateTime.MinValue)
@@ -313,15 +308,6 @@ namespace NinjaTrader.NinjaScript
             double parsed;
             string raw = ExtractJsonValue(body, key);
             return double.TryParse(raw, NumberStyles.Any, CultureInfo.InvariantCulture, out parsed) ? parsed : 0;
-        }
-
-        private static bool HasJsonKey(string body, string key)
-        {
-            return Regex.IsMatch(
-                body ?? "",
-                "\"" + Regex.Escape(key) + "\"\\s*:",
-                RegexOptions.IgnoreCase
-            );
         }
 
         private static bool ExtractBool(string body, string key)

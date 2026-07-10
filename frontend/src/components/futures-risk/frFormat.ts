@@ -15,15 +15,14 @@ export function signed(n: number | null | undefined, d = 2): string {
 
 /** Live option-leg P&L for the remaining quantity, given the current premium. */
 export function livePnl(trade: FrTrade, liveOpt: number | undefined): number | null {
-  if (trade.open_pnl !== null && trade.open_pnl !== undefined) return Number(trade.open_pnl);
   if (liveOpt === undefined || !trade.entry_option_price) return null;
   const dir = trade.side === "BUY" ? 1 : -1;
-  return (liveOpt - trade.entry_option_price) * trade.remaining_qty * dir;
+  const pnlQty = trade.pnl_qty ?? trade.remaining_qty;
+  return (liveOpt - trade.entry_option_price) * pnlQty * dir;
 }
 
 /** Total P&L = realized (booked exits) + live unrealized (open remainder). */
 export function totalPnl(trade: FrTrade, liveOpt: number | undefined): number {
-  if (trade.total_pnl !== null && trade.total_pnl !== undefined) return Number(trade.total_pnl);
   const open = livePnl(trade, liveOpt) ?? 0;
   return (trade.realized_pnl ?? 0) + open;
 }

@@ -621,14 +621,11 @@ async def api_futures_risk_quick_order_preview(request: Request):
             if trade.get("status") != "active":
                 continue
             active_count += 1
-            if trade.get("open_pnl") is not None:
-                open_pnl += float(trade.get("open_pnl") or 0)
-                continue
             live_opt = quotes_by_symbol.get(trade.get("option_symbol"))
             if live_opt is None:
                 continue
             entry_opt = float(trade.get("entry_option_price") or 0)
-            remaining_qty = int(trade.get("remaining_qty") or 0)
+            remaining_qty = int(trade.get("pnl_qty") or trade.get("remaining_qty") or 0)
             direction = 1 if trade.get("side") == "BUY" else -1
             open_pnl += (float(live_opt) - entry_opt) * remaining_qty * direction
         data["mtm"] = {

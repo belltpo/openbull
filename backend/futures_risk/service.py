@@ -47,8 +47,6 @@ logger = logging.getLogger(__name__)
 
 _QUICK_ORDER_STRIKE_OFFSET = 200.0
 _SESSION_OPEN_CACHE: dict[tuple[str, str, str], float] = {}
-_BROKER_POSITION_CACHE_TTL_SECONDS = 2.0
-_BROKER_POSITION_CACHE: dict[tuple[int, str, str], tuple[float, list[dict[str, Any]] | None]] = {}
 
 _MCX_DEFAULT_LOTS: dict[str, int] = {
     "SILVER": 30,
@@ -1086,12 +1084,33 @@ def _assert_no_active_phase(
         )
 
 
+def _pnl_quantity(t: FrTrade, qty: int) -> int:
+    """Quantity to use for rupee P&L without changing broker order quantity.
+
+    Some MCX symbols are persisted as lot counts when the instrument master
+    reports lot_size=1. In that case, expand the P&L quantity by the known
+    commodity multiplier so local P&L is not understated by a factor of 10/30/etc.
+    """
+    raw_qty = max(0, int(qty or 0))
+    multiplier = _mcx_default_lot(str(t.underlying or ""))
+    stored_lot_size = int(t.lot_size or 0)
+    stored_total_qty = int(t.total_qty or 0)
+    stored_lots = int(t.lots or 0)
+    if multiplier > 1 and (stored_lot_size <= 1 or (stored_lots > 0 and stored_total_qty <= stored_lots)):
+        return raw_qty * multiplier
+    return raw_qty
+
+
 def _leg_exit_pnl(side: str, entry_opt: float, exit_opt: float, qty: int) -> float:
     """Realized P&L for exiting ``qty`` of the option leg at ``exit_opt``."""
     if exit_opt <= 0 or entry_opt <= 0 or qty <= 0:
         return 0.0
     delta = (exit_opt - entry_opt) if side == "BUY" else (entry_opt - exit_opt)
     return round(delta * qty, 2)
+
+
+def _trade_exit_pnl(t: FrTrade, exit_opt: float, qty: int) -> float:
+    return _leg_exit_pnl(t.side, t.entry_option_price, exit_opt, _pnl_quantity(t, qty))
 
 
 def _option_exit_price(symbol: str, exchange: str, fallback: float = 0.0) -> float:
@@ -1103,141 +1122,6 @@ def _option_exit_price(symbol: str, exchange: str, fallback: float = 0.0) -> flo
     except Exception:
         pass
     return float(fallback)
-
-
-def _safe_float(value: Any, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _cached_broker_positions(user_id: int, mode: str | None) -> list[dict[str, Any]] | None:
-    """Return live broker positions with a short cache for polling screens."""
-    if mode != "live":
-        return []
-    ctx = load_broker_context_sync(user_id)
-    if not ctx or not ctx.get("auth_token") or not ctx.get("broker"):
-        return None
-
-    broker = str(ctx["broker"])
-    token_key = str(ctx["auth_token"])[-12:]
-    cache_key = (user_id, broker, token_key)
-    now = time.monotonic()
-    cached = _BROKER_POSITION_CACHE.get(cache_key)
-    if cached and now - cached[0] < _BROKER_POSITION_CACHE_TTL_SECONDS:
-        return cached[1]
-
-    positions: list[dict[str, Any]] | None = None
-    try:
-        from backend.services.positions_service import get_positions_with_auth
-
-        ok, response, _ = get_positions_with_auth(
-            ctx["auth_token"],
-            broker,
-            ctx.get("config"),
-            user_id=None,
-        )
-        data = response.get("data") if ok and isinstance(response, dict) else None
-        if isinstance(data, list):
-            positions = [p for p in data if isinstance(p, dict)]
-    except Exception:
-        logger.debug("Unable to fetch broker positions for Futures-Risk P&L", exc_info=True)
-
-    _BROKER_POSITION_CACHE[cache_key] = (now, positions)
-    return positions
-
-
-def _position_symbol_matches_trade(t: FrTrade, pos: dict[str, Any]) -> bool:
-    option_symbol = str(t.option_symbol or "").upper()
-    option_exchange = str(t.option_exchange or "").upper()
-    product = str(t.product or "").upper()
-    strike_text = _format_strike(float(t.strike or 0)) if t.strike else ""
-    compact_option_symbol = _compact_broker_symbol(option_symbol)
-    if not option_symbol:
-        return False
-
-    symbol = str(pos.get("symbol") or "").upper()
-    exchange = str(pos.get("exchange") or "").upper()
-    pos_product = str(pos.get("product") or "").upper()
-    compact_pos_symbol = _compact_broker_symbol(symbol)
-    symbol_match = (
-        symbol == option_symbol
-        or (
-            compact_pos_symbol
-            and compact_option_symbol
-            and (
-                compact_pos_symbol == compact_option_symbol
-                or compact_option_symbol in compact_pos_symbol
-                or (
-                    str(t.underlying or "").upper() in compact_pos_symbol
-                    and strike_text
-                    and strike_text in compact_pos_symbol
-                    and str(t.option_type or "").upper() in compact_pos_symbol
-                )
-            )
-        )
-    )
-    if not symbol_match:
-        return False
-    if option_exchange and exchange and exchange != option_exchange:
-        return False
-    if product and pos_product and pos_product != product:
-        return False
-    return True
-
-
-def _broker_position_record_for_trade(t: FrTrade) -> dict[str, Any] | None:
-    if t.mode != "live":
-        return None
-    positions = _cached_broker_positions(t.user_id, t.mode)
-    if positions is None:
-        return None
-    for pos in positions:
-        if _position_symbol_matches_trade(t, pos):
-            return pos
-    return None
-
-
-def _broker_position_for_trade(t: FrTrade) -> dict[str, Any] | None:
-    if t.status != "active" or t.mode != "live":
-        return None
-    pos = _broker_position_record_for_trade(t)
-    if pos is None or _safe_int(pos.get("quantity")) == 0:
-        return None
-    return pos
-    return None
-
-
-def _compact_broker_symbol(symbol: str) -> str:
-    value = str(symbol or "").upper()
-    value = value.replace("CALL", "CE").replace("PUT", "PE")
-    return re.sub(r"[^A-Z0-9]", "", value)
-
-
-def _pnl_quantity(t: FrTrade, remaining_qty: int) -> int:
-    qty = max(0, int(remaining_qty or 0))
-    multiplier = _mcx_default_lot(str(t.underlying or ""))
-    stored_lot_size = int(t.lot_size or 0)
-    stored_total_qty = int(t.total_qty or 0)
-    stored_lots = int(t.lots or 0)
-    if multiplier > 1 and (stored_lot_size <= 1 or (stored_lots > 0 and stored_total_qty <= stored_lots)):
-        return qty * multiplier
-    return qty
-
-
-def _local_open_pnl(side: str, entry_opt: float, live_opt: float | None, pnl_qty: int) -> float:
-    if live_opt is None or live_opt <= 0 or entry_opt <= 0 or pnl_qty <= 0:
-        return 0.0
-    direction = 1 if side == "BUY" else -1
-    return round((live_opt - entry_opt) * pnl_qty * direction, 2)
 
 
 def _persist_targets(db, trade_id: int, target_rows: list[dict[str, Any]]) -> None:
@@ -1764,37 +1648,7 @@ def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
             live_option_price = get_ltp_value(t.option_symbol, t.option_exchange)
         except Exception:
             live_option_price = None
-    entry_option_price = float(t.entry_option_price or 0)
-    remaining_qty = int(t.remaining_qty or 0)
-    realized_pnl = float(t.realized_pnl or 0)
-    broker_position = _broker_position_for_trade(t)
-    broker_quantity = None
-    broker_average_price = None
-    broker_ltp = None
-    broker_pnl = None
-    broker_pnl_source = None
-
-    if broker_position is not None:
-        broker_quantity = _safe_int(broker_position.get("quantity"))
-        broker_average_price = _safe_float(broker_position.get("average_price"))
-        broker_ltp = _safe_float(broker_position.get("ltp"))
-        if broker_position.get("pnl") is not None:
-            broker_pnl = _safe_float(broker_position.get("pnl"))
-        broker_pnl_source = "broker_position"
-        if broker_average_price > 0:
-            entry_option_price = broker_average_price
-        if broker_ltp > 0:
-            live_option_price = broker_ltp
-
-    pnl_qty = _pnl_quantity(t, remaining_qty)
-    local_open_pnl = _local_open_pnl(t.side, entry_option_price, live_option_price, pnl_qty)
-    if broker_pnl is not None and broker_position is not None:
-        total_pnl = round(broker_pnl, 2)
-        open_pnl = round(total_pnl - realized_pnl, 2)
-    else:
-        open_pnl = local_open_pnl
-        total_pnl = round(realized_pnl + open_pnl, 2)
-
+    pnl_qty = _pnl_quantity(t, int(t.remaining_qty or 0))
     return {
         "id": t.id,
         "mode": t.mode,
@@ -1809,8 +1663,9 @@ def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
         "lots": t.lots,
         "lot_size": t.lot_size,
         "total_qty": t.total_qty,
-        "remaining_qty": remaining_qty,
-        "entry_option_price": entry_option_price,
+        "remaining_qty": t.remaining_qty,
+        "pnl_qty": pnl_qty,
+        "entry_option_price": t.entry_option_price,
         "live_option_price": live_option_price,
         "entry_order_id": t.entry_order_id,
         "futures_symbol": t.futures_symbol,
@@ -1821,15 +1676,7 @@ def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
         "sl_price": t.sl_price,
         "sl_basis": t.sl_basis,
         "status": t.status,
-        "realized_pnl": realized_pnl,
-        "open_pnl": open_pnl,
-        "total_pnl": total_pnl,
-        "broker_quantity": broker_quantity,
-        "broker_average_price": broker_average_price,
-        "broker_ltp": broker_ltp,
-        "broker_pnl": broker_pnl,
-        "pnl_qty": pnl_qty,
-        "pnl_source": broker_pnl_source or "local",
+        "realized_pnl": t.realized_pnl,
         "created_by": t.created_by,
         "modified_by": t.modified_by,
         "params": (t.meta or {}).get("params"),
@@ -1995,51 +1842,6 @@ def _sync_active_entry_order_statuses(db, user_id: int) -> None:
         )
 
 
-def _sync_broker_closed_positions(db, user_id: int, mode: str | None = None) -> None:
-    normalized_mode = _normalize_mode_filter(mode)
-    if normalized_mode == "sandbox":
-        return
-    positions = _cached_broker_positions(user_id, "live")
-    if positions is None:
-        return
-
-    rows = db.execute(
-        select(FrTrade).where(
-            FrTrade.user_id == user_id,
-            FrTrade.mode == "live",
-            FrTrade.status == "active",
-        )
-    ).scalars().all()
-    for trade in rows:
-        pos = next((p for p in positions if _position_symbol_matches_trade(trade, p)), None)
-        if pos is not None and _safe_int(pos.get("quantity")) != 0:
-            continue
-
-        snapshot = _trade_to_dict(trade)
-        broker_pnl = _safe_float(pos.get("pnl")) if pos is not None and pos.get("pnl") is not None else None
-        trade.realized_pnl = round(
-            broker_pnl if broker_pnl is not None else float(snapshot.get("total_pnl") or trade.realized_pnl or 0),
-            2,
-        )
-        trade.remaining_qty = 0
-        trade.status = "completed"
-        trade.closed_at = datetime.now(tz=timezone.utc)
-        meta = dict(trade.meta or {})
-        meta["broker_closed"] = True
-        trade.meta = meta
-        log_event(
-            db,
-            trade_id=trade.id,
-            user_id=user_id,
-            kind="broker_closed",
-            message="Position closed at broker; OpenBull synced the Futures-Risk phase",
-            payload={
-                "broker_position": pos,
-                "realized_pnl": trade.realized_pnl,
-            },
-        )
-
-
 def _event_to_dict(e: FrTradeEvent) -> dict[str, Any]:
     return {
         "id": e.id,
@@ -2072,7 +1874,6 @@ def list_trades(user_id: int, status: str | None = None, mode: str | None = None
         _mark_missing_entry_order_ids_failed(db, user_id)
         _sync_active_entry_order_statuses(db, user_id)
         normalized_mode = _normalize_mode_filter(mode)
-        _sync_broker_closed_positions(db, user_id, normalized_mode)
         q = select(FrTrade).where(FrTrade.user_id == user_id)
         if normalized_mode:
             q = q.where(FrTrade.mode == normalized_mode)
@@ -2110,7 +1911,6 @@ def get_trade(user_id: int, trade_id: int, mode: str | None = None) -> dict[str,
         _mark_missing_entry_order_ids_failed(db, user_id)
         _sync_active_entry_order_statuses(db, user_id)
         normalized_mode = _normalize_mode_filter(mode)
-        _sync_broker_closed_positions(db, user_id, normalized_mode)
         t = db.get(FrTrade, trade_id)
         if t is None or t.user_id != user_id:
             return None
@@ -2150,7 +1950,6 @@ def list_phases(user_id: int, underlying: str | None = None, mode: str | None = 
         _mark_missing_entry_order_ids_failed(db, user_id)
         _sync_active_entry_order_statuses(db, user_id)
         normalized_mode = _normalize_mode_filter(mode)
-        _sync_broker_closed_positions(db, user_id, normalized_mode)
         q = select(FrTrade).where(FrTrade.user_id == user_id, FrTrade.phase_no > 0)
         if normalized_mode:
             q = q.where(FrTrade.mode == normalized_mode)
@@ -2161,7 +1960,6 @@ def list_phases(user_id: int, underlying: str | None = None, mode: str | None = 
         out: list[dict[str, Any]] = []
         display_phase = _phase_display_numbers(db, user_id, normalized_mode)
         for t in trades:
-            trade_snapshot = _trade_to_dict(t)
             target_exit_prices, sl_exit_option_price = _trade_exit_option_prices(db, t.id)
             tgts = db.execute(
                 select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
@@ -2196,8 +1994,7 @@ def list_phases(user_id: int, underlying: str | None = None, mode: str | None = 
                 "entry_time": t.created_at.isoformat() if t.created_at else None,
                 "exit_time": t.closed_at.isoformat() if t.closed_at else None,
                 "entry_futures_price": t.entry_futures_price,
-                "entry_option_price": trade_snapshot["entry_option_price"],
-                "live_option_price": trade_snapshot["live_option_price"],
+                "entry_option_price": t.entry_option_price,
                 "sl_price": t.sl_price,
                 "sl_basis": t.sl_basis,
                 "sl_exit_option_price": sl_exit_option_price,
@@ -2208,16 +2005,9 @@ def list_phases(user_id: int, underlying: str | None = None, mode: str | None = 
                 "targets_total": len(tgts),
                 "targets_achieved": achieved,
                 "targets": [_target_row_to_dict(r, target_exit_prices.get(r.seq)) for r in tgts],
-                "realized_pnl": trade_snapshot["realized_pnl"],
-                "open_pnl": trade_snapshot["open_pnl"],
-                "total_pnl": trade_snapshot["total_pnl"],
-                "broker_quantity": trade_snapshot["broker_quantity"],
-                "broker_average_price": trade_snapshot["broker_average_price"],
-                "broker_ltp": trade_snapshot["broker_ltp"],
-                "broker_pnl": trade_snapshot["broker_pnl"],
-                "pnl_qty": trade_snapshot["pnl_qty"],
-                "pnl_source": trade_snapshot["pnl_source"],
-                "remaining_qty": trade_snapshot["remaining_qty"],
+                "realized_pnl": t.realized_pnl,
+                "remaining_qty": t.remaining_qty,
+                "pnl_qty": _pnl_quantity(t, int(t.remaining_qty or 0)),
                 "duration_sec": (
                     int(((t.closed_at or t.updated_at) - t.created_at).total_seconds())
                     if t.created_at and (t.closed_at or t.updated_at) else None
@@ -2303,10 +2093,9 @@ def manual_exit(
                 exit_fill_price = fill_price
 
     exit_px = exit_fill_price or _option_exit_price(option_symbol, option_exchange, fallback=entry_opt)
-    pnl_inc = _leg_exit_pnl(side, entry_opt, exit_px, exit_qty)
-
     with session_scope() as db:
         t = db.get(FrTrade, trade_id)
+        pnl_inc = _trade_exit_pnl(t, exit_px, exit_qty)
         t.remaining_qty = max(0, t.remaining_qty - exit_qty)
         t.realized_pnl = round((t.realized_pnl or 0.0) + pnl_inc, 2)
         t.modified_by = user_id
