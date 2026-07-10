@@ -26,7 +26,6 @@ namespace NinjaTrader.NinjaScript.DrawingTools
         private int t4DistancePoints = 200;
         private int t5DistancePoints = 250;
         private int t6DistancePoints = 300;
-        private DateTime consumeCommittedLevelClickUntilUtc = DateTime.MinValue;
 
         [Range(1, 1000)]
         [Display(Name = "SL Distance (Points)", Description = "Stop Loss distance in points from Entry", GroupName = "Parameters", Order = 1)]
@@ -488,9 +487,6 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             }
             else if (DrawingState == DrawingState.Normal)
             {
-                if (ShouldConsumeCommittedLevelClick())
-                    return;
-
                 Point point = dataPoint.GetPoint(chartControl, chartPanel, chartScale);
                 ChartAnchor closest = GetClosestEditableAnchor(chartControl, chartPanel, chartScale, point);
 
@@ -547,18 +543,7 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             EditingOpenBullLevelName = "";
             LastOpenBullLevelEditUtc = OpenBullTradeId > 0 ? DateTime.UtcNow : DateTime.MinValue;
             OpenBullSyncStatus = OpenBullTradeId > 0 ? "Saving levels to OpenBull..." : "";
-            consumeCommittedLevelClickUntilUtc = DateTime.UtcNow.AddMilliseconds(350);
             SyncLevelsToOpenBull();
-        }
-
-        private bool ShouldConsumeCommittedLevelClick()
-        {
-            if (consumeCommittedLevelClickUntilUtc == DateTime.MinValue)
-                return false;
-
-            bool shouldConsume = DateTime.UtcNow <= consumeCommittedLevelClickUntilUtc;
-            consumeCommittedLevelClickUntilUtc = DateTime.MinValue;
-            return shouldConsume;
         }
 
         private void ExitLevelEditMode(ChartControl chartControl)
@@ -571,6 +556,23 @@ namespace NinjaTrader.NinjaScript.DrawingTools
             {
                 if (chartControl != null)
                     chartControl.InvalidateVisual();
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (chartControl != null && chartControl.Dispatcher != null)
+                {
+                    chartControl.Dispatcher.BeginInvoke(new Action(() =>
+                    {
+                        ClearEditingAnchors();
+                        DrawingState = DrawingState.Normal;
+                        TrySetSelected(false);
+                        chartControl.InvalidateVisual();
+                    }));
+                }
             }
             catch
             {
