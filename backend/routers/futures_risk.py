@@ -10,6 +10,7 @@ Futures-Risk Options web API (/web/fr/*).
 from __future__ import annotations
 
 import logging
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -19,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.api.futures_risk import _broker_quote_error, _quote_key, _quote_payloads
 from backend.dependencies import BrokerContext, get_broker_context, get_current_user, get_db
 from backend.futures_risk import service as fr
+from backend.futures_risk.strike_selection import normalize_method, normalize_moneyness
 from backend.futures_risk.service import FrError
 from backend.models.user import User
 from backend.services.trading_mode_service import get_trading_mode
@@ -42,6 +44,20 @@ class ConfigUpdate(BaseModel):
     value: str = Field(..., max_length=20000)
 
 
+class ContractQuickOrderSettings(BaseModel):
+    underlying: str = Field(..., min_length=1)
+    underlying_exchange: str | None = None
+    expiry: str | None = None
+    ce_strike: float | None = None
+    pe_strike: float | None = None
+    strike_selection_method: str | None = None
+    moneyness_selection: str | None = None
+    lots: int = Field(..., ge=1)
+    sl_points: float = Field(..., gt=0)
+    product: str | None = "NRML"
+    target_template_id: int | None = None
+
+
 @router.get("/config")
 async def get_config(user: User = Depends(get_current_user)):
     return {"status": "success", "data": fr.get_config_map()}
@@ -53,6 +69,34 @@ async def update_config(payload: ConfigUpdate, user: User = Depends(get_current_
     if not fr.set_config(payload.key, payload.value):
         raise HTTPException(status_code=400, detail="Unknown or non-editable config key")
     return {"status": "success", "key": payload.key, "value": payload.value}
+
+
+@router.post("/quick-order/settings")
+async def save_quick_order_settings(payload: ContractQuickOrderSettings, user: User = Depends(get_current_user)):
+    """Save per-contract quick-order settings for the browser Quick Card."""
+    raw = fr.get_config_map().get("contract_order_templates", {}).get("value") or "{}"
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    key = payload.underlying.strip().upper()
+    data[key] = {
+        "underlying_exchange": (payload.underlying_exchange or "").upper(),
+        "expiry": (payload.expiry or "").upper(),
+        "ce_strike": payload.ce_strike,
+        "pe_strike": payload.pe_strike,
+        "strike_selection_method": normalize_method(payload.strike_selection_method).value,
+        "moneyness_selection": normalize_moneyness(payload.moneyness_selection).value,
+        "lots": str(payload.lots),
+        "sl_points": str(payload.sl_points),
+        "product": (payload.product or "NRML").upper(),
+        "target_template_id": payload.target_template_id,
+    }
+    if not fr.set_config("contract_order_templates", json.dumps(data, separators=(",", ":"))):
+        raise HTTPException(status_code=500, detail="Unable to save contract quick-order settings")
+    return {"status": "success", "data": {"underlying": key, **data[key]}}
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +400,8 @@ class PlaceTrade(BaseModel):
     lots: int = Field(..., ge=1)
     strike: float | None = None
     offset: str | None = "ATM"
+    strike_selection_method: str | None = None
+    moneyness_selection: str | None = None
     sl_points: float | None = None
     targets: list[TargetOverride] | None = None
     target_template_id: int | None = None

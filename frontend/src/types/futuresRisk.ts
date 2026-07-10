@@ -5,6 +5,14 @@ export type Side = "BUY" | "SELL";
 export type TradeStatus = "draft" | "active" | "completed" | "stopped" | "cancelled" | "error";
 export type TrailingMode = "entry_after_t1" | "prev_target" | "off";
 export type TargetStatus = "pending" | "hit" | "skipped";
+export type StrikeSelectionMethod = "ATM" | "ITM_OTM" | "MANUAL" | "OFFSET";
+
+export const MONEYNESS_SELECTIONS = [
+  "ITM1", "ITM2", "ITM3", "ITM4", "ITM5", "ITM6", "ITM7", "ITM8", "ITM9", "ITM10",
+  "ATM",
+  "OTM1", "OTM2", "OTM3", "OTM4", "OTM5", "OTM6", "OTM7", "OTM8", "OTM9", "OTM10",
+] as const;
+export type MoneynessSelection = (typeof MONEYNESS_SELECTIONS)[number];
 
 export interface FrTradeTarget {
   seq: number;
@@ -172,6 +180,20 @@ export interface FrStrikes {
   options_exchange: string;
 }
 
+export interface FrContractSettings {
+  underlying: string;
+  underlying_exchange?: string | null;
+  expiry?: string | null;
+  ce_strike?: number | null;
+  pe_strike?: number | null;
+  strike_selection_method?: StrikeSelectionMethod | null;
+  moneyness_selection?: MoneynessSelection | null;
+  lots: number;
+  sl_points: number;
+  product?: string | null;
+  target_template_id?: number | null;
+}
+
 export interface FrFutures {
   symbol: string;
   exchange: string;
@@ -188,6 +210,8 @@ export interface PlaceTradePayload {
   lots: number;
   strike?: number | null;
   offset?: string;
+  strike_selection_method?: StrikeSelectionMethod;
+  moneyness_selection?: MoneynessSelection;
   sl_points?: number | null;
   targets?: { points: number; exit_pct: number }[] | null;
   target_template_id?: number | null;

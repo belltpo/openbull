@@ -24,6 +24,14 @@ using NinjaTrader.NinjaScript.Indicators;
 
 namespace NinjaTrader.NinjaScript.Indicators
 {
+    public enum StrikeSelectionMethod
+    {
+        ATM,
+        ITM_OTM,
+        MANUAL,
+        OFFSET
+    }
+
     public class OpenBullQuickOrderIndicator : Indicator
     {
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
@@ -58,6 +66,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private TextBox closeQtyBox;
         private ComboBox instrumentCombo;
         private ComboBox expiryCombo;
+        private ComboBox moneynessCombo;
         private ComboBox ceCombo;
         private ComboBox peCombo;
         private ComboBox templateCombo;
@@ -85,6 +94,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         private double ceLtp;
         private double peLtp;
         private double mtmValue;
+        private double currentAtmStrike;
+        private double currentCeOffsetStrike;
+        private double currentPeOffsetStrike;
+        private double manualCeStrike;
+        private double manualPeStrike;
         private ChartScale activeChartScale;
         private OpenBullTradeSnapshot managedTrade;
         private DrawingTool linkedBellTool;
@@ -96,7 +110,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private bool levelDragging;
         private string draggedLevelKey;
         private string tradingMode = "--";
+        private string lastSettingsSignature = "";
         private readonly Dictionary<ComboBox, TextBlock> comboDisplays = new Dictionary<ComboBox, TextBlock>();
+        private readonly Dictionary<ComboBox, Grid> comboRows = new Dictionary<ComboBox, Grid>();
+        private readonly Dictionary<StrikeSelectionMethod, RadioButton> strikeMethodButtons = new Dictionary<StrikeSelectionMethod, RadioButton>();
 
         public override string DisplayName
         {
@@ -123,6 +140,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Expiry = "07JUL26";
                 CeStrike = 24100;
                 PeStrike = 24100;
+                manualCeStrike = CeStrike;
+                manualPeStrike = PeStrike;
+                StrikeSelection = StrikeSelectionMethod.ATM;
+                MoneynessSelection = "ATM";
                 Lots = 1;
                 SlPoints = 5;
                 Product = "MIS";
@@ -159,6 +180,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         protected override void OnBarUpdate()
         {
             // Prices shown in the widget come from OpenBull, not the NT chart instrument.
+            QueueIndicatorSettingsSync();
         }
 
         protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
@@ -388,6 +410,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 liveRefreshRunning = true;
                 try
                 {
+                    QueueIndicatorSettingsSync();
                     await FetchLiveAsync();
                     optionsPollTick++;
                     if (settingsPanel != null && settingsPanel.Visibility == Visibility.Visible && optionsPollTick % Math.Max(5, 10000 / pollMs) == 0)
@@ -885,14 +908,24 @@ namespace NinjaTrader.NinjaScript.Indicators
                 RefreshButtonText();
                 Task.Run(async () => await FetchOptionsAsync());
             });
+            stack.Children.Add(BuildStrikeMethodRow());
+            moneynessCombo = ComboRow(stack, "ITM / OTM", value =>
+            {
+                MoneynessSelection = NormalizeMoneynessSelection(value);
+                RecalculateSelectedStrikes();
+                RefreshButtonText();
+                Task.Run(async () => await SaveSettingsAsync());
+            });
             ceCombo = ComboRow(stack, "CE", value =>
             {
                 CeStrike = ParseDouble(value, CeStrike);
+                manualCeStrike = CeStrike;
                 RefreshButtonText();
             });
             peCombo = ComboRow(stack, "PE", value =>
             {
                 PeStrike = ParseDouble(value, PeStrike);
+                manualPeStrike = PeStrike;
                 RefreshButtonText();
             });
             stack.Children.Add(Field("Lots", Lots.ToString(CultureInfo.InvariantCulture), value =>
@@ -928,10 +961,12 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             SeedCombo(instrumentCombo, Underlying);
             SeedCombo(expiryCombo, Expiry);
+            FillCombo(moneynessCombo, MoneynessValues(), MoneynessSelection);
             SeedCombo(ceCombo, CeStrike.ToString("0", CultureInfo.InvariantCulture));
             SeedCombo(peCombo, PeStrike.ToString("0", CultureInfo.InvariantCulture));
             SeedCombo(templateCombo, string.IsNullOrWhiteSpace(TargetTemplate) ? TemplateFallbackLabel(TargetTemplateId) : TargetTemplate);
             FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
+            UpdateStrikeSelectionUi();
 
             Grid actions = new Grid { Margin = new Thickness(0, 6, 0, 0) };
             actions.ColumnDefinitions.Add(new ColumnDefinition());
@@ -1184,7 +1219,92 @@ namespace NinjaTrader.NinjaScript.Indicators
             Grid.SetColumn(comboShell, 1);
             row.Children.Add(comboShell);
             stack.Children.Add(row);
+            comboRows[combo] = row;
             return combo;
+        }
+
+        private UIElement BuildStrikeMethodRow()
+        {
+            Grid row = FieldRow("Strike method");
+            WrapPanel choices = new WrapPanel { Orientation = Orientation.Horizontal };
+            foreach (StrikeSelectionMethod method in Enum.GetValues(typeof(StrikeSelectionMethod)))
+            {
+                RadioButton button = new RadioButton
+                {
+                    Content = method == StrikeSelectionMethod.ITM_OTM ? "ITM / OTM" : method.ToString(),
+                    Tag = method,
+                    GroupName = "OpenBullStrikeSelection",
+                    Margin = new Thickness(0, 0, 7, 0),
+                    Foreground = Brushes.White,
+                    FontSize = 9,
+                    IsChecked = method == StrikeSelection
+                };
+                button.Checked += (s, e) =>
+                {
+                    if (settingsHydrating)
+                        return;
+                    if (StrikeSelection == StrikeSelectionMethod.MANUAL)
+                    {
+                        manualCeStrike = CeStrike;
+                        manualPeStrike = PeStrike;
+                    }
+                    StrikeSelection = method;
+                    RecalculateSelectedStrikes();
+                    UpdateStrikeSelectionUi();
+                    RefreshButtonText();
+                    Task.Run(async () => await SaveSettingsAsync());
+                };
+                strikeMethodButtons[method] = button;
+                choices.Children.Add(button);
+            }
+            Grid.SetColumn(choices, 1);
+            row.Children.Add(choices);
+            return row;
+        }
+
+        private void SetComboRowVisible(ComboBox combo, bool visible)
+        {
+            Grid row;
+            if (combo != null && comboRows.TryGetValue(combo, out row))
+                row.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void UpdateStrikeSelectionUi()
+        {
+            foreach (KeyValuePair<StrikeSelectionMethod, RadioButton> pair in strikeMethodButtons)
+                pair.Value.IsChecked = pair.Key == StrikeSelection;
+            SetComboRowVisible(moneynessCombo, StrikeSelection == StrikeSelectionMethod.ITM_OTM);
+            SetComboRowVisible(ceCombo, StrikeSelection == StrikeSelectionMethod.MANUAL);
+            SetComboRowVisible(peCombo, StrikeSelection == StrikeSelectionMethod.MANUAL);
+        }
+
+        private void RecalculateSelectedStrikes()
+        {
+            if (StrikeSelection == StrikeSelectionMethod.MANUAL)
+            {
+                if (manualCeStrike > 0) CeStrike = manualCeStrike;
+                if (manualPeStrike > 0) PeStrike = manualPeStrike;
+            }
+            else
+            {
+                CeStrike = ResolveSelectedStrike(ToStrikeStrings(), currentAtmStrike, currentCeOffsetStrike, "CE", StrikeSelection, MoneynessSelection, manualCeStrike);
+                PeStrike = ResolveSelectedStrike(ToStrikeStrings(), currentAtmStrike, currentPeOffsetStrike, "PE", StrikeSelection, MoneynessSelection, manualPeStrike);
+            }
+            if (ceCombo != null)
+                SelectCombo(ceCombo, FormatStrikeText(CeStrike));
+            if (peCombo != null)
+                SelectCombo(peCombo, FormatStrikeText(PeStrike));
+        }
+
+        private static List<string> ToStrikeStrings()
+        {
+            List<string> values = new List<string>();
+            lock (templateCacheLock)
+            {
+                foreach (double strike in cachedStrikes)
+                    values.Add(FormatStrikeText(strike));
+            }
+            return values;
         }
 
         private static Style BuildComboItemStyle()
@@ -1785,6 +1905,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     double atmStrike = ParseDouble(ExtractJsonValue(body, "atm"), 0);
                     double ceDefaultStrike = ParseDouble(ExtractJsonValue(body, "ce_default_strike"), atmStrike);
                     double peDefaultStrike = ParseDouble(ExtractJsonValue(body, "pe_default_strike"), atmStrike);
+                    currentAtmStrike = atmStrike;
+                    currentCeOffsetStrike = ceDefaultStrike;
+                    currentPeOffsetStrike = peDefaultStrike;
                     CacheOptionValues(underlyingValues, expiryValues, strikeValues, templateValues);
                     ChartControl.Dispatcher.InvokeAsync(() =>
                     {
@@ -1800,8 +1923,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                             string saved = ExtractBlock(body, "saved");
                             string selectedExpiry = Expiry;
-                            double selectedCe = SelectValidStrike(strikeValues, CeStrike, ceDefaultStrike);
-                            double selectedPe = SelectValidStrike(strikeValues, PeStrike, peDefaultStrike);
+                            StrikeSelectionMethod selectedMethod = StrikeSelection;
+                            string selectedMoneyness = string.IsNullOrWhiteSpace(MoneynessSelection) ? "ATM" : MoneynessSelection;
+                            double selectedCe = ResolveSelectedStrike(strikeValues, atmStrike, ceDefaultStrike, "CE", selectedMethod, selectedMoneyness, CeStrike);
+                            double selectedPe = ResolveSelectedStrike(strikeValues, atmStrike, peDefaultStrike, "PE", selectedMethod, selectedMoneyness, PeStrike);
                             if (!string.IsNullOrEmpty(saved))
                             {
                                 string lots = ExtractJsonValue(saved, "lots");
@@ -1812,14 +1937,28 @@ namespace NinjaTrader.NinjaScript.Indicators
                                 string savedExpiry = ExtractJsonValue(saved, "expiry");
                                 string savedCe = ExtractJsonValue(saved, "ce_strike");
                                 string savedPe = ExtractJsonValue(saved, "pe_strike");
+                                string savedMethod = ExtractJsonValue(saved, "strike_selection_method");
+                                string savedMoneyness = ExtractJsonValue(saved, "moneyness_selection");
+                                if (!string.IsNullOrWhiteSpace(savedMethod) && savedMethod != "null")
+                                    selectedMethod = ParseStrikeSelectionMethod(savedMethod, selectedMethod);
+                                if (!string.IsNullOrWhiteSpace(savedMoneyness) && savedMoneyness != "null")
+                                    selectedMoneyness = NormalizeMoneynessSelection(savedMoneyness);
                                 if (!string.IsNullOrEmpty(savedExchange) && savedExchange != "null")
                                     UnderlyingExchange = savedExchange.ToUpperInvariant();
                                 if (!string.IsNullOrEmpty(savedExpiry) && savedExpiry != "null")
                                     selectedExpiry = savedExpiry.ToUpperInvariant();
-                                if (!string.IsNullOrEmpty(savedCe) && savedCe != "null")
-                                    selectedCe = SelectValidStrike(strikeValues, ParseDouble(savedCe, selectedCe), ceDefaultStrike);
-                                if (!string.IsNullOrEmpty(savedPe) && savedPe != "null")
-                                    selectedPe = SelectValidStrike(strikeValues, ParseDouble(savedPe, selectedPe), peDefaultStrike);
+                                if (selectedMethod == StrikeSelectionMethod.MANUAL)
+                                {
+                                    if (!string.IsNullOrEmpty(savedCe) && savedCe != "null")
+                                        selectedCe = SelectValidStrike(strikeValues, ParseDouble(savedCe, selectedCe), selectedCe);
+                                    if (!string.IsNullOrEmpty(savedPe) && savedPe != "null")
+                                        selectedPe = SelectValidStrike(strikeValues, ParseDouble(savedPe, selectedPe), selectedPe);
+                                }
+                                else
+                                {
+                                    selectedCe = ResolveSelectedStrike(strikeValues, atmStrike, ceDefaultStrike, "CE", selectedMethod, selectedMoneyness, selectedCe);
+                                    selectedPe = ResolveSelectedStrike(strikeValues, atmStrike, peDefaultStrike, "PE", selectedMethod, selectedMoneyness, selectedPe);
+                                }
                                 if (!string.IsNullOrEmpty(lots))
                                 {
                                     Lots = Math.Max(1, ParseInt(lots, Lots));
@@ -1845,17 +1984,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                             if (!ContainsText(expiryValues, selectedExpiry) && expiryValues.Count > 0)
                                 selectedExpiry = expiryValues[0];
                             Expiry = string.IsNullOrWhiteSpace(selectedExpiry) ? Expiry : selectedExpiry.ToUpperInvariant();
+                            StrikeSelection = selectedMethod;
+                            MoneynessSelection = selectedMoneyness;
                             CeStrike = selectedCe;
                             PeStrike = selectedPe;
+                            if (StrikeSelection == StrikeSelectionMethod.MANUAL)
+                            {
+                                manualCeStrike = CeStrike;
+                                manualPeStrike = PeStrike;
+                            }
 
                             string ceText = FormatStrikeText(CeStrike);
                             string peText = FormatStrikeText(PeStrike);
                             FillCombo(instrumentCombo, underlyingValues, Underlying);
                             FillCombo(expiryCombo, expiryValues, Expiry);
+                            FillCombo(moneynessCombo, MoneynessValues(), MoneynessSelection);
                             FillCombo(ceCombo, strikeValues, ceText);
                             FillCombo(peCombo, strikeValues, peText);
                             FillCombo(templateCombo, templateValues, TemplateFallbackLabel(TargetTemplateId));
                             FillCombo(productCombo, new List<string> { "NRML", "MIS", "CNC" }, Product);
+                            UpdateStrikeSelectionUi();
                         }
                         finally
                         {
@@ -1889,13 +2037,45 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (!response.IsSuccessStatusCode || body.IndexOf("\"status\":\"success\"", StringComparison.OrdinalIgnoreCase) < 0)
                         SetStatus(TrimForStatus(body), false);
                     else
+                    {
+                        lastSettingsSignature = BuildSettingsSignature();
                         SetStatus("Settings saved", true);
+                    }
                 }
             }
             catch (Exception ex)
             {
                 SetStatus(ex.Message, false);
             }
+        }
+
+        private string BuildSettingsSignature()
+        {
+            return string.Join("|", OpenBullUrl ?? "", ApiKey ?? "", Underlying ?? "", UnderlyingExchange ?? "", Expiry ?? "",
+                CeStrike.ToString("R", CultureInfo.InvariantCulture), PeStrike.ToString("R", CultureInfo.InvariantCulture),
+                StrikeSelection.ToString(), NormalizeMoneynessSelection(MoneynessSelection), Lots.ToString(CultureInfo.InvariantCulture),
+                SlPoints.ToString("R", CultureInfo.InvariantCulture), Product ?? "", CurrentTargetTemplateId().ToString(CultureInfo.InvariantCulture));
+        }
+
+        private void QueueIndicatorSettingsSync()
+        {
+            if (!controlsAdded || settingsHydrating || isBusy || string.IsNullOrWhiteSpace(ApiKey) || string.IsNullOrWhiteSpace(OpenBullUrl) || string.IsNullOrWhiteSpace(Underlying))
+                return;
+            if (StrikeSelection == StrikeSelectionMethod.MANUAL)
+            {
+                manualCeStrike = CeStrike;
+                manualPeStrike = PeStrike;
+            }
+            string signature = BuildSettingsSignature();
+            if (string.IsNullOrEmpty(lastSettingsSignature))
+            {
+                lastSettingsSignature = signature;
+                return;
+            }
+            if (string.Equals(signature, lastSettingsSignature, StringComparison.Ordinal))
+                return;
+            lastSettingsSignature = signature;
+            Task.Run(async () => await SaveSettingsAsync());
         }
 
         private async Task DeleteSettingsAsync()
@@ -2629,6 +2809,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             JsonString(sb, "expiry", Expiry, false);
             JsonNumber(sb, "ce_strike", CeStrike, false);
             JsonNumber(sb, "pe_strike", PeStrike, false);
+            JsonString(sb, "strike_selection_method", StrikeSelection.ToString(), false);
+            JsonString(sb, "moneyness_selection", NormalizeMoneynessSelection(MoneynessSelection), false);
             JsonNumber(sb, "lots", Lots, false);
             JsonNumber(sb, "sl_points", SlPoints, false);
             JsonString(sb, "product", Product, false);
@@ -2653,6 +2835,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             JsonString(sb, "product", Product, false);
             JsonNumber(sb, "lots", Lots, false);
             JsonNumber(sb, "strike", strike, false);
+            JsonString(sb, "strike_selection_method", StrikeSelection.ToString(), false);
+            JsonString(sb, "moneyness_selection", NormalizeMoneynessSelection(MoneynessSelection), false);
             JsonNumber(sb, "sl_points", SlPoints, false);
             int templateId = CurrentTargetTemplateId();
             if (templateId > 0 && !UseOverrideTargets)
@@ -2880,6 +3064,64 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             return strikes[strikes.Length / 2];
+        }
+
+        private static StrikeSelectionMethod ParseStrikeSelectionMethod(string value, StrikeSelectionMethod fallback)
+        {
+            string raw = Regex.Replace((value ?? "").Trim().ToUpperInvariant(), @"[\s/\-]+", "_");
+            if (raw == "ITMOTM") raw = "ITM_OTM";
+            StrikeSelectionMethod parsed;
+            return Enum.TryParse(raw, true, out parsed) ? parsed : fallback;
+        }
+
+        private static string NormalizeMoneynessSelection(string value)
+        {
+            string raw = (value ?? "ATM").Trim().ToUpperInvariant().Replace(" ", "");
+            if (raw == "ATM") return raw;
+            if (Regex.IsMatch(raw, "^(ITM|OTM)([1-9]|10)$")) return raw;
+            return "ATM";
+        }
+
+        private static List<string> MoneynessValues()
+        {
+            return new List<string>
+            {
+                "ITM1", "ITM2", "ITM3", "ITM4", "ITM5", "ITM6", "ITM7", "ITM8", "ITM9", "ITM10",
+                "ATM",
+                "OTM1", "OTM2", "OTM3", "OTM4", "OTM5", "OTM6", "OTM7", "OTM8", "OTM9", "OTM10"
+            };
+        }
+
+        private static double ResolveSelectedStrike(
+            List<string> strikeValues,
+            double atm,
+            double offsetStrike,
+            string optionType,
+            StrikeSelectionMethod method,
+            string moneyness,
+            double manualStrike)
+        {
+            if (method == StrikeSelectionMethod.MANUAL)
+                return manualStrike > 0 ? manualStrike : SelectValidStrike(strikeValues, manualStrike, atm);
+            if (method == StrikeSelectionMethod.OFFSET)
+                return SelectValidStrike(strikeValues, offsetStrike, atm);
+            if (atm <= 0)
+                return SelectValidStrike(strikeValues, manualStrike, offsetStrike);
+            if (method == StrikeSelectionMethod.ATM || string.Equals(moneyness, "ATM", StringComparison.OrdinalIgnoreCase))
+                return SelectValidStrike(strikeValues, atm, atm);
+
+            double[] strikes = ParseStrikeCache(strikeValues);
+            int atmIndex = -1;
+            for (int i = 0; i < strikes.Length; i++)
+                if (Math.Abs(strikes[i] - atm) < 0.0001) { atmIndex = i; break; }
+            Match match = Regex.Match(moneyness ?? "", "^(ITM|OTM)([0-9]+)$", RegexOptions.IgnoreCase);
+            if (atmIndex < 0 || !match.Success)
+                return SelectValidStrike(strikeValues, atm, atm);
+            int count = ParseInt(match.Groups[2].Value, 0);
+            bool itm = string.Equals(match.Groups[1].Value, "ITM", StringComparison.OrdinalIgnoreCase);
+            int direction = optionType == "CE" ? (itm ? -1 : 1) : (itm ? 1 : -1);
+            int targetIndex = atmIndex + direction * count;
+            return targetIndex >= 0 && targetIndex < strikes.Length ? strikes[targetIndex] : SelectValidStrike(strikeValues, atm, atm);
         }
 
         private static List<string> ParseExpiryValues(string body)
@@ -3403,6 +3645,23 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
+        public class MoneynessListConverter : StringConverter
+        {
+            private static readonly string[] Values = new string[]
+            {
+                "ITM1", "ITM2", "ITM3", "ITM4", "ITM5", "ITM6", "ITM7", "ITM8", "ITM9", "ITM10",
+                "ATM",
+                "OTM1", "OTM2", "OTM3", "OTM4", "OTM5", "OTM6", "OTM7", "OTM8", "OTM9", "OTM10"
+            };
+
+            public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
+            public override bool GetStandardValuesExclusive(ITypeDescriptorContext context) { return true; }
+            public override TypeConverter.StandardValuesCollection GetStandardValues(ITypeDescriptorContext context)
+            {
+                return new TypeConverter.StandardValuesCollection(Values);
+            }
+        }
+
         public class TargetTemplateListConverter : StringConverter
         {
             public override bool GetStandardValuesSupported(ITypeDescriptorContext context) { return true; }
@@ -3459,6 +3718,15 @@ namespace NinjaTrader.NinjaScript.Indicators
         [TypeConverter(typeof(StrikeListConverter))]
         [Display(Name = "PE Strike", GroupName = "Contract", Order = 14)]
         public double PeStrike { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Strike Selection Method", GroupName = "Contract", Order = 15)]
+        public StrikeSelectionMethod StrikeSelection { get; set; }
+
+        [NinjaScriptProperty]
+        [TypeConverter(typeof(MoneynessListConverter))]
+        [Display(Name = "ITM / OTM Selection", GroupName = "Contract", Order = 16)]
+        public string MoneynessSelection { get; set; }
 
         [NinjaScriptProperty]
         [Range(1, int.MaxValue)]

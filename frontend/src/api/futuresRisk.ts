@@ -16,6 +16,9 @@ import type {
   FrTrade,
   ModifyTradePayload,
   PlaceTradePayload,
+  FrContractSettings,
+  StrikeSelectionMethod,
+  MoneynessSelection,
 } from "@/types/futuresRisk";
 
 type TradingMode = "live" | "sandbox";
@@ -116,6 +119,39 @@ export async function listStrikes(
   const r = await api.get<Wrapped<FrStrikes>>("/web/fr/strikes", {
     params: { underlying, expiry, option_type, exchange },
   });
+  return r.data.data;
+}
+
+export interface FrQuickOrderOptions {
+  mode: TradingMode;
+  underlyings: string[];
+  underlying_exchange: string;
+  expiries: FrExpiry[];
+  strikes: number[];
+  atm: number | null;
+  open_atm?: number | null;
+  ce_default_strike?: number | null;
+  pe_default_strike?: number | null;
+  options_exchange: string;
+  saved: Omit<FrContractSettings, "underlying"> & {
+    underlying_exchange?: string | null;
+    expiry?: string | null;
+    strike_selection_method?: StrikeSelectionMethod | null;
+    moneyness_selection?: MoneynessSelection | null;
+  };
+}
+
+export async function getQuickOrderOptions(data: {
+  underlying?: string;
+  underlying_exchange?: string;
+  expiry?: string;
+}): Promise<FrQuickOrderOptions> {
+  const r = await api.post<Wrapped<FrQuickOrderOptions>>("/api/v1/futures-risk/quick-order/options", data);
+  return r.data.data;
+}
+
+export async function saveContractSettings(data: FrContractSettings): Promise<FrContractSettings> {
+  const r = await api.post<Wrapped<FrContractSettings>>("/web/fr/quick-order/settings", data);
   return r.data.data;
 }
 

@@ -19,6 +19,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.futures_risk import service as fr
+from backend.futures_risk.strike_selection import (
+    MoneynessSelection,
+    StrikeSelectionMethod,
+    normalize_method,
+    normalize_moneyness,
+)
 from backend.futures_risk.service import FrError
 from backend.services.trading_mode_service import get_trading_mode
 
@@ -52,6 +58,8 @@ class FuturesRiskQuickOrder(BaseModel):
     lots: int = Field(..., ge=1)
     strike: float | None = None
     offset: str | None = "ATM"
+    strike_selection_method: str | None = None
+    moneyness_selection: str | None = None
     sl_points: float | None = None
     targets: list[QuickOrderTarget] | None = None
     target_template_id: int | None = None
@@ -64,6 +72,8 @@ class FuturesRiskQuickOrderPreview(BaseModel):
     expiry: str = Field(..., min_length=1)
     ce_strike: float | None = None
     pe_strike: float | None = None
+    strike_selection_method: str | None = None
+    moneyness_selection: str | None = None
 
 
 class FuturesRiskQuickOrderOptions(BaseModel):
@@ -80,6 +90,8 @@ class FuturesRiskQuickOrderSettings(BaseModel):
     expiry: str | None = None
     ce_strike: float | None = None
     pe_strike: float | None = None
+    strike_selection_method: str | None = None
+    moneyness_selection: str | None = None
     lots: int = Field(..., ge=1)
     sl_points: float = Field(..., gt=0)
     product: str | None = "NRML"
@@ -219,6 +231,18 @@ async def api_futures_risk_quick_order_options(request: Request):
     else:
         selected_expiry = expiries[0]["value"] if expiries else ""
     saved_expiry_is_current = bool(saved_expiry and saved_expiry == str(selected_expiry).upper())
+    saved_for_expiry = saved if isinstance(saved, dict) and saved_expiry_is_current else None
+    if saved_for_expiry:
+        # Legacy records with explicit CE/PE values are treated as manual so
+        # they retain their existing behavior after the new selector ships.
+        saved_method = normalize_method(
+            saved_for_expiry.get("strike_selection_method"),
+            StrikeSelectionMethod.MANUAL if saved_for_expiry.get("ce_strike") or saved_for_expiry.get("pe_strike") else StrikeSelectionMethod.ATM,
+        ).value
+        saved_moneyness = normalize_moneyness(saved_for_expiry.get("moneyness_selection")).value
+    else:
+        saved_method = StrikeSelectionMethod.ATM.value
+        saved_moneyness = MoneynessSelection.ATM.value
     strikes: list[float] = []
     atm: float | None = None
     open_atm: float | None = None
@@ -245,12 +269,14 @@ async def api_futures_risk_quick_order_options(request: Request):
     defaults = {
         "underlying_exchange": underlying_exchange,
         "expiry": selected_expiry,
-        "ce_strike": saved.get("ce_strike") if isinstance(saved, dict) and saved_expiry_is_current else None,
-        "pe_strike": saved.get("pe_strike") if isinstance(saved, dict) and saved_expiry_is_current else None,
-        "lots": saved.get("lots") if isinstance(saved, dict) else config_map.get("default_lots", {}).get("value", "1"),
-        "sl_points": saved.get("sl_points") if isinstance(saved, dict) else config_map.get("default_sl_points", {}).get("value", "5"),
-        "product": saved.get("product") if isinstance(saved, dict) else config_map.get("default_product", {}).get("value", "NRML"),
-        "target_template_id": saved.get("target_template_id") if isinstance(saved, dict) else None,
+        "ce_strike": saved_for_expiry.get("ce_strike") if saved_for_expiry else None,
+        "pe_strike": saved_for_expiry.get("pe_strike") if saved_for_expiry else None,
+        "strike_selection_method": saved_method,
+        "moneyness_selection": saved_moneyness,
+        "lots": saved_for_expiry.get("lots") if saved_for_expiry else config_map.get("default_lots", {}).get("value", "1"),
+        "sl_points": saved_for_expiry.get("sl_points") if saved_for_expiry else config_map.get("default_sl_points", {}).get("value", "5"),
+        "product": saved_for_expiry.get("product") if saved_for_expiry else config_map.get("default_product", {}).get("value", "NRML"),
+        "target_template_id": saved_for_expiry.get("target_template_id") if saved_for_expiry else None,
     }
     return JSONResponse(
         content={
@@ -295,13 +321,17 @@ async def api_futures_risk_quick_order_settings(request: Request):
         "expiry": (payload.expiry or "").upper(),
         "ce_strike": payload.ce_strike,
         "pe_strike": payload.pe_strike,
+        "strike_selection_method": normalize_method(payload.strike_selection_method).value,
+        "moneyness_selection": normalize_moneyness(payload.moneyness_selection).value,
         "lots": str(payload.lots),
         "sl_points": str(payload.sl_points),
         "product": (payload.product or "NRML").upper(),
         "target_template_id": payload.target_template_id,
     }
     _save_contract_templates(data)
-    return JSONResponse(content={"status": "success", "data": data[payload.underlying.upper()]}, status_code=200)
+    saved = dict(data[payload.underlying.upper()])
+    saved["underlying"] = payload.underlying.upper()
+    return JSONResponse(content={"status": "success", "data": saved}, status_code=200)
 
 
 @router.post("/futures-risk/quick-order/settings/delete")

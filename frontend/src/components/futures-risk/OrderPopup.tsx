@@ -26,8 +26,16 @@ import {
   placeTrade,
   quickOrderPreview,
   resolveFutures,
+  saveContractSettings,
 } from "@/api/futuresRisk";
-import type { OptionType, PlaceTradePayload, Side } from "@/types/futuresRisk";
+import {
+  MONEYNESS_SELECTIONS,
+  type MoneynessSelection,
+  type OptionType,
+  type PlaceTradePayload,
+  type Side,
+  type StrikeSelectionMethod,
+} from "@/types/futuresRisk";
 
 interface Props {
   open: boolean;
@@ -39,6 +47,12 @@ const QUICK_ORDER_SETTINGS_KEY = "openbull:futures-risk:quick-order-settings";
 const CONTRACT_ORDER_TEMPLATES_KEY = "contract_order_templates";
 
 type ContractOrderDefaults = {
+  underlying_exchange?: string;
+  expiry?: string;
+  ce_strike?: number | null;
+  pe_strike?: number | null;
+  strike_selection_method?: StrikeSelectionMethod;
+  moneyness_selection?: MoneynessSelection;
   lots?: string;
   sl_points?: string;
   product?: string;
@@ -71,6 +85,28 @@ function normalizeTargetRows(rows: TargetOverrideRow[]): TargetOverrideRow[] {
 
 function formatStrikeForSymbol(strike: number): string {
   return Number.isInteger(strike) ? String(strike) : String(strike).replace(/\.0+$/, "").replace(".", "");
+}
+
+function resolveSelectedStrike(
+  strikes: number[],
+  atm: number | null | undefined,
+  optionType: OptionType,
+  method: StrikeSelectionMethod,
+  moneyness: MoneynessSelection,
+  manualStrike: number | "",
+  offsetStrike: number | null | undefined,
+): number | "" {
+  if (method === "MANUAL") return manualStrike;
+  if (method === "OFFSET") return offsetStrike && offsetStrike > 0 ? offsetStrike : "";
+  if (!atm || !strikes.length) return "";
+  if (method === "ATM") return atm;
+  const atmIndex = strikes.findIndex((value) => value === atm);
+  if (atmIndex < 0 || moneyness === "ATM") return atm;
+  const count = Number(moneyness.slice(3));
+  if (!Number.isInteger(count) || count < 1 || count > 10) return atm;
+  const isItm = moneyness.startsWith("ITM");
+  const direction = optionType === "CE" ? (isItm ? -1 : 1) : (isItm ? 1 : -1);
+  return strikes[atmIndex + direction * count] ?? "";
 }
 
 function DragGrip() {
@@ -113,7 +149,6 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   const [underlying, setUnderlying] = useState("");
   const [expiry, setExpiry] = useState("");
-  const [strike, setStrike] = useState<number | "">("");
   const [lots, setLots] = useState(1);
   const [slPoints, setSlPoints] = useState<string>("");
   const [targetTemplateId, setTargetTemplateId] = useState<number | null>(null);
@@ -124,6 +159,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [ceStrike, setCeStrike] = useState<number | "">("");
   const [peStrike, setPeStrike] = useState<number | "">("");
+  const [strikeSelectionMethod, setStrikeSelectionMethod] = useState<StrikeSelectionMethod>("ATM");
+  const [moneynessSelection, setMoneynessSelection] = useState<MoneynessSelection>("ATM");
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [hasSavedSettings, setHasSavedSettings] = useState(false);
   const [quickOrderPosition, setQuickOrderPosition] = useState<{ x: number; y: number } | null>(null);
@@ -133,7 +170,6 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
   const clearContractSelection = (clearExpiry = true) => {
     if (clearExpiry) setExpiry("");
-    setStrike("");
     setCeStrike("");
     setPeStrike("");
   };
@@ -147,6 +183,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
           expiry: string;
           ceStrike: number;
           peStrike: number;
+          strikeSelectionMethod: StrikeSelectionMethod;
+          moneynessSelection: MoneynessSelection;
           lots: number;
           slPoints: string;
           targetTemplateId: number | null;
@@ -159,6 +197,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
         if (saved.expiry) setExpiry(saved.expiry);
         if (Number(saved.ceStrike) > 0) setCeStrike(Number(saved.ceStrike));
         if (Number(saved.peStrike) > 0) setPeStrike(Number(saved.peStrike));
+        if (saved.strikeSelectionMethod) setStrikeSelectionMethod(saved.strikeSelectionMethod);
+        if (saved.moneynessSelection) setMoneynessSelection(saved.moneynessSelection);
         if (Number(saved.lots) > 0) setLots(Number(saved.lots));
         if (saved.slPoints != null) setSlPoints(String(saved.slPoints));
         if ("targetTemplateId" in saved) setTargetTemplateId(saved.targetTemplateId ?? null);
@@ -185,6 +225,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
         expiry,
         ceStrike,
         peStrike,
+        strikeSelectionMethod,
+        moneynessSelection,
         lots,
         slPoints,
         targetTemplateId,
@@ -194,7 +236,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
         product,
       }),
     );
-  }, [asDraft, ceStrike, expiry, lots, overrideTargets, peStrike, product, settingsHydrated, slPoints, targetRows, targetTemplateId, underlying]);
+  }, [asDraft, ceStrike, expiry, lots, moneynessSelection, overrideTargets, peStrike, product, settingsHydrated, slPoints, strikeSelectionMethod, targetRows, targetTemplateId, underlying]);
 
   const closeQuickOrder = () => {
     setSettingsOpen(false);
@@ -242,6 +284,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     [configQuery.data],
   );
   const selectedContractDefaults = underlying ? contractDefaults[underlying] : undefined;
+  const selectedMap = underlyings.find((m) => m.underlying === underlying);
+  const underlyingExchange = selectedMap?.underlying_exchange ?? "NSE_INDEX";
 
   // Pre-fill the setup saved for the selected contract.
   useEffect(() => {
@@ -249,6 +293,10 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
 
     const saved = selectedContractDefaults;
     if (saved) {
+      if (saved.strike_selection_method) setStrikeSelectionMethod(saved.strike_selection_method);
+      if (saved.moneyness_selection) setMoneynessSelection(saved.moneyness_selection);
+      if (Number(saved.ce_strike) > 0) setCeStrike(Number(saved.ce_strike));
+      if (Number(saved.pe_strike) > 0) setPeStrike(Number(saved.pe_strike));
       const configuredLots = Number(saved.lots);
       if (Number.isFinite(configuredLots) && configuredLots > 0) setLots(configuredLots);
       if (saved.sl_points != null) setSlPoints(String(saved.sl_points));
@@ -300,9 +348,6 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     setUnderlying((preferred ?? underlyings[0]).underlying);
   }, [configQuery.data, settingsHydrated, underlyings, underlying]);
 
-  const selectedMap = underlyings.find((m) => m.underlying === underlying);
-  const underlyingExchange = selectedMap?.underlying_exchange ?? "NSE_INDEX";
-
   const futuresQuery = useQuery({
     queryKey: ["fr-resolve-futures", underlying],
     queryFn: () => resolveFutures(underlying),
@@ -335,44 +380,53 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     refetchInterval: open && !!underlying && !!expiry ? 5000 : false,
   });
 
-  // Default quick-order strikes from market-open ATM offsets. Users can still
-  // override CE/PE manually; valid manual selections are preserved.
+  // Keep manual values intact. All other methods derive their absolute strikes
+  // from the current chain without mutating the persisted manual values.
+  const strikeList = strikesQuery.data?.strikes ?? [];
+  const atm = strikesQuery.data?.atm;
+  const effectiveCeStrike = resolveSelectedStrike(
+    strikeList,
+    atm,
+    "CE",
+    strikeSelectionMethod,
+    moneynessSelection,
+    ceStrike,
+    strikesQuery.data?.ce_default_strike,
+  );
+  const effectivePeStrike = resolveSelectedStrike(
+    strikeList,
+    atm,
+    "PE",
+    strikeSelectionMethod,
+    moneynessSelection,
+    peStrike,
+    strikesQuery.data?.pe_default_strike,
+  );
+
   useEffect(() => {
-    const d = strikesQuery.data;
-    if (!d) return;
-    const validStrikes = d.strikes.filter((s) => Number.isFinite(s) && s > 0);
-    const currentStrike = strike === "" ? null : Number(strike);
-    const hasCurrentStrike = currentStrike != null && validStrikes.includes(currentStrike);
-    const atmStrike = d.atm && d.atm > 0 && validStrikes.includes(d.atm) ? d.atm : null;
-    const defaultCeStrike =
-      d.ce_default_strike && d.ce_default_strike > 0 && validStrikes.includes(d.ce_default_strike)
-        ? d.ce_default_strike
-        : atmStrike;
-    const defaultPeStrike =
-      d.pe_default_strike && d.pe_default_strike > 0 && validStrikes.includes(d.pe_default_strike)
-        ? d.pe_default_strike
-        : atmStrike;
-    const hasCurrentCe = ceStrike !== "" && validStrikes.includes(Number(ceStrike));
-    const hasCurrentPe = peStrike !== "" && validStrikes.includes(Number(peStrike));
-
-    if (hasCurrentStrike && hasCurrentCe && hasCurrentPe) return;
-
-    if (atmStrike || defaultCeStrike || defaultPeStrike) {
-      const fallbackStrike = atmStrike ?? defaultCeStrike ?? defaultPeStrike;
-      if (fallbackStrike && !hasCurrentStrike) setStrike(fallbackStrike);
-      setCeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? (defaultCeStrike ?? fallbackStrike ?? "") : prev));
-      setPeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? (defaultPeStrike ?? fallbackStrike ?? "") : prev));
-    } else if (validStrikes.length) {
-      const fallbackStrike = validStrikes[Math.floor(validStrikes.length / 2)];
-      if (!hasCurrentStrike) setStrike(fallbackStrike);
-      setCeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? fallbackStrike : prev));
-      setPeStrike((prev) => (prev === "" || !validStrikes.includes(Number(prev)) ? fallbackStrike : prev));
-    } else {
-      setStrike("");
-      setCeStrike("");
-      setPeStrike("");
-    }
-  }, [strikesQuery.data, strike, ceStrike, peStrike]);
+    if (!settingsHydrated || !underlying || !expiry || !slPoints || Number(slPoints) <= 0) return;
+    if (typeof effectiveCeStrike !== "number" || typeof effectivePeStrike !== "number") return;
+    const timer = window.setTimeout(() => {
+      void saveContractSettings({
+        underlying,
+        underlying_exchange: underlyingExchange,
+        expiry,
+        ce_strike: strikeSelectionMethod === "MANUAL" && Number(ceStrike) > 0 ? Number(ceStrike) : Number(effectiveCeStrike),
+        pe_strike: strikeSelectionMethod === "MANUAL" && Number(peStrike) > 0 ? Number(peStrike) : Number(effectivePeStrike),
+        strike_selection_method: strikeSelectionMethod,
+        moneyness_selection: moneynessSelection,
+        lots,
+        sl_points: Number(slPoints),
+        product: product || "NRML",
+        target_template_id: targetTemplateId,
+      }).then(() => {
+        void qc.invalidateQueries({ queryKey: ["fr-config"] });
+      }).catch(() => {
+        // The local state remains usable when the API is temporarily unavailable.
+      });
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [ceStrike, effectiveCeStrike, effectivePeStrike, expiry, lots, moneynessSelection, peStrike, product, qc, slPoints, strikeSelectionMethod, targetTemplateId, underlying, underlyingExchange, settingsHydrated]);
 
   const mutation = useMutation({
     mutationFn: (payload: PlaceTradePayload) => (asDraft ? createDraft(payload) : placeTrade(payload)),
@@ -403,7 +457,7 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   });
 
   const submit = (side: Side, optionType: OptionType) => {
-    const selectedStrike = Number(optionType === "CE" ? ceStrike : peStrike);
+    const selectedStrike = Number(optionType === "CE" ? effectiveCeStrike : effectivePeStrike);
     if (!underlying || !expiry || !Number.isFinite(selectedStrike) || selectedStrike <= 0) {
       toast.error("Configure instrument, expiry and strike first");
       return;
@@ -417,6 +471,8 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
       lots,
       product: product || undefined,
       strike: selectedStrike,
+      strike_selection_method: strikeSelectionMethod,
+      moneyness_selection: moneynessSelection,
       sl_points: slPoints === "" ? null : Number(slPoints),
       targets: overrideTargets ? normalizeTargetRows(targetRows.filter((t) => t.points > 0)) : null,
       target_template_id: overrideTargets ? null : targetTemplateId,
@@ -427,18 +483,16 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
   const busy = mutation.isPending;
   const pendingLabel = asDraft ? "Saving..." : "Placing...";
   const expiryList = expiriesQuery.data ?? [];
-  const strikeList = strikesQuery.data?.strikes ?? [];
-  const atm = strikesQuery.data?.atm;
   const optionExchange = strikesQuery.data?.options_exchange ?? "NFO";
-  const ceStrikeLabel = ceStrike === "" ? "--" : String(ceStrike);
-  const peStrikeLabel = peStrike === "" ? "--" : String(peStrike);
+  const ceStrikeLabel = effectiveCeStrike === "" ? "--" : String(effectiveCeStrike);
+  const peStrikeLabel = effectivePeStrike === "" ? "--" : String(effectivePeStrike);
   const futuresSymbol = futuresQuery.data?.symbol ?? selectedMap?.futures_symbol ?? "";
   const futuresExchange = futuresQuery.data?.exchange ?? selectedMap?.futures_exchange ?? "NFO";
-  const ceSymbol = underlying && expiry && Number(ceStrike) > 0
-    ? `${underlying}${expiry.toUpperCase()}${formatStrikeForSymbol(Number(ceStrike))}CE`
+  const ceSymbol = underlying && expiry && Number(effectiveCeStrike) > 0
+    ? `${underlying}${expiry.toUpperCase()}${formatStrikeForSymbol(Number(effectiveCeStrike))}CE`
     : "";
-  const peSymbol = underlying && expiry && Number(peStrike) > 0
-    ? `${underlying}${expiry.toUpperCase()}${formatStrikeForSymbol(Number(peStrike))}PE`
+  const peSymbol = underlying && expiry && Number(effectivePeStrike) > 0
+    ? `${underlying}${expiry.toUpperCase()}${formatStrikeForSymbol(Number(effectivePeStrike))}PE`
     : "";
   const liveSymbols = useMemo(() => {
     const out: Array<{ symbol: string; exchange: string }> = [];
@@ -453,14 +507,14 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
     enabled: open && liveSymbols.length > 0,
   });
   const previewQuery = useQuery({
-    queryKey: ["fr-quick-order-preview", underlying, underlyingExchange, expiry, ceStrike, peStrike],
+    queryKey: ["fr-quick-order-preview", underlying, underlyingExchange, expiry, effectiveCeStrike, effectivePeStrike, strikeSelectionMethod, moneynessSelection],
     queryFn: () =>
       quickOrderPreview({
         underlying,
         underlying_exchange: underlyingExchange,
         expiry,
-        ce_strike: Number(ceStrike) > 0 ? Number(ceStrike) : null,
-        pe_strike: Number(peStrike) > 0 ? Number(peStrike) : null,
+        ce_strike: Number(effectiveCeStrike) > 0 ? Number(effectiveCeStrike) : null,
+        pe_strike: Number(effectivePeStrike) > 0 ? Number(effectivePeStrike) : null,
       }),
     enabled: open && !!underlying && !!expiry,
     refetchInterval: open && !!underlying && !!expiry ? 1500 : false,
@@ -689,44 +743,54 @@ export function FuturesRiskOrderPopup({ open, onOpenChange, onPlaced }: Props) {
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label={atm ? `CE Strike (ATM ${atm})` : "CE Strike"}>
-                  <Select
-                    value={ceStrike === "" ? "" : String(ceStrike)}
-                    onValueChange={(v) => setCeStrike(v === "" ? "" : Number(v))}
-                    disabled={strikeList.length === 0}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={strikesQuery.isLoading ? "Loading..." : "Select"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {strikeList.map((s) => (
-                        <SelectItem key={s} value={String(s)}>
-                          {s}
-                          {atm === s ? " - ATM" : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                <Field label="Strike Selection Method">
+                  <div className="flex flex-wrap gap-1 rounded-md border border-input bg-background p-1">
+                    {([
+                      ["ATM", "ATM"],
+                      ["ITM_OTM", "ITM / OTM"],
+                      ["MANUAL", "Manual"],
+                      ["OFFSET", "Offset"],
+                    ] as const).map(([value, label]) => (
+                      <label key={value} className="flex cursor-pointer items-center gap-1 rounded px-1.5 py-1 text-[10px]">
+                        <input
+                          type="radio"
+                          name="strike-selection-method"
+                          value={value}
+                          checked={strikeSelectionMethod === value}
+                          onChange={() => setStrikeSelectionMethod(value)}
+                          className="accent-primary"
+                        />
+                        {label}
+                      </label>
+                    ))}
+                  </div>
                 </Field>
-                <Field label={atm ? `PE Strike (ATM ${atm})` : "PE Strike"}>
-                  <Select
-                    value={peStrike === "" ? "" : String(peStrike)}
-                    onValueChange={(v) => setPeStrike(v === "" ? "" : Number(v))}
-                    disabled={strikeList.length === 0}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder={strikesQuery.isLoading ? "Loading..." : "Select"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {strikeList.map((s) => (
-                        <SelectItem key={s} value={String(s)}>
-                          {s}
-                          {atm === s ? " - ATM" : ""}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
+                {strikeSelectionMethod === "ITM_OTM" && (
+                  <Field label="ITM / OTM Selection">
+                    <Select value={moneynessSelection} onValueChange={(value) => setMoneynessSelection(value as MoneynessSelection)}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {MONEYNESS_SELECTIONS.map((value) => <SelectItem key={value} value={value}>{value.replace("ITM", "ITM ").replace("OTM", "OTM ")}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                )}
+                {strikeSelectionMethod === "MANUAL" && (
+                  <>
+                    <Field label="Manual CE Strike">
+                      <Input type="number" min={0} value={ceStrike} onChange={(event) => setCeStrike(event.target.value === "" ? "" : Number(event.target.value))} className="h-9 dark:[color-scheme:dark]" />
+                    </Field>
+                    <Field label="Manual PE Strike">
+                      <Input type="number" min={0} value={peStrike} onChange={(event) => setPeStrike(event.target.value === "" ? "" : Number(event.target.value))} className="h-9 dark:[color-scheme:dark]" />
+                    </Field>
+                  </>
+                )}
+                {strikeSelectionMethod !== "MANUAL" && (
+                  <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                    <div className="rounded-md border border-input px-2 py-2">CE: <span className="font-semibold text-foreground">{ceStrikeLabel}</span></div>
+                    <div className="rounded-md border border-input px-2 py-2">PE: <span className="font-semibold text-foreground">{peStrikeLabel}</span></div>
+                  </div>
+                )}
                 <Field label="Lots">
                   <div className="flex h-9 items-stretch overflow-hidden rounded-md border border-input">
                     <button

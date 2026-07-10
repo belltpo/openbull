@@ -20,6 +20,12 @@ from sqlalchemy import func, select, text
 from backend.futures_risk import defaults as fr_defaults
 from backend.futures_risk.execution import dispatch_order, load_broker_context_sync, log_event
 from backend.futures_risk.lot_sizes import LOT_SIZE_BY_UNDERLYING, MCX_UNDERLYINGS
+from backend.futures_risk.strike_selection import (
+    StrikeSelectionMethod,
+    normalize_method,
+    normalize_moneyness,
+    resolve_strike,
+)
 from backend.models.futures_risk import (
     FrConfig,
     FrSymbolMap,
@@ -781,6 +787,57 @@ def _resolve_option(
     }
 
 
+def _resolve_selected_strike(
+    p: dict[str, Any],
+    auth_token: str,
+    broker: str,
+    config: dict | None,
+) -> float | None:
+    """Resolve the persisted selector to an absolute strike at order time."""
+    raw_method = p.get("strike_selection_method")
+    if not raw_method:
+        return p.get("strike")
+
+    method = normalize_method(raw_method)
+    if method == StrikeSelectionMethod.MANUAL:
+        try:
+            return resolve_strike(
+                method=method,
+                option_type=p["option_type"],
+                strikes=[],
+                atm=None,
+                manual_strike=p.get("strike"),
+            )
+        except ValueError as exc:
+            raise FrError(str(exc), 422) from exc
+
+    data = list_strikes(
+        p["underlying"],
+        p["underlying_exchange"],
+        p["expiry"],
+        p["option_type"],
+        auth_token,
+        broker,
+        config,
+    )
+    try:
+        selected = resolve_strike(
+            method=method,
+            option_type=p["option_type"],
+            strikes=[float(s) for s in data.get("strikes") or []],
+            atm=float(data["atm"]) if data.get("atm") else None,
+            moneyness=normalize_moneyness(p.get("moneyness_selection")),
+            offset_strike=(
+                data.get("ce_default_strike")
+                if p["option_type"] == "CE"
+                else data.get("pe_default_strike")
+            ),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise FrError(str(exc), 422) from exc
+    return selected
+
+
 def _build_targets(
     entry_fut: float,
     direction: int,
@@ -881,6 +938,8 @@ def _normalise_params(params: dict[str, Any]) -> dict[str, Any]:
         "lots": lots,
         "product": str(params.get("product") or get_config_value("default_product", _config_default("default_product"))).upper(),
         "strike": strike,
+        "strike_selection_method": params.get("strike_selection_method"),
+        "moneyness_selection": normalize_moneyness(params.get("moneyness_selection")).value,
         "offset": params.get("offset") or "ATM",
         "sl_points": sl_points,
         "targets": params.get("targets") or None,
@@ -904,9 +963,10 @@ def _resolve_trade_plan(
     price is re-read when the draft is placed.
     """
     # 1) Option leg
+    selected_strike = _resolve_selected_strike(p, auth_token, broker, config)
     opt = _resolve_option(
         p["underlying"], p["underlying_exchange"], p["expiry"], p["option_type"],
-        p["side"], p["strike"], p["offset"], auth_token, broker, config,
+        p["side"], selected_strike, p["offset"], auth_token, broker, config,
     )
 
     # 2) Futures contract + entry futures price
