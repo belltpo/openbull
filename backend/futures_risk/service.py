@@ -19,6 +19,7 @@ from sqlalchemy import func, select, text
 
 from backend.futures_risk import defaults as fr_defaults
 from backend.futures_risk.execution import dispatch_order, load_broker_context_sync, log_event
+from backend.futures_risk.lot_sizes import LOT_SIZE_BY_UNDERLYING, MCX_UNDERLYINGS
 from backend.models.futures_risk import (
     FrConfig,
     FrSymbolMap,
@@ -48,33 +49,19 @@ logger = logging.getLogger(__name__)
 _QUICK_ORDER_STRIKE_OFFSET = 200.0
 _SESSION_OPEN_CACHE: dict[tuple[str, str, str], float] = {}
 
-_MCX_DEFAULT_LOTS: dict[str, int] = {
-    "SILVER": 30,
-    "SILVERM": 5,
-    "SILVERMIC": 1,
-    "SILVER100": 100,
-    "GOLD": 1,
-    "GOLDM": 100,
-    "GOLDPETAL": 1,
-    "CRUDEOIL": 100,
-    "CRUDEOILM": 10,
-    "NATURALGAS": 1250,
-    "NATGASMINI": 250,
-    "COPPER": 2500,
-    "ZINC": 5000,
-    "ALUMINIUM": 5000,
-    "LEAD": 5000,
-}
-
 
 def _is_mcx_underlying(underlying: str) -> bool:
     base, _ = _parse_underlying(underlying)
-    return base.upper() in _MCX_DEFAULT_LOTS
+    return base.upper() in MCX_UNDERLYINGS
 
 
-def _mcx_default_lot(underlying: str) -> int:
+def _contract_lot_size_or_raise(underlying: str) -> int:
     base, _ = _parse_underlying(underlying)
-    return _MCX_DEFAULT_LOTS.get(base.upper(), 0)
+    key = base.upper()
+    lot_size = LOT_SIZE_BY_UNDERLYING.get(key)
+    if lot_size is None:
+        raise FrError(f"Lot size is not configured for {key}. Add it to LOT_SIZE_BY_UNDERLYING.", 400)
+    return int(lot_size)
 
 
 def _normalise_symbol_map_fields(data: dict[str, Any]) -> dict[str, Any]:
@@ -84,7 +71,7 @@ def _normalise_symbol_map_fields(data: dict[str, Any]) -> dict[str, Any]:
         out["underlying_exchange"] = "MCX"
         out["futures_exchange"] = "MCX"
         if int(out.get("lot_size", 0) or 0) <= 0:
-            out["lot_size"] = _mcx_default_lot(underlying)
+            out["lot_size"] = _contract_lot_size_or_raise(underlying)
     return out
 
 
@@ -1087,17 +1074,17 @@ def _assert_no_active_phase(
 def _pnl_quantity(t: FrTrade, qty: int) -> int:
     """Quantity to use for rupee P&L without changing broker order quantity.
 
-    Some MCX symbols are persisted as lot counts when the instrument master
-    reports lot_size=1. In that case, expand the P&L quantity by the known
-    commodity multiplier so local P&L is not understated by a factor of 10/30/etc.
+    Broker order quantity stays untouched. This function only corrects MTM/P&L
+    when a broker or stale symbol map persisted quantity as lot count instead
+    of exchange quantity.
     """
     raw_qty = max(0, int(qty or 0))
-    multiplier = _mcx_default_lot(str(t.underlying or ""))
     stored_lot_size = int(t.lot_size or 0)
     stored_total_qty = int(t.total_qty or 0)
     stored_lots = int(t.lots or 0)
-    if multiplier > 1 and (stored_lot_size <= 1 or (stored_lots > 0 and stored_total_qty <= stored_lots)):
-        return raw_qty * multiplier
+    looks_like_lots = stored_lot_size <= 1 or (stored_lots > 0 and stored_total_qty <= stored_lots)
+    if looks_like_lots:
+        return raw_qty * _contract_lot_size_or_raise(str(t.underlying or ""))
     return raw_qty
 
 

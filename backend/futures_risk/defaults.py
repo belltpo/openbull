@@ -3,6 +3,8 @@ underlying→futures symbol map."""
 
 from __future__ import annotations
 
+from backend.futures_risk.lot_sizes import LOT_SIZE_BY_UNDERLYING
+
 # key -> (value, description, is_editable)
 CONFIG_DEFAULTS: dict[str, tuple[str, str, bool]] = {
     "auto_exit_enabled": ("true", "Master switch for automatic target/SL exits", True),
@@ -30,6 +32,6 @@ TARGET_DEFAULTS: list[tuple[int, float, float]] = [
 
 # (underlying, underlying_exchange, futures_exchange, lot_size, auto_resolve)
 SYMBOL_MAP_DEFAULTS: list[tuple[str, str, str, int, bool]] = [
-    ("NIFTY", "NSE_INDEX", "NFO", 75, True),
-    ("BANKNIFTY", "NSE_INDEX", "NFO", 35, True),
+    ("NIFTY", "NSE_INDEX", "NFO", LOT_SIZE_BY_UNDERLYING["NIFTY"], True),
+    ("BANKNIFTY", "NSE_INDEX", "NFO", LOT_SIZE_BY_UNDERLYING["BANKNIFTY"], True),
 ]
