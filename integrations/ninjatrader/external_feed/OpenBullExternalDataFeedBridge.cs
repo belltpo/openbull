@@ -208,6 +208,10 @@ namespace OpenBull.ExternalDataFeed
             Client ninjaTrader = new Client();
             if (ninjaTrader.SetUp(options.NtHost, options.NtPort) != 0)
                 throw new InvalidOperationException("Could not configure NinjaTrader Client DLL connection.");
+            if (ninjaTrader.Connected(0) != 0)
+                throw new InvalidOperationException(
+                    "NinjaTrader ATI/DLL interface is not ready. Enable Tools > Options > Automated Trading Interface, " +
+                    "then connect the built-in External Data Feed before starting this bridge.");
             Console.WriteLine("Waiting for NinjaTrader External Data Feed on " + options.NtHost + ":" + options.NtPort + ". Press Ctrl+C to stop.");
 
             int retrySeconds = 2;
