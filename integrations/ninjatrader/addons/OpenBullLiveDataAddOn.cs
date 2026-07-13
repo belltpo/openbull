@@ -18,6 +18,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Media;
+using WpfLine = System.Windows.Shapes.Line;
+using WpfRectangle = System.Windows.Shapes.Rectangle;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
@@ -466,6 +468,150 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
     }
 
+    /// <summary>
+    /// A live-only 1-minute candle display. It deliberately has no historical
+    /// data source: candles begin when the first OpenBull tick arrives.
+    /// </summary>
+    public sealed class OpenBullLiveCandlesWindow : NTWindow
+    {
+        private sealed class Candle
+        {
+            public DateTime Time;
+            public double Open;
+            public double High;
+            public double Low;
+            public double Close;
+        }
+
+        private readonly List<Candle> candles = new List<Candle>();
+        private Canvas canvas;
+        private TextBlock title;
+        private string activeKey;
+
+        public OpenBullLiveCandlesWindow()
+        {
+            Caption = "OpenBull Live Candles";
+            Width = 980;
+            Height = 580;
+            MinWidth = 640;
+            MinHeight = 400;
+
+            Grid root = new Grid { Margin = new Thickness(12) };
+            root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+            title = new TextBlock
+            {
+                Text = "Waiting for OpenBull live ticks...",
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+            root.Children.Add(title);
+            canvas = new Canvas { Background = Brushes.WhiteSmoke, ClipToBounds = true };
+            canvas.SizeChanged += (sender, args) => Draw();
+            Grid.SetRow(canvas, 1);
+            root.Children.Add(canvas);
+            Content = root;
+        }
+
+        public void Push(OpenBullLiveTick tick)
+        {
+            if (tick == null || tick.Ltp <= 0)
+                return;
+
+            string key = (tick.Exchange ?? "").ToUpperInvariant() + ":" + (tick.Symbol ?? "").ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(activeKey))
+                activeKey = key;
+            if (!string.Equals(activeKey, key, StringComparison.Ordinal))
+                return;
+
+            DateTime local = tick.ReceivedUtc.ToLocalTime();
+            DateTime minute = new DateTime(local.Year, local.Month, local.Day, local.Hour, local.Minute, 0, local.Kind);
+            Candle candle = candles.Count == 0 ? null : candles[candles.Count - 1];
+            if (candle == null || minute > candle.Time)
+            {
+                candle = new Candle { Time = minute, Open = tick.Ltp, High = tick.Ltp, Low = tick.Ltp, Close = tick.Ltp };
+                candles.Add(candle);
+                while (candles.Count > 90)
+                    candles.RemoveAt(0);
+            }
+            else if (minute == candle.Time)
+            {
+                candle.High = Math.Max(candle.High, tick.Ltp);
+                candle.Low = Math.Min(candle.Low, tick.Ltp);
+                candle.Close = tick.Ltp;
+            }
+            else
+            {
+                return;
+            }
+
+            title.Text = activeKey + "  |  Live-only 1-minute candles  |  " + candle.Close.ToString("N2");
+            Draw();
+        }
+
+        private void Draw()
+        {
+            if (canvas == null || canvas.ActualWidth < 80 || canvas.ActualHeight < 80)
+                return;
+            canvas.Children.Clear();
+            if (candles.Count == 0)
+                return;
+
+            const double left = 54;
+            const double right = 62;
+            const double top = 16;
+            const double bottom = 30;
+            double plotWidth = Math.Max(1, canvas.ActualWidth - left - right);
+            double plotHeight = Math.Max(1, canvas.ActualHeight - top - bottom);
+            double low = candles.Min(item => item.Low);
+            double high = candles.Max(item => item.High);
+            double padding = Math.Max((high - low) * 0.08, 0.01);
+            high += padding;
+            low -= padding;
+            double range = Math.Max(0.01, high - low);
+            Func<double, double> y = price => top + (high - price) / range * plotHeight;
+
+            for (int grid = 0; grid <= 4; grid++)
+            {
+                double gy = top + plotHeight * grid / 4.0;
+                canvas.Children.Add(new WpfLine { X1 = left, X2 = left + plotWidth, Y1 = gy, Y2 = gy, Stroke = Brushes.Gainsboro, StrokeThickness = 1 });
+                TextBlock label = new TextBlock { Text = (high - range * grid / 4.0).ToString("N2"), FontSize = 11, Foreground = Brushes.DimGray };
+                Canvas.SetLeft(label, left + plotWidth + 5);
+                Canvas.SetTop(label, gy - 8);
+                canvas.Children.Add(label);
+            }
+
+            double step = plotWidth / Math.Max(1, candles.Count);
+            double bodyWidth = Math.Max(2, Math.Min(12, step * 0.62));
+            for (int index = 0; index < candles.Count; index++)
+            {
+                Candle candle = candles[index];
+                double x = left + step * (index + 0.5);
+                Brush color = candle.Close >= candle.Open ? Brushes.ForestGreen : Brushes.Crimson;
+                canvas.Children.Add(new WpfLine { X1 = x, X2 = x, Y1 = y(candle.High), Y2 = y(candle.Low), Stroke = color, StrokeThickness = 1 });
+                double openY = y(candle.Open);
+                double closeY = y(candle.Close);
+                WpfRectangle body = new WpfRectangle
+                {
+                    Width = bodyWidth,
+                    Height = Math.Max(1, Math.Abs(closeY - openY)),
+                    Fill = color,
+                    Stroke = color,
+                };
+                Canvas.SetLeft(body, x - bodyWidth / 2.0);
+                Canvas.SetTop(body, Math.Min(openY, closeY));
+                canvas.Children.Add(body);
+                if (index % Math.Max(1, candles.Count / 6) == 0)
+                {
+                    TextBlock time = new TextBlock { Text = candle.Time.ToString("HH:mm"), FontSize = 10, Foreground = Brushes.DimGray };
+                    Canvas.SetLeft(time, Math.Max(left, x - 16));
+                    Canvas.SetTop(time, top + plotHeight + 4);
+                    canvas.Children.Add(time);
+                }
+            }
+        }
+    }
+
     /// <summary>Independent window for OpenBull quote subscriptions.</summary>
     public sealed class OpenBullLiveDataWindow : NTWindow
     {
@@ -478,9 +624,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         private Button connectButton;
         private Button disconnectButton;
         private CheckBox feedChartsCheckBox;
+        private Button liveCandlesButton;
         private OpenBullLiveDataClient client;
         private NinjaTraderExternalTickSink chartTickSink;
         private string chartTickError;
+        private OpenBullLiveCandlesWindow liveCandlesWindow;
 
         public OpenBullLiveDataWindow()
         {
@@ -544,6 +692,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             connectButton = new Button { Content = "Connect", MinWidth = 90, Margin = new Thickness(0, 0, 8, 0) };
             connectButton.Click += (sender, args) => Connect();
@@ -562,8 +711,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             };
             Grid.SetColumn(feedChartsCheckBox, 2);
             actions.Children.Add(feedChartsCheckBox);
+            liveCandlesButton = new Button { Content = "Open Live Candles", MinWidth = 125, Margin = new Thickness(8, 0, 0, 0) };
+            liveCandlesButton.Click += (sender, args) => OpenLiveCandles();
+            Grid.SetColumn(liveCandlesButton, 3);
+            actions.Children.Add(liveCandlesButton);
             statusText = new TextBlock { Text = "Disconnected", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 0, 0) };
-            Grid.SetColumn(statusText, 3);
+            Grid.SetColumn(statusText, 4);
             actions.Children.Add(statusText);
             Grid.SetRow(actions, 3);
             root.Children.Add(actions);
@@ -655,6 +808,20 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (statusText != null) SetStatus("Disconnected", false);
         }
 
+        private void OpenLiveCandles()
+        {
+            if (liveCandlesWindow == null || !liveCandlesWindow.IsVisible)
+            {
+                liveCandlesWindow = new OpenBullLiveCandlesWindow();
+                liveCandlesWindow.Closed += (sender, args) => liveCandlesWindow = null;
+                liveCandlesWindow.Show();
+                return;
+            }
+            if (liveCandlesWindow.WindowState == WindowState.Minimized)
+                liveCandlesWindow.WindowState = WindowState.Normal;
+            liveCandlesWindow.Activate();
+        }
+
         private static List<OpenBullLiveSymbol> ParseSymbols(string text)
         {
             Dictionary<string, OpenBullLiveSymbol> result = new Dictionary<string, OpenBullLiveSymbol>();
@@ -689,6 +856,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                     Dispatcher.BeginInvoke(new Action(() => SetStatus("Chart delivery stopped: " + chartTickError, false)));
                 }
             }
+            OpenBullLiveCandlesWindow candles = liveCandlesWindow;
+            if (candles != null && candles.IsVisible)
+                candles.Dispatcher.BeginInvoke(new Action(() => candles.Push(tick)));
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 string key = (tick.Exchange ?? "").ToUpperInvariant() + ":" + (tick.Symbol ?? "").ToUpperInvariant();

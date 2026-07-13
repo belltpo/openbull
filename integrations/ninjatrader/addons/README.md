@@ -60,3 +60,11 @@ The AddOn then sends live LTP ticks to that map and NinjaTrader builds live
 second/minute bars. This does not make it a native data-vendor connection and
 does not provide historical bars; use the separate historical import process
 for Dhan one-minute backfill.
+
+## Popup-free live-only candles
+
+Click **Open Live Candles** in the AddOn window after connecting. This opens a
+separate OpenBull candle window that forms one-minute OHLC candles directly
+from live ticks. It starts from the first received tick, stores no history, and
+does not ask NinjaTrader for historical bars, so it has no External Data Feed
+historical-request popup.
