@@ -16,12 +16,17 @@ historical importer is the supported way to backfill Dhan one-minute candles.
 
 ## One-time NinjaTrader setup
 
-1. In **Tools > Instruments**, create `CRUDEOIL20JUL26FUT` as an MCX futures
+1. Enable NinjaTrader's ATI/DLL listener. With NinjaTrader closed, you can run:
+
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\enable-ati.ps1
+   ```
+
+   Or enable it manually in **Tools > Options > Automated Trading Interface**.
+2. In **Tools > Instruments**, create `CRUDEOIL20JUL26FUT` as an MCX futures
    instrument with tick size `1`.
-2. In that instrument's **Symbol Map**, set the **External** mapping to exactly
+3. In that instrument's **Symbol Map**, set the **External** mapping to exactly
    `CRUDEOIL20JUL26FUT`.
-3. In **Tools > Options > Automated Trading Interface**, enable the ATI/DLL
-   interface and retain its default port `36973`.
 4. In **Connections**, connect **External Data Feed**.
 
 The instrument name and its External mapping must match `--nt-instrument`.
