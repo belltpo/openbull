@@ -33,7 +33,10 @@ def _key_api_invalid(key_hash: str) -> str:
 
 
 def _key_api_ctx(user_id: int) -> str:
-    return f"api_ctx:{user_id}"
+    # v2 includes broker-specific fields such as Dhan's client_id.  Versioning
+    # prevents a pre-v2 Redis entry (which omitted those fields) from keeping
+    # a WebSocket adapter on incomplete credentials for up to an hour.
+    return f"api_ctx:v2:{user_id}"
 
 
 async def verify_api_key_standalone(
@@ -102,6 +105,11 @@ async def verify_api_key_standalone(
                 "api_key": decrypt_value(broker_cfg.api_key),
                 "api_secret": decrypt_value(broker_cfg.api_secret),
                 "redirect_url": broker_cfg.redirect_url,
+                # Dhan's streaming endpoint requires the trading Client ID in
+                # addition to the app credentials.  Keep this payload aligned
+                # with backend.dependencies.get_broker_context, which is used
+                # by the HTTP quote/order paths.
+                "client_id": (broker_cfg.extra_config or {}).get("client_id"),
             }
 
         await cache_set_json(

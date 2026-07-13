@@ -28,7 +28,8 @@ import threading
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable
 
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert
 
 from backend.models.sandbox import SandboxConfig
 from backend.sandbox._db import session_scope
@@ -66,21 +67,19 @@ def _read_last_run(job_key: str) -> str:
 
 
 def _mark_ran(job_key: str, today_iso: str) -> None:
+    """Atomically record a job's run date across overlapping app workers."""
+    marker_key = f"_sched_last_{job_key}"
     with session_scope() as db:
-        row = db.execute(
-            select(SandboxConfig).where(SandboxConfig.key == f"_sched_last_{job_key}")
-        ).scalar_one_or_none()
-        if row is None:
-            db.add(
-                SandboxConfig(
-                    key=f"_sched_last_{job_key}",
-                    value=today_iso,
-                    description="Scheduler bookkeeping — last run date",
-                    is_editable=False,
-                )
-            )
-        else:
-            row.value = today_iso
+        statement = insert(SandboxConfig).values(
+            key=marker_key,
+            value=today_iso,
+            description="Scheduler bookkeeping — last run date",
+            is_editable=False,
+        ).on_conflict_do_update(
+            index_elements=[SandboxConfig.key],
+            set_={"value": today_iso, "updated_at": func.now()},
+        )
+        db.execute(statement)
 
 
 def _parse_hhmm(s: str) -> tuple[int, int] | None:

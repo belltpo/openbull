@@ -36,6 +36,9 @@ _DEDUP_TTL_SECONDS = 10.0
 _QUOTE_CACHE_TTL_SECONDS = 5.0
 _dedup_lock = threading.Lock()
 _quote_cache_lock = threading.Lock()
+# Multiple NinjaTrader charts can refresh together.  Keep a cache miss from
+# turning into one Dhan request per chart (Dhan allows roughly 1 req/sec).
+_quote_fetch_lock = threading.Lock()
 _recent_client_orders: dict[str, float] = {}
 _recent_quotes: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 
@@ -438,6 +441,22 @@ def _store_recent_quote(symbol: str, exchange: str, payload: dict[str, Any]) -> 
 
 
 def _quote_payloads(
+    instruments: list[dict[str, Any]],
+    auth_token: str,
+    broker_name: str,
+    config: dict,
+) -> dict[tuple[str, str], dict[str, Any]]:
+    """Fetch a quote snapshot once per simultaneous cache miss.
+
+    The lock deliberately includes the cache check.  A waiting caller rechecks
+    after the first Dhan response has populated the five-second cache instead
+    of sending another identical broker request.
+    """
+    with _quote_fetch_lock:
+        return _quote_payloads_unlocked(instruments, auth_token, broker_name, config)
+
+
+def _quote_payloads_unlocked(
     instruments: list[dict[str, Any]],
     auth_token: str,
     broker_name: str,
