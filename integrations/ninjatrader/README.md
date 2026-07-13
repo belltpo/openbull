@@ -1,12 +1,12 @@
 # OpenBull NinjaTrader Quick Order Indicator
 
 `OpenBullQuickOrderIndicator.cs` is a NinjaTrader 8 indicator that adds a
-compact chart overlay for Futures-Risk quick orders and live market data from
-OpenBull. `addons/OpenBullLiveDataClient.cs` is its shared WebSocket transport.
+compact chart overlay for Futures-Risk quick orders from OpenBull.
+
+The standalone live-data monitor is documented separately in
+[`addons/README.md`](addons/README.md). It has no Quick Order dependency.
 
 ## Flow
-
-`Dhan WebSocket -> OpenBull stream proxy -> NinjaTrader indicator`
 
 `NinjaTrader button -> OpenBull API key endpoint -> Futures-Risk quick-order service -> broker`
 
@@ -154,22 +154,3 @@ price scale, the OpenBull futures levels may render outside the visible panel.
 The copied Bell drawing tools still support manual linking through
 `OpenBull Trade ID`; quick orders now auto-create and auto-link those same
 tools using tag `OpenBull_FR_<trade_id>`.
-
-## Supported live symbols
-
-The stream accepts all symbols present in OpenBull's Dhan master-contract cache
-for Dhan-supported exchanges, including `NSE`, `NSE_INDEX`, `NFO`, and `MCX`.
-Examples:
-
-```text
-NSE       RELIANCE
-NSE_INDEX NIFTY
-NFO       NIFTY28JUL26FUT
-NFO       BANKNIFTY28JUL2655900CE
-MCX       CRUDEOIL18MAY26FUT
-```
-
-Live data remains subject to the Dhan account's market-data permissions and
-subscription capacity. This is an OpenBull AddOn/indicator WebSocket bridge;
-it does not register Dhan as a native NinjaTrader brokerage/data-provider or
-create NinjaTrader chart bars by itself.
