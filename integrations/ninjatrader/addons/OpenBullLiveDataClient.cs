@@ -1,6 +1,6 @@
 // OpenBull live-market-data WebSocket client for NinjaTrader 8.
-// Add this file beside OpenBullQuickOrderIndicator.cs in NinjaTrader's
-// Custom\Indicators folder, then compile from the NinjaScript Editor.
+// Install this file in NinjaTrader's Custom\AddOns folder. The
+// OpenBullQuickOrderIndicator in Custom\Indicators references it.
 
 using System;
 using System.Collections.Generic;

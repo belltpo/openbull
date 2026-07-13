@@ -4,10 +4,6 @@
 compact chart overlay for Futures-Risk quick orders and live market data from
 OpenBull. `addons/OpenBullLiveDataClient.cs` is its shared WebSocket transport.
 
-`provider/OpenBullDataProvider.cs` is a native NinjaTrader **data-provider**
-adapter. It appears in NinjaTrader's Connections menu as `OpenBull`, rather
-than only being available to this indicator.
-
 ## Flow
 
 `Dhan WebSocket -> OpenBull stream proxy -> NinjaTrader indicator`
@@ -79,32 +75,6 @@ X-API-KEY header
    - `CE Strike`
    - `PE Strike`
 
-## Native OpenBull connection
-
-The native connection is data-only: it supplies realtime ticks to NinjaTrader
-but never places a Dhan order. OpenBull remains the order-routing boundary.
-
-Build and install the provider from a PowerShell prompt:
-
-```powershell
-cd D:\openbull
-powershell -ExecutionPolicy Bypass -File .\integrations\ninjatrader\provider\build-native-provider.ps1
-```
-
-Restart NinjaTrader, then open `Connections > Configure` and create/select
-`OpenBull`. Set the OpenBull API key in the **Password** field (leave
-**User name** blank) and keep the local WebSocket URL as
-`ws://127.0.0.1:8765`.
-
-For contracts whose NinjaTrader name does not exactly match Dhan's symbol,
-set **Symbol mappings** using this format:
-
-```text
-NIFTY 07-26=NFO:NIFTY28JUL26FUT; CRUDEOIL 08-26=MCX:CRUDEOIL18MAY26FUT
-```
-
-The current provider supplies realtime data. Historical bars remain the
-responsibility of the connection already used for chart history.
    - `Lots`
    - `Product` defaults to `MIS` and can be changed/saved per contract
    - `SL Points`
@@ -200,6 +170,6 @@ MCX       CRUDEOIL18MAY26FUT
 ```
 
 Live data remains subject to the Dhan account's market-data permissions and
-subscription capacity. The integration is a NinjaTrader indicator feed; it
-does not register Dhan as a native NinjaTrader brokerage/data-provider, so it
-does not create NinjaTrader chart bars by itself.
+subscription capacity. This is an OpenBull AddOn/indicator WebSocket bridge;
+it does not register Dhan as a native NinjaTrader brokerage/data-provider or
+create NinjaTrader chart bars by itself.
