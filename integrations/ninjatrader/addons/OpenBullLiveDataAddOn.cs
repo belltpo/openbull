@@ -314,8 +314,10 @@ namespace NinjaTrader.NinjaScript.AddOns
     /// </summary>
     public sealed class OpenBullLiveDataAddOn : AddOnBase
     {
+        private const string MenuHeader = "OpenBull Live Data";
         private NTMenuItem menuItem;
         private NTMenuItem parentMenuItem;
+        private OpenBullLiveDataWindow liveDataWindow;
 
         protected override void OnStateChange()
         {
@@ -336,9 +338,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (parentMenuItem == null)
                 return;
 
+            // NinjaTrader can retain menus from a prior AddOn instance across
+            // a NinjaScript recompile. Remove those stale entries before
+            // adding this instance's menu item.
+            RemoveStaleMenuItems(parentMenuItem);
+
             menuItem = new NTMenuItem
             {
-                Header = "OpenBull Live Data",
+                Header = MenuHeader,
                 Style = Application.Current.TryFindResource("MainMenuItem") as Style,
             };
             menuItem.Click += OnMenuItemClick;
@@ -347,19 +354,59 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         protected override void OnWindowDestroyed(Window window)
         {
-            if (menuItem == null)
-                return;
-            menuItem.Click -= OnMenuItemClick;
-            if (parentMenuItem != null)
-                parentMenuItem.Items.Remove(menuItem);
+            NTMenuItem item = menuItem;
+            NTMenuItem parent = parentMenuItem;
             menuItem = null;
             parentMenuItem = null;
+            if (item == null)
+                return;
+
+            // OnWindowDestroyed may be called on a different thread than the
+            // Control Center. Manipulate WPF controls only on their dispatcher.
+            Action remove = () =>
+            {
+                item.Click -= OnMenuItemClick;
+                if (parent != null && parent.Items.Contains(item))
+                    parent.Items.Remove(item);
+            };
+            try
+            {
+                if (item.Dispatcher.CheckAccess())
+                    remove();
+                else if (!item.Dispatcher.HasShutdownStarted)
+                    item.Dispatcher.BeginInvoke(remove);
+            }
+            catch (InvalidOperationException)
+            {
+                // The Control Center is already closing; no cleanup is needed.
+            }
+        }
+
+        private static void RemoveStaleMenuItems(NTMenuItem parent)
+        {
+            foreach (object candidate in parent.Items.Cast<object>().ToArray())
+            {
+                NTMenuItem existing = candidate as NTMenuItem;
+                if (existing != null && string.Equals(Convert.ToString(existing.Header), MenuHeader, StringComparison.Ordinal))
+                    parent.Items.Remove(existing);
+            }
         }
 
         private void OnMenuItemClick(object sender, RoutedEventArgs e)
         {
-            NinjaTrader.Core.Globals.RandomDispatcher.InvokeAsync(
-                new Action(() => new OpenBullLiveDataWindow().Show()));
+            // A menu click already executes on the Control Center UI thread.
+            // Creating the NTWindow directly keeps it on the same dispatcher.
+            if (liveDataWindow == null || !liveDataWindow.IsVisible)
+            {
+                liveDataWindow = new OpenBullLiveDataWindow();
+                liveDataWindow.Closed += (windowSender, windowArgs) => liveDataWindow = null;
+                liveDataWindow.Show();
+                return;
+            }
+
+            if (liveDataWindow.WindowState == WindowState.Minimized)
+                liveDataWindow.WindowState = WindowState.Normal;
+            liveDataWindow.Activate();
         }
     }
 
