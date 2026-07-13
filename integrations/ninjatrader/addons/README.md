@@ -2,11 +2,13 @@
 
 `OpenBullLiveDataAddOn.cs` is an independent NinjaTrader 8 AddOn. It does not
 reference, configure, or modify OpenBull Quick Order, indicators, strategies,
-charts, accounts, or order routing.
+accounts, or order routing.
 
 It adds **New > OpenBull Live Data** in the NinjaTrader Control Center. Its
 window connects to OpenBull's local WebSocket proxy and displays live quote
-updates in a grid.
+updates in a grid. It can also send those ticks to NinjaTrader's built-in
+External Data Feed so that mapped charts build live bars without a separate
+PowerShell bridge process.
 
 ## Install
 
@@ -41,5 +43,20 @@ Dhan master-contract symbol. Use the dated MCX Dhan contract shown in the
 OpenBull symbol master (currently `CRUDEOIL20JUL26FUT`), and update it when
 the contract expires.
 
-The AddOn displays values only. It does not create NinjaTrader chart bars or a
-native NinjaTrader data-vendor connection.
+## Live chart delivery
+
+Before clicking **Connect**, connect NinjaTrader's built-in **External Data
+Feed**. Leave **Send ticks to NinjaTrader charts** selected in the AddOn.
+
+For each symbol, set the matching NinjaTrader Instrument's **External** symbol
+map to the exact Dhan symbol. For example, the AddOn input
+`MCX:CRUDEOIL20JUL26FUT` requires this map:
+
+```text
+External = CRUDEOIL20JUL26FUT
+```
+
+The AddOn then sends live LTP ticks to that map and NinjaTrader builds live
+second/minute bars. This does not make it a native data-vendor connection and
+does not provide historical bars; use the separate historical import process
+for Dhan one-minute backfill.

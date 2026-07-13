@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
+using System.Reflection;
 using System.Linq;
 using System.Net.WebSockets;
 using System.Text;
@@ -307,6 +308,61 @@ namespace NinjaTrader.NinjaScript.AddOns
     }
 
     /// <summary>
+    /// Late-bound wrapper around NinjaTrader.Client.dll. Keeping this isolated
+    /// lets the AddOn feed NinjaTrader's built-in External Data Feed without a
+    /// compile-time DLL reference and without touching indicators, strategies,
+    /// accounts, orders, or Quick Order.
+    /// </summary>
+    internal sealed class NinjaTraderExternalTickSink : IDisposable
+    {
+        private object client;
+        private MethodInfo lastMethod;
+        private MethodInfo tearDownMethod;
+
+        public NinjaTraderExternalTickSink()
+        {
+            Assembly assembly = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(item => string.Equals(item.GetName().Name, "NinjaTrader.Client", StringComparison.OrdinalIgnoreCase));
+            if (assembly == null)
+                assembly = Assembly.LoadFrom(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "NinjaTrader.Client.dll"));
+
+            Type clientType = assembly.GetType("NinjaTrader.Client.Client", true);
+            client = Activator.CreateInstance(clientType);
+            MethodInfo setUpMethod = clientType.GetMethod("SetUp", new[] { typeof(string), typeof(int) });
+            MethodInfo connectedMethod = clientType.GetMethod("Connected", new[] { typeof(int) });
+            lastMethod = clientType.GetMethod("Last", new[] { typeof(string), typeof(double), typeof(int) });
+            tearDownMethod = clientType.GetMethod("TearDown", Type.EmptyTypes);
+
+            if (setUpMethod == null || connectedMethod == null || lastMethod == null || tearDownMethod == null)
+                throw new InvalidOperationException("NinjaTrader Client DLL does not expose the required External Data Feed functions.");
+            if (Convert.ToInt32(setUpMethod.Invoke(client, new object[] { "127.0.0.1", 36973 })) != 0 ||
+                Convert.ToInt32(connectedMethod.Invoke(client, new object[] { 0 })) != 0)
+                throw new InvalidOperationException("External Data Feed is not connected. Connect it before enabling chart delivery.");
+        }
+
+        public void SendLast(string externalSymbol, double price)
+        {
+            if (client == null || string.IsNullOrWhiteSpace(externalSymbol) || price <= 0)
+                return;
+            int result = Convert.ToInt32(lastMethod.Invoke(client, new object[] { externalSymbol, price, 1 }));
+            if (result != 0)
+                throw new InvalidOperationException("NinjaTrader rejected tick for " + externalSymbol + ". Check its External symbol map.");
+        }
+
+        public void Dispose()
+        {
+            if (client != null && tearDownMethod != null)
+            {
+                try { tearDownMethod.Invoke(client, null); } catch { }
+            }
+            client = null;
+            lastMethod = null;
+            tearDownMethod = null;
+        }
+    }
+
+
+    /// <summary>
     /// Adds a standalone <c>New &gt; OpenBull Live Data</c> menu entry to the
     /// NinjaTrader Control Center. It displays live Dhan ticks obtained only
     /// through the local OpenBull WebSocket proxy; it does not touch charts,
@@ -421,7 +477,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TextBlock statusText;
         private Button connectButton;
         private Button disconnectButton;
+        private CheckBox feedChartsCheckBox;
         private OpenBullLiveDataClient client;
+        private NinjaTraderExternalTickSink chartTickSink;
+        private string chartTickError;
 
         public OpenBullLiveDataWindow()
         {
@@ -445,7 +504,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             TextBlock info = new TextBlock
             {
-                Text = "Standalone OpenBull live quote monitor. Enter exact Dhan symbols as EXCHANGE:SYMBOL, one per line.",
+                Text = "Standalone OpenBull live quote monitor and External Data Feed bridge. Enter exact Dhan symbols as EXCHANGE:SYMBOL, one per line.",
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 0, 0, 10),
             };
@@ -484,6 +543,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             Grid actions = new Grid { Margin = new Thickness(0, 10, 0, 10) };
             actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             actions.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             connectButton = new Button { Content = "Connect", MinWidth = 90, Margin = new Thickness(0, 0, 8, 0) };
             connectButton.Click += (sender, args) => Connect();
@@ -492,8 +552,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             disconnectButton.Click += (sender, args) => Disconnect();
             Grid.SetColumn(disconnectButton, 1);
             actions.Children.Add(disconnectButton);
+            feedChartsCheckBox = new CheckBox
+            {
+                Content = "Send ticks to NinjaTrader charts",
+                IsChecked = true,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(8, 0, 0, 0),
+                ToolTip = "Requires the built-in External Data Feed. The Dhan symbol must match the Instrument's External symbol map.",
+            };
+            Grid.SetColumn(feedChartsCheckBox, 2);
+            actions.Children.Add(feedChartsCheckBox);
             statusText = new TextBlock { Text = "Disconnected", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0, 0, 0) };
-            Grid.SetColumn(statusText, 2);
+            Grid.SetColumn(statusText, 3);
             actions.Children.Add(statusText);
             Grid.SetRow(actions, 3);
             root.Children.Add(actions);
@@ -548,6 +618,19 @@ namespace NinjaTrader.NinjaScript.AddOns
             Disconnect();
             quotes.Clear();
             quotesByKey.Clear();
+            chartTickError = null;
+            if (feedChartsCheckBox.IsChecked == true)
+            {
+                try
+                {
+                    chartTickSink = new NinjaTraderExternalTickSink();
+                }
+                catch (Exception ex)
+                {
+                    chartTickSink = null;
+                    SetStatus("Chart delivery disabled: " + ex.Message, false);
+                }
+            }
             client = new OpenBullLiveDataClient(endpoint.AbsoluteUri, apiKeyBox.Password, OnTick, OnState);
             client.UpdateSymbols(symbols);
             connectButton.IsEnabled = false;
@@ -561,6 +644,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 client.Dispose();
                 client = null;
+            }
+            if (chartTickSink != null)
+            {
+                chartTickSink.Dispose();
+                chartTickSink = null;
             }
             if (connectButton != null) connectButton.IsEnabled = true;
             if (disconnectButton != null) disconnectButton.IsEnabled = false;
@@ -587,6 +675,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (tick == null || tick.Ltp <= 0)
                 return;
+            if (chartTickSink != null && chartTickError == null)
+            {
+                try
+                {
+                    // Dhan symbol and External map must match, for example
+                    // CRUDEOIL20JUL26FUT.
+                    chartTickSink.SendLast(tick.Symbol, tick.Ltp);
+                }
+                catch (Exception ex)
+                {
+                    chartTickError = ex.Message;
+                    Dispatcher.BeginInvoke(new Action(() => SetStatus("Chart delivery stopped: " + chartTickError, false)));
+                }
+            }
             Dispatcher.BeginInvoke(new Action(() =>
             {
                 string key = (tick.Exchange ?? "").ToUpperInvariant() + ":" + (tick.Symbol ?? "").ToUpperInvariant();
