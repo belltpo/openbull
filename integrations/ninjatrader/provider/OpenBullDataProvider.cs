@@ -34,7 +34,11 @@ namespace OpenBull.NinjaTrader
 
         public override Type AdapterClassType { get { return typeof(OpenBullDataAdapter); } }
         public override string AssemblyName { get { return "OpenBull.NativeProvider"; } }
-        public override string BrandName { get { return "OpenBull"; } }
+        // NinjaTrader validates this against the installed vendor identity
+        // before it ever reaches the adapter. BellTPO is the registered brand
+        // on this installation; the user-facing connection name remains
+        // "OpenBull".
+        public override string BrandName { get { return "BellTPO"; } }
         public override bool IsDataProviderOnly { get { return true; } }
 
         [Display(Name = "OpenBull WebSocket URL", GroupName = "Connection", Order = 10)]

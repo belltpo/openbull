@@ -92,8 +92,9 @@ powershell -ExecutionPolicy Bypass -File .\integrations\ninjatrader\provider\bui
 ```
 
 Restart NinjaTrader, then open `Connections > Configure` and create/select
-`OpenBull`. Set the OpenBull API key in the **Password** field and keep the
-local WebSocket URL as `ws://127.0.0.1:8765`.
+`OpenBull`. Set the OpenBull API key in the **Password** field (leave
+**User name** blank) and keep the local WebSocket URL as
+`ws://127.0.0.1:8765`.
 
 For contracts whose NinjaTrader name does not exactly match Dhan's symbol,
 set **Symbol mappings** using this format:
