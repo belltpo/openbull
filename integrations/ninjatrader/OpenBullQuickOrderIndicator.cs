@@ -77,6 +77,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         private TextBox slBox;
         private PasswordBox apiBox;
         private DispatcherTimer liveTimer;
+        private OpenBullLiveDataClient marketDataStream;
+        private string streamFuturesKey = "";
+        private string streamCeKey = "";
+        private string streamPeKey = "";
         private bool controlsAdded;
         private bool isBusy;
         private bool settingsHydrating;
@@ -152,7 +156,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 UseOverrideTargets = false;
                 AutoSplitTargets = true;
                 ShowPreviousTradeDrawings = false;
-                LivePollMs = 1000;
+                // WebSocket ticks are the primary source.  REST preview is
+                // now only a safe, cache-backed MTM fallback.
+                LivePollMs = 5000;
+                UseOpenBullLiveStream = true;
+                OpenBullStreamUrl = "ws://127.0.0.1:8765";
                 Target1Points = 50;
                 Target2Points = 100;
                 Target3Points = 150;
@@ -310,6 +318,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             ChartControl.Dispatcher.InvokeAsync(() =>
             {
                 StopLiveTimer();
+                StopLiveStream();
                 if (ChartControl != null)
                 {
                     ChartControl.SizeChanged -= OnChartSizeChanged;
@@ -401,7 +410,11 @@ namespace NinjaTrader.NinjaScript.Indicators
         private void StartLiveTimer()
         {
             StopLiveTimer();
-            int pollMs = Math.Max(500, LivePollMs);
+            StartLiveStream();
+            // Persisted indicator templates may still have the old 1-second
+            // value.  Keep the REST fallback at a broker-safe cadence; ticks
+            // themselves arrive through the WebSocket client above.
+            int pollMs = Math.Max(5000, LivePollMs);
             liveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(pollMs) };
             liveTimer.Tick += async (s, e) =>
             {
@@ -435,6 +448,33 @@ namespace NinjaTrader.NinjaScript.Indicators
                 return;
             liveTimer.Stop();
             liveTimer = null;
+        }
+
+        private void StartLiveStream()
+        {
+            StopLiveStream();
+            if (!UseOpenBullLiveStream || string.IsNullOrWhiteSpace(OpenBullStreamUrl) || string.IsNullOrWhiteSpace(ApiKey))
+                return;
+            try
+            {
+                marketDataStream = new OpenBullLiveDataClient(OpenBullStreamUrl, ApiKey, OnOpenBullLiveTick, OnOpenBullLiveState);
+            }
+            catch (Exception ex)
+            {
+                SetStatus("Live stream unavailable: " + ex.Message, false);
+            }
+        }
+
+        private void StopLiveStream()
+        {
+            if (marketDataStream != null)
+            {
+                marketDataStream.Dispose();
+                marketDataStream = null;
+            }
+            streamFuturesKey = "";
+            streamCeKey = "";
+            streamPeKey = "";
         }
 
         private void BuildControls()
@@ -1848,6 +1888,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     double nextPe = ExtractLtp(body, "pe");
                     double nextMtm = ExtractNestedNumber(body, "mtm", "total");
                     string nextMode = ExtractJsonValue(body, "mode");
+                    UpdateLiveStreamSymbols(body);
 
                     ChartControl.Dispatcher.InvokeAsync(() =>
                     {
@@ -1875,6 +1916,65 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (!isBusy)
                     SetStatus(ex.Message, false);
             }
+        }
+
+        private void UpdateLiveStreamSymbols(string previewJson)
+        {
+            if (marketDataStream == null)
+                return;
+
+            Match block = Regex.Match(previewJson ?? "", "\\\"stream_symbols\\\"\\s*:\\s*\\[(?<symbols>.*?)\\]", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+            if (!block.Success)
+                return;
+
+            List<OpenBullLiveSymbol> symbols = new List<OpenBullLiveSymbol>();
+            MatchCollection matches = Regex.Matches(
+                block.Groups["symbols"].Value,
+                "\\\"symbol\\\"\\s*:\\s*\\\"(?<symbol>[^\\\"]+)\\\"\\s*,\\s*\\\"exchange\\\"\\s*:\\s*\\\"(?<exchange>[^\\\"]+)\\\"",
+                RegexOptions.IgnoreCase
+            );
+            foreach (Match match in matches)
+                symbols.Add(new OpenBullLiveSymbol(match.Groups["symbol"].Value, match.Groups["exchange"].Value));
+            if (symbols.Count == 0)
+                return;
+
+            // The API returns the current FUT, CE and PE first.  Additional
+            // active-position option symbols remain subscribed for MTM cache
+            // updates in OpenBull even when they are not displayed in this card.
+            streamFuturesKey = symbols[0].Key;
+            streamCeKey = symbols.Count > 1 ? symbols[1].Key : "";
+            streamPeKey = symbols.Count > 2 ? symbols[2].Key : "";
+            marketDataStream.UpdateSymbols(symbols);
+        }
+
+        private void OnOpenBullLiveTick(OpenBullLiveTick tick)
+        {
+            if (tick == null || tick.Ltp <= 0 || ChartControl == null)
+                return;
+            string key = (tick.Exchange ?? "").ToUpperInvariant() + ":" + (tick.Symbol ?? "").ToUpperInvariant();
+            ChartControl.Dispatcher.InvokeAsync(() =>
+            {
+                if (key == streamFuturesKey)
+                    futuresLtp = tick.Ltp;
+                else if (key == streamCeKey)
+                    ceLtp = tick.Ltp;
+                else if (key == streamPeKey)
+                    peLtp = tick.Ltp;
+                else
+                    return;
+
+                if (liveText != null)
+                    liveText.Text = Underlying + " FUT " + (futuresLtp > 0 ? futuresLtp.ToString("N2", CultureInfo.InvariantCulture) : "--");
+                RefreshButtonText();
+                RequestChartRefresh();
+            });
+        }
+
+        private void OnOpenBullLiveState(string message, bool healthy)
+        {
+            if (ChartControl == null || isBusy)
+                return;
+            ChartControl.Dispatcher.InvokeAsync(() => SetStatus(message, healthy));
         }
 
         private async Task FetchOptionsAsync()
@@ -3695,6 +3795,14 @@ namespace NinjaTrader.NinjaScript.Indicators
         public string ApiKey { get; set; }
 
         [NinjaScriptProperty]
+        [Display(Name = "Use Live WebSocket", GroupName = "OpenBull", Order = 3)]
+        public bool UseOpenBullLiveStream { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Live WebSocket URL", GroupName = "OpenBull", Order = 4)]
+        public string OpenBullStreamUrl { get; set; }
+
+        [NinjaScriptProperty]
         [TypeConverter(typeof(UnderlyingListConverter))]
         [Display(Name = "Underlying", GroupName = "Contract", Order = 10)]
         public string Underlying { get; set; }
@@ -3757,8 +3865,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool ShowPreviousTradeDrawings { get; set; }
 
         [NinjaScriptProperty]
-        [Range(500, 10000)]
-        [Display(Name = "Live Poll Ms", GroupName = "OpenBull", Order = 3)]
+        [Range(5000, 30000)]
+        [Display(Name = "REST Fallback Poll Ms", GroupName = "OpenBull", Order = 5)]
         public int LivePollMs { get; set; }
 
         [NinjaScriptProperty]

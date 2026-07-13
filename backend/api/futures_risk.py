@@ -536,6 +536,21 @@ def _quote_payloads_unlocked(
     return payloads
 
 
+def _stream_symbols(instruments: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Return unique contracts in display order for an external WS client."""
+    unique: set[tuple[str, str]] = set()
+    result: list[dict[str, str]] = []
+    for item in instruments:
+        symbol = str(item.get("symbol") or "").strip()
+        exchange = str(item.get("exchange") or "").strip()
+        key = _quote_key(symbol, exchange)
+        if not symbol or not exchange or key in unique:
+            continue
+        unique.add(key)
+        result.append({"symbol": symbol, "exchange": exchange})
+    return result
+
+
 def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str, config: dict) -> dict[str, Any]:
     payloads = _quote_payloads(
         [{"symbol": symbol, "exchange": exchange}],
@@ -654,6 +669,9 @@ async def api_futures_risk_quick_order_preview(request: Request):
             "futures": quote_map.get(_quote_key(fut["symbol"], fut["exchange"])),
             "ce": quote_map.get(_quote_key(ce["symbol"], ce["exchange"])) if ce else None,
             "pe": quote_map.get(_quote_key(pe["symbol"], pe["exchange"])) if pe else None,
+            # NinjaTrader uses this one-time resolution to switch from REST
+            # preview polling to the pooled WebSocket stream.
+            "stream_symbols": _stream_symbols(instruments),
         }
         quotes_by_symbol = {
             (data["ce"] or {}).get("symbol"): (data["ce"] or {}).get("ltp"),

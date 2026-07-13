@@ -170,6 +170,11 @@ class DhanAdapter(BaseBrokerAdapter):
                 current = self._subs.get(key, (0, sym, exch))[0]
                 # Upgrade subscription mode if requested mode is higher
                 new_mode = max(current, mode)
+                if new_mode == current:
+                    # The same contract is already subscribed at this mode (or
+                    # a richer one).  Re-sending it is wasteful and can push
+                    # Dhan's streaming request rate over its limit.
+                    continue
                 self._subs[key] = (new_mode, sym, exch)
                 new_items.append({
                     "instrument": {"ExchangeSegment": dhan_segment, "SecurityId": security_id},
@@ -184,6 +189,18 @@ class DhanAdapter(BaseBrokerAdapter):
         # so two near-simultaneous subscribes flush together.
         with self._batch_lock:
             was_empty = not self._sub_queue
+            # If a queued ticker is upgraded to quote/full before the batch is
+            # sent, keep only the richer request for that instrument.
+            upgrading = {
+                (item["instrument"]["ExchangeSegment"], item["instrument"]["SecurityId"])
+                for item in new_items
+            }
+            if upgrading:
+                self._sub_queue = [
+                    item for item in self._sub_queue
+                    if (item["instrument"]["ExchangeSegment"], item["instrument"]["SecurityId"])
+                    not in upgrading
+                ]
             self._sub_queue.extend(new_items)
             if was_empty:
                 self._start_batch_timer()

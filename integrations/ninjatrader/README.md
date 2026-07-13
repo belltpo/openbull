@@ -1,9 +1,13 @@
 # OpenBull NinjaTrader Quick Order Indicator
 
-`OpenBullQuickOrderIndicator.cs` is a standalone NinjaTrader 8 indicator that
-adds a compact chart overlay for sending Futures-Risk quick orders to OpenBull.
+`OpenBullQuickOrderIndicator.cs` is a NinjaTrader 8 indicator that adds a
+compact chart overlay for Futures-Risk quick orders and live market data from
+OpenBull. `OpenBullLiveDataClient.cs` is its WebSocket transport and must be
+installed alongside the indicator.
 
 ## Flow
+
+`Dhan WebSocket -> OpenBull stream proxy -> NinjaTrader indicator`
 
 `NinjaTrader button -> OpenBull API key endpoint -> Futures-Risk quick-order service -> broker`
 
@@ -28,6 +32,16 @@ POST /api/v1/futures-risk/quick-order/settings
 POST /api/v1/futures-risk/quick-order/settings/delete
 ```
 
+For live ticks the indicator connects to:
+
+```text
+ws://127.0.0.1:8765
+```
+
+It authenticates with the same OpenBull API key and subscribes to the resolved
+futures, CE, PE, and active-position option contracts. OpenBull pools duplicate
+symbols across charts before sending subscriptions upstream to Dhan.
+
 Required auth:
 
 ```text
@@ -45,15 +59,18 @@ X-API-KEY header
 1. In OpenBull, create/copy your API key from the API key page.
 2. Keep OpenBull backend running, normally at `http://127.0.0.1:8000`.
 3. In NinjaTrader 8, open `New > NinjaScript Editor`.
-4. Right-click `Indicators`, choose `New Indicator`, then replace the generated
-   content with `OpenBullQuickOrderIndicator.cs`.
-5. Compile.
+4. Copy both `OpenBullQuickOrderIndicator.cs` and `OpenBullLiveDataClient.cs`
+   into NinjaTrader's `bin/Custom/Indicators` folder (or create both files in
+   the NinjaScript Editor).
+5. Compile. NinjaTrader must be allowed to use `System.Net.WebSockets`.
 6. Restart the OpenBull backend after pulling this integration, otherwise NT
    will receive `{"detail":"Not Found"}` for the new API routes.
 7. Add `OpenBull Quick Order` to any chart.
 8. Set:
    - `OpenBull URL`
    - `API Key`
+   - `Use Live WebSocket = true`
+   - `Live WebSocket URL = ws://127.0.0.1:8765`
    - `Underlying`
    - `Expiry`
    - `CE Strike`
@@ -83,8 +100,12 @@ to the OpenBull target template id you want this chart to use.
 - `Delete` removes the selected contract quick-order setup from OpenBull.
 - While the settings card is open, dropdown/default values are refreshed from
   OpenBull about every 10 seconds.
-- Futures, CE, and PE LTP values are polled from OpenBull every five seconds via
-  `/api/v1/futures-risk/quick-order/preview`.
+- Futures, CE, and PE LTP values stream from OpenBull over WebSocket. REST
+  preview runs every five seconds only to resolve contracts and refresh the
+  aggregate MTM fallback. It uses OpenBull's cache and does not repeatedly hit
+  Dhan when the stream is healthy.
+- The widget shows a reconnecting/error status when the stream is unavailable;
+  it does not treat stale prices as fresh data.
 - After a successful quick order, the indicator fetches the created Futures-Risk
   trade and creates/updates a tagged `Bell_LongEntryTool` or
   `Bell_ShortEntryTool` on the chart.
@@ -133,3 +154,22 @@ price scale, the OpenBull futures levels may render outside the visible panel.
 The copied Bell drawing tools still support manual linking through
 `OpenBull Trade ID`; quick orders now auto-create and auto-link those same
 tools using tag `OpenBull_FR_<trade_id>`.
+
+## Supported live symbols
+
+The stream accepts all symbols present in OpenBull's Dhan master-contract cache
+for Dhan-supported exchanges, including `NSE`, `NSE_INDEX`, `NFO`, and `MCX`.
+Examples:
+
+```text
+NSE       RELIANCE
+NSE_INDEX NIFTY
+NFO       NIFTY28JUL26FUT
+NFO       BANKNIFTY28JUL2655900CE
+MCX       CRUDEOIL18MAY26FUT
+```
+
+Live data remains subject to the Dhan account's market-data permissions and
+subscription capacity. The integration is a NinjaTrader indicator feed; it
+does not register Dhan as a native NinjaTrader brokerage/data-provider, so it
+does not create NinjaTrader chart bars by itself.

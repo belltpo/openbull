@@ -48,6 +48,8 @@ _adapter_lock = asyncio.Lock()
 _clients: dict[str, websockets.WebSocketServerProtocol] = {}
 _authenticated_clients: set[str] = set()  # client_ids that have authenticated
 _subscription_index: dict[tuple[str, str, int], set[str]] = {}  # (symbol, exchange, mode) -> client_ids
+_upstream_subscriptions: dict[tuple[str, str], int] = {}  # pooled broker subscriptions, highest requested mode
+_subscription_lock = asyncio.Lock()
 _last_send_time: dict[tuple[str, str], float] = {}  # (symbol, exchange) -> timestamp
 _server: websockets.WebSocketServer | None = None
 _zmq_task: asyncio.Task | None = None
@@ -93,6 +95,44 @@ async def _broadcast(client_ids: set[str], message: dict) -> None:
             tasks.append(_send_json(ws, message))
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _desired_upstream_subscriptions() -> dict[tuple[str, str], int]:
+    """Return the highest requested stream mode for every pooled symbol."""
+    desired: dict[tuple[str, str], int] = {}
+    for (symbol, exchange, mode), client_ids in _subscription_index.items():
+        if not client_ids:
+            continue
+        key = (symbol, exchange)
+        desired[key] = max(desired.get(key, 0), mode)
+    return desired
+
+
+async def _sync_upstream_subscriptions() -> None:
+    """Bring the broker adapter in line with pooled client demand."""
+    global _upstream_subscriptions
+    if _adapter is None:
+        return
+
+    desired = _desired_upstream_subscriptions()
+    additions: dict[int, list[dict[str, str]]] = {}
+    for (symbol, exchange), mode in desired.items():
+        if mode > _upstream_subscriptions.get((symbol, exchange), 0):
+            additions.setdefault(mode, []).append({"symbol": symbol, "exchange": exchange})
+    removals = [
+        {"symbol": symbol, "exchange": exchange}
+        for symbol, exchange in _upstream_subscriptions
+        if (symbol, exchange) not in desired
+    ]
+
+    loop = asyncio.get_running_loop()
+    for mode, symbols in additions.items():
+        await loop.run_in_executor(None, _adapter.subscribe, symbols, mode)
+    if removals:
+        # Dhan keeps the physical upstream subscription until reconnect, but
+        # its adapter drops the local state so no unused ticks are fanned out.
+        await loop.run_in_executor(None, _adapter.unsubscribe, removals, MODE_LTP)
+    _upstream_subscriptions = desired
 
 
 # ---- ZeroMQ listener ----
@@ -300,15 +340,13 @@ async def _handle_client(ws: websockets.WebSocketServerProtocol) -> None:
                     continue
                 mode = MODE_MAP.get(msg.get("mode", "LTP").upper(), MODE_LTP)
 
-                for item in symbols:
-                    sym, exch = item.get("symbol"), item.get("exchange")
-                    if sym and exch:
-                        _subscription_index.setdefault((sym, exch, mode), set()).add(client_id)
-
-                # Forward to broker adapter (in thread — adapter methods may block)
-                loop = asyncio.get_running_loop()
                 try:
-                    await loop.run_in_executor(None, _adapter.subscribe, symbols, mode)
+                    async with _subscription_lock:
+                        for item in symbols:
+                            sym, exch = item.get("symbol"), item.get("exchange")
+                            if sym and exch:
+                                _subscription_index.setdefault((sym, exch, mode), set()).add(client_id)
+                        await _sync_upstream_subscriptions()
                 except Exception as e:
                     logger.error("Subscribe error: %s", e)
 
@@ -330,23 +368,20 @@ async def _handle_client(ws: websockets.WebSocketServerProtocol) -> None:
                 symbols = msg.get("symbols", [])
                 mode = MODE_MAP.get(msg.get("mode", "LTP").upper(), MODE_LTP)
 
-                symbols_to_unsub = []
-                for item in symbols:
-                    sym, exch = item.get("symbol"), item.get("exchange")
-                    if sym and exch:
-                        subs = _subscription_index.get((sym, exch, mode))
-                        if subs:
-                            subs.discard(client_id)
-                            if not subs:
-                                del _subscription_index[(sym, exch, mode)]
-                                symbols_to_unsub.append(item)
-
-                if symbols_to_unsub:
-                    loop = asyncio.get_running_loop()
-                    try:
-                        await loop.run_in_executor(None, _adapter.unsubscribe, symbols_to_unsub, mode)
-                    except Exception as e:
-                        logger.error("Unsubscribe error: %s", e)
+                try:
+                    async with _subscription_lock:
+                        for item in symbols:
+                            sym, exch = item.get("symbol"), item.get("exchange")
+                            if not sym or not exch:
+                                continue
+                            subs = _subscription_index.get((sym, exch, mode))
+                            if subs:
+                                subs.discard(client_id)
+                                if not subs:
+                                    del _subscription_index[(sym, exch, mode)]
+                        await _sync_upstream_subscriptions()
+                except Exception as e:
+                    logger.error("Unsubscribe error: %s", e)
 
                 await _send_json(ws, _ack({"type": "unsubscribe", "status": "success"}, request_id))
 
@@ -370,12 +405,17 @@ async def _handle_client(ws: websockets.WebSocketServerProtocol) -> None:
         # Cleanup client subscriptions and auth state
         _clients.pop(client_id, None)
         _authenticated_clients.discard(client_id)
-        for key in list(_subscription_index.keys()):
-            subs = _subscription_index.get(key)
-            if subs:
-                subs.discard(client_id)
-                if not subs:
-                    del _subscription_index[key]
+        try:
+            async with _subscription_lock:
+                for key in list(_subscription_index.keys()):
+                    subs = _subscription_index.get(key)
+                    if subs:
+                        subs.discard(client_id)
+                        if not subs:
+                            del _subscription_index[key]
+                await _sync_upstream_subscriptions()
+        except Exception as e:
+            logger.debug("Subscription cleanup error: %s", e)
         logger.info("Client %s disconnected (%d remaining)", client_id[:8], len(_clients))
 
 
@@ -396,7 +436,7 @@ async def start_ws_proxy(host: str, port: int) -> None:
 
 async def shutdown_ws_proxy() -> None:
     """Gracefully shut down the proxy, adapter, and ZMQ listener."""
-    global _adapter, _zmq_task, _server
+    global _adapter, _zmq_task, _server, _upstream_subscriptions
 
     if _zmq_task:
         _zmq_task.cancel()
@@ -423,5 +463,6 @@ async def shutdown_ws_proxy() -> None:
     _clients.clear()
     _authenticated_clients.clear()
     _subscription_index.clear()
+    _upstream_subscriptions.clear()
     _last_send_time.clear()
     logger.info("WebSocket proxy shut down")
