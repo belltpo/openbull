@@ -2,8 +2,11 @@
 
 `OpenBullQuickOrderIndicator.cs` is a NinjaTrader 8 indicator that adds a
 compact chart overlay for Futures-Risk quick orders and live market data from
-OpenBull. `OpenBullLiveDataClient.cs` is its WebSocket transport and must be
-installed alongside the indicator.
+OpenBull. `addons/OpenBullLiveDataClient.cs` is its shared WebSocket transport.
+
+`provider/OpenBullDataProvider.cs` is a native NinjaTrader **data-provider**
+adapter. It appears in NinjaTrader's Connections menu as `OpenBull`, rather
+than only being available to this indicator.
 
 ## Flow
 
@@ -59,9 +62,9 @@ X-API-KEY header
 1. In OpenBull, create/copy your API key from the API key page.
 2. Keep OpenBull backend running, normally at `http://127.0.0.1:8000`.
 3. In NinjaTrader 8, open `New > NinjaScript Editor`.
-4. Copy both `OpenBullQuickOrderIndicator.cs` and `OpenBullLiveDataClient.cs`
-   into NinjaTrader's `bin/Custom/Indicators` folder (or create both files in
-   the NinjaScript Editor).
+4. Copy `OpenBullQuickOrderIndicator.cs` into NinjaTrader's
+   `bin/Custom/Indicators` folder and `addons/OpenBullLiveDataClient.cs` into
+   `bin/Custom/AddOns`.
 5. Compile. NinjaTrader must be allowed to use `System.Net.WebSockets`.
 6. Restart the OpenBull backend after pulling this integration, otherwise NT
    will receive `{"detail":"Not Found"}` for the new API routes.
@@ -75,6 +78,32 @@ X-API-KEY header
    - `Expiry`
    - `CE Strike`
    - `PE Strike`
+
+## Native OpenBull connection
+
+The native connection is data-only: it supplies realtime ticks to NinjaTrader
+but never places a Dhan order. OpenBull remains the order-routing boundary.
+
+Build and install the provider from a PowerShell prompt:
+
+```powershell
+cd D:\openbull
+powershell -ExecutionPolicy Bypass -File .\integrations\ninjatrader\provider\build-native-provider.ps1
+```
+
+Restart NinjaTrader, then open `Connections > Configure` and create/select
+`OpenBull`. Set the OpenBull API key in the **Password** field and keep the
+local WebSocket URL as `ws://127.0.0.1:8765`.
+
+For contracts whose NinjaTrader name does not exactly match Dhan's symbol,
+set **Symbol mappings** using this format:
+
+```text
+NIFTY 07-26=NFO:NIFTY28JUL26FUT; CRUDEOIL 08-26=MCX:CRUDEOIL18MAY26FUT
+```
+
+The current provider supplies realtime data. Historical bars remain the
+responsibility of the connection already used for chart history.
    - `Lots`
    - `Product` defaults to `MIS` and can be changed/saved per contract
    - `SL Points`
