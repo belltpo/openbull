@@ -16,4 +16,7 @@ New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
     (Join-Path $repoRoot 'integrations\ninjatrader\external_feed\OpenBullExternalDataFeedBridge.cs')
 if ($LASTEXITCODE -ne 0) { throw 'External Data Feed bridge compilation failed.' }
 
+Copy-Item -LiteralPath (Join-Path $ntBin 'NinjaTrader.Client.dll') `
+    -Destination (Join-Path $outputDir 'NinjaTrader.Client.dll') -Force
+
 Write-Host "Built $output"
