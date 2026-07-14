@@ -1478,6 +1478,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             highlighted.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
             highlighted.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(45, 86, 160))));
             style.Triggers.Add(highlighted);
+
+            // WPF's default selected-item colours are a light system blue with
+            // dark text. Keep the Quick Settings list readable in its dark UI.
+            Trigger selected = new Trigger { Property = ComboBoxItem.IsSelectedProperty, Value = true };
+            selected.Setters.Add(new Setter(Control.ForegroundProperty, Brushes.White));
+            selected.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(24, 104, 190))));
+            selected.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(98, 181, 255))));
+            style.Triggers.Add(selected);
             return style;
         }
 
@@ -1504,35 +1512,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     combo.ApplyTemplate();
                     combo.UpdateLayout();
-
-                    Popup popup = combo.Template.FindName("PART_Popup", combo) as Popup;
-                    ScrollViewer viewer = popup != null && popup.Child != null
-                        ? FindVisualChild<ScrollViewer>(popup.Child)
-                        : FindVisualChild<ScrollViewer>(combo);
-
-                    if (viewer != null)
+                    ComboBoxItem selectedItem = combo.ItemContainerGenerator.ContainerFromIndex(combo.SelectedIndex) as ComboBoxItem;
+                    if (selectedItem != null)
                     {
-                        int targetIndex = Math.Max(0, combo.SelectedIndex - 5);
-                        viewer.ScrollToVerticalOffset(targetIndex);
-                        combo.UpdateLayout();
+                        selectedItem.BringIntoView();
+                        selectedItem.Focus();
                     }
-
-                    combo.Dispatcher.BeginInvoke(new Action(() =>
-                    {
-                        try
-                        {
-                            combo.ApplyTemplate();
-                            Popup nestedPopup = combo.Template.FindName("PART_Popup", combo) as Popup;
-                            ScrollViewer nestedViewer = nestedPopup != null && nestedPopup.Child != null
-                                ? FindVisualChild<ScrollViewer>(nestedPopup.Child)
-                                : FindVisualChild<ScrollViewer>(combo);
-                            if (nestedViewer != null && combo.SelectedIndex >= 0)
-                                nestedViewer.ScrollToVerticalOffset(Math.Max(0, combo.SelectedIndex - 5));
-                        }
-                        catch
-                        {
-                        }
-                    }), DispatcherPriority.Background);
                 }
                 catch
                 {
