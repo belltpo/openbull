@@ -74,16 +74,23 @@ export function SelectValue({ placeholder }: SelectValueProps) {
 
 interface SelectContentProps {
   className?: string;
+  align?: "start" | "center" | "end";
+  alignItemWithTrigger?: boolean;
   children: ReactNode;
 }
 
-export function SelectContent({ className, children }: SelectContentProps) {
+export function SelectContent({
+  className,
+  align,
+  alignItemWithTrigger,
+  children,
+}: SelectContentProps) {
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
         sideOffset={4}
-        align="start"
-        alignItemWithTrigger={false}
+        align={align}
+        alignItemWithTrigger={alignItemWithTrigger}
         className="z-50"
       >
         <SelectPrimitive.Popup

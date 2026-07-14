@@ -211,7 +211,7 @@ export default function BrokerConfig() {
                 <SelectTrigger id="broker-select" className="h-8 rounded-lg px-2.5 dark:bg-input/30">
                   <SelectValue placeholder="Select a broker..." />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent align="start" alignItemWithTrigger={false}>
                   {brokers?.map((b) => (
                     <SelectItem key={b.name} value={b.name}>
                       {b.display_name}
