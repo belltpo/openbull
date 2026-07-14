@@ -1256,7 +1256,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         private UIElement BuildStrikeMethodRow()
         {
             Grid row = FieldRow("Strike method");
-            WrapPanel choices = new WrapPanel { Orientation = Orientation.Horizontal };
+            Grid choices = new Grid { Margin = new Thickness(0, -1, 0, -1) };
+            choices.ColumnDefinitions.Add(new ColumnDefinition());
+            choices.ColumnDefinitions.Add(new ColumnDefinition());
+            choices.RowDefinitions.Add(new RowDefinition());
+            choices.RowDefinitions.Add(new RowDefinition());
+            Style radioStyle = BuildStrikeMethodRadioStyle();
+            int index = 0;
             foreach (StrikeSelectionMethod method in Enum.GetValues(typeof(StrikeSelectionMethod)))
             {
                 RadioButton button = new RadioButton
@@ -1264,9 +1270,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Content = method == StrikeSelectionMethod.ITM_OTM ? "ITM / OTM" : method.ToString(),
                     Tag = method,
                     GroupName = strikeRadioGroupName,
-                    Margin = new Thickness(0, 0, 7, 0),
-                    Foreground = Brushes.White,
-                    FontSize = 9,
+                    Margin = new Thickness(index % 2 == 0 ? 0 : 3, index < 2 ? 2 : 0, index % 2 == 0 ? 3 : 0, 2),
+                    Style = radioStyle,
                     IsChecked = method == StrikeSelection
                 };
                 button.Checked += (s, e) =>
@@ -1285,11 +1290,89 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Task.Run(async () => await SaveSettingsAsync());
                 };
                 strikeMethodButtons[method] = button;
+                Grid.SetRow(button, index / 2);
+                Grid.SetColumn(button, index % 2);
                 choices.Children.Add(button);
+                index++;
             }
             Grid.SetColumn(choices, 1);
             row.Children.Add(choices);
             return row;
+        }
+
+        private static Style BuildStrikeMethodRadioStyle()
+        {
+            Style style = new Style(typeof(RadioButton));
+            style.Setters.Add(new Setter(Control.HeightProperty, 22.0));
+            style.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(7, 0, 6, 0)));
+            style.Setters.Add(new Setter(Control.ForegroundProperty, new SolidColorBrush(Color.FromRgb(220, 220, 220))));
+            style.Setters.Add(new Setter(Control.BackgroundProperty, new SolidColorBrush(Color.FromRgb(20, 20, 20))));
+            style.Setters.Add(new Setter(Control.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(65, 65, 65))));
+            style.Setters.Add(new Setter(Control.BorderThicknessProperty, new Thickness(1)));
+            style.Setters.Add(new Setter(Control.FontSizeProperty, 9.0));
+            style.Setters.Add(new Setter(Control.CursorProperty, Cursors.Hand));
+
+            ControlTemplate template = new ControlTemplate(typeof(RadioButton));
+            FrameworkElementFactory border = new FrameworkElementFactory(typeof(Border));
+            border.Name = "choiceBorder";
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+            border.SetValue(Border.BackgroundProperty, new TemplateBindingExtension(Control.BackgroundProperty));
+            border.SetValue(Border.BorderBrushProperty, new TemplateBindingExtension(Control.BorderBrushProperty));
+            border.SetValue(Border.BorderThicknessProperty, new TemplateBindingExtension(Control.BorderThicknessProperty));
+
+            FrameworkElementFactory content = new FrameworkElementFactory(typeof(StackPanel));
+            content.SetValue(StackPanel.OrientationProperty, Orientation.Horizontal);
+            content.SetValue(StackPanel.VerticalAlignmentProperty, VerticalAlignment.Center);
+
+            FrameworkElementFactory indicator = new FrameworkElementFactory(typeof(Border));
+            indicator.Name = "indicatorBorder";
+            indicator.SetValue(Border.WidthProperty, 12.0);
+            indicator.SetValue(Border.HeightProperty, 12.0);
+            indicator.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+            indicator.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            indicator.SetValue(Border.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(150, 150, 150)));
+            indicator.SetValue(Border.BackgroundProperty, Brushes.Transparent);
+            indicator.SetValue(Border.MarginProperty, new Thickness(0, 0, 5, 0));
+            indicator.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+
+            FrameworkElementFactory dot = new FrameworkElementFactory(typeof(Border));
+            dot.Name = "indicatorDot";
+            dot.SetValue(Border.WidthProperty, 6.0);
+            dot.SetValue(Border.HeightProperty, 6.0);
+            dot.SetValue(Border.CornerRadiusProperty, new CornerRadius(3));
+            dot.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(85, 150, 255)));
+            dot.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            dot.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            dot.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
+            indicator.AppendChild(dot);
+
+            FrameworkElementFactory presenter = new FrameworkElementFactory(typeof(ContentPresenter));
+            presenter.SetValue(ContentPresenter.ContentProperty, new TemplateBindingExtension(ContentControl.ContentProperty));
+            presenter.SetValue(ContentPresenter.VerticalAlignmentProperty, VerticalAlignment.Center);
+            presenter.SetValue(ContentPresenter.RecognizesAccessKeyProperty, true);
+
+            content.AppendChild(indicator);
+            content.AppendChild(presenter);
+            border.AppendChild(content);
+            template.VisualTree = border;
+
+            Trigger checkedTrigger = new Trigger { Property = ToggleButton.IsCheckedProperty, Value = true };
+            checkedTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(25, 63, 110)), "choiceBorder"));
+            checkedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(85, 150, 255)), "choiceBorder"));
+            checkedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(85, 150, 255)), "indicatorBorder"));
+            checkedTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "indicatorDot"));
+            template.Triggers.Add(checkedTrigger);
+
+            Trigger hoverTrigger = new Trigger { Property = UIElement.IsMouseOverProperty, Value = true };
+            hoverTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(125, 125, 125)), "choiceBorder"));
+            template.Triggers.Add(hoverTrigger);
+
+            Trigger disabledTrigger = new Trigger { Property = UIElement.IsEnabledProperty, Value = false };
+            disabledTrigger.Setters.Add(new Setter(UIElement.OpacityProperty, 0.5, "choiceBorder"));
+            template.Triggers.Add(disabledTrigger);
+
+            style.Setters.Add(new Setter(Control.TemplateProperty, template));
+            return style;
         }
 
         private void SetComboRowVisible(ComboBox combo, bool visible)
