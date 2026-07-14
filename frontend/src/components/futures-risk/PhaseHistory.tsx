@@ -3,7 +3,7 @@
  */
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, ChevronDown, Clock, Layers, Shield, Target } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronUp, Clock, Layers, Shield, Target } from "lucide-react";
 
 import {
   Dialog,
@@ -249,12 +249,16 @@ function PhaseCard({
   previousPhases = [],
   liveOptFor,
   className,
+  expanded = true,
+  onToggle,
 }: {
   phase: FrPhase;
   liveOpt: number | undefined;
   previousPhases?: FrPhase[];
   liveOptFor?: (phase: FrPhase) => number | undefined;
   className?: string;
+  expanded?: boolean;
+  onToggle?: () => void;
 }) {
   const [showPreviousDetail, setShowPreviousDetail] = useState(false);
   const previousByDate = useMemo(() => groupPhasesByDate(previousPhases), [previousPhases]);
@@ -270,7 +274,12 @@ function PhaseCard({
 
   return (
     <div className={cn("fr-dark-surface rounded-xl border border-border/70 bg-background/35 p-3", className)}>
-      <div className="flex items-start justify-between gap-3">
+      <button
+        type="button"
+        onClick={onToggle}
+        disabled={!onToggle}
+        className={cn("flex w-full items-start justify-between gap-3 text-left", onToggle && "cursor-pointer")}
+      >
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center gap-1 text-base font-semibold">
@@ -282,14 +291,17 @@ function PhaseCard({
           </div>
           <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{phase.option_symbol}</p>
         </div>
-        <div className="text-right">
-          <p className="text-[11px] uppercase text-muted-foreground">Phase MTM</p>
-          <p className={cn("text-base font-bold tabular-nums", pnlTone)}>Rs. {fmt(mtm)}</p>
+        <div className="flex shrink-0 items-start gap-2">
+          <div className="text-right">
+            <p className="text-[11px] uppercase text-muted-foreground">Phase MTM</p>
+            <p className={cn("text-base font-bold tabular-nums", pnlTone)}>Rs. {fmt(mtm)}</p>
+          </div>
+          {onToggle ? <span className="mt-1 rounded-md p-1 text-muted-foreground">{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</span> : null}
         </div>
-      </div>
+      </button>
 
-      <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 xl:grid-cols-3">
-        <Metric label="Phase MTM" value={`Rs. ${fmt(mtm)}`} sub={phase.status === "active" ? "live + booked" : "booked"} valueClassName={pnlTone} />
+      <div className={cn(expanded === false && "hidden")}>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
         <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} valueClassName="text-sky-400" />
         <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} icon={<Shield className="h-3 w-3" />} valueClassName={phase.status === "stopped" ? "text-red-400" : "text-amber-400"} />
         <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={targetQtyLabel(phase, completedTargets)} icon={<Target className="h-3 w-3" />} valueClassName="text-emerald-400" />
@@ -297,7 +309,7 @@ function PhaseCard({
       </div>
 
       {phase.targets.length > 0 && (
-        <div className="mt-3 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+        <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
           {phase.targets.map((t) => (
             <div
               key={t.seq}
@@ -366,6 +378,7 @@ function PhaseCard({
           </Dialog>
         </>
       )}
+      </div>
     </div>
   );
 }
@@ -379,6 +392,10 @@ function InstrumentPhaseTimeline({
   phases: FrPhase[];
   liveOptFor: (phase: FrPhase) => number | undefined;
 }) {
+  const [expandedPhaseIds, setExpandedPhaseIds] = useState<number[]>(() => {
+    const latest = [...phases].sort((a, b) => b.phase_no - a.phase_no || String(b.entry_time).localeCompare(String(a.entry_time)))[0];
+    return latest ? [latest.trade_id] : [];
+  });
   const orderedPhases = [...phases].sort((a, b) => b.phase_no - a.phase_no || String(b.entry_time).localeCompare(String(a.entry_time)));
   const latestPhase = orderedPhases[0];
   const totalMtm = phases.reduce((sum, phase) => sum + phaseMtm(phase, liveOptFor(phase)), 0);
@@ -394,6 +411,8 @@ function InstrumentPhaseTimeline({
       : latestPhase?.status === "stopped"
         ? "border-red-400/30 bg-red-400/10 text-red-300"
         : "border-sky-400/30 bg-sky-400/10 text-sky-300";
+  const allExpanded = phases.length > 0 && expandedPhaseIds.length === phases.length;
+  const togglePhase = (phaseId: number) => setExpandedPhaseIds((current) => current.includes(phaseId) ? current.filter((id) => id !== phaseId) : [...current, phaseId]);
 
   return (
     <section className="fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4">
@@ -418,16 +437,21 @@ function InstrumentPhaseTimeline({
         <Metric label="Net quantity" value={fmt(totalQuantity, 0)} sub="Across all phases" className="min-h-16 bg-card/55" />
       </aside>
 
-      <div className="mt-5 flex items-center gap-2 border-t border-border/60 pt-4 text-sm font-semibold">
-        <Target className="h-4 w-4 text-primary" /> All phases
-        <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{phases.length}</span>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-4">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Target className="h-4 w-4 text-primary" /> All phases
+          <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{phases.length}</span>
+        </div>
+        <button type="button" onClick={() => setExpandedPhaseIds(allExpanded ? [] : phases.map((phase) => phase.trade_id))} className="rounded-lg border border-border/70 px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground">
+          {allExpanded ? "Collapse all" : "Expand all"}
+        </button>
       </div>
 
       <div className="relative mt-3 space-y-3 border-l border-border/70 pl-4">
         {orderedPhases.map((phase) => (
           <div key={phase.trade_id} className="relative">
             <span className={cn("absolute -left-[22px] top-5 h-3 w-3 rounded-full border-2 border-background", phase.status === "stopped" ? "bg-red-500" : phase.status === "active" ? "bg-sky-500" : "bg-emerald-500")} />
-            <PhaseCard phase={phase} liveOpt={liveOptFor(phase)} className="bg-card/60" />
+            <PhaseCard phase={phase} liveOpt={liveOptFor(phase)} expanded={expandedPhaseIds.includes(phase.trade_id)} onToggle={() => togglePhase(phase.trade_id)} className="bg-card/60" />
           </div>
         ))}
       </div>
