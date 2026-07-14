@@ -2043,7 +2043,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                     }
 
                     List<string> expiryValues = ParseExpiryValues(body);
-                    List<string> strikeValues = ParseNumberArray(body, "strikes");
+                    List<string> strikeValues = NormalizeStrikeValues(ParseNumberArray(body, "strikes"));
                     List<string> templateValues = ParseTemplates(body);
                     List<string> underlyingValues = ParseStringArray(body, "underlyings");
                     double atmStrike = ParseDouble(ExtractJsonValue(body, "atm"), 0);
@@ -3156,7 +3156,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                 if (parsed > 0)
                     strikes.Add(parsed);
             }
+            strikes.Sort();
+            for (int index = strikes.Count - 1; index > 0; index--)
+            {
+                if (Math.Abs(strikes[index] - strikes[index - 1]) < 0.0001)
+                    strikes.RemoveAt(index);
+            }
             return strikes.ToArray();
+        }
+
+        private static List<string> NormalizeStrikeValues(List<string> values)
+        {
+            List<string> result = new List<string>();
+            foreach (double strike in ParseStrikeCache(values))
+                result.Add(FormatStrikeText(strike));
+            return result;
         }
 
         private static bool ContainsText(List<string> values, string selected)
@@ -3246,7 +3260,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             double manualStrike)
         {
             if (method == StrikeSelectionMethod.MANUAL)
-                return manualStrike > 0 ? manualStrike : SelectValidStrike(strikeValues, manualStrike, atm);
+                return SelectValidStrike(strikeValues, manualStrike, atm);
             if (method == StrikeSelectionMethod.OFFSET)
                 return SelectValidStrike(strikeValues, offsetStrike, atm);
             if (atm <= 0)
