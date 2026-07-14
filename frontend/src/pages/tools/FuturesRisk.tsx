@@ -247,7 +247,7 @@ export default function FuturesRisk() {
   }, [allTrades]);
   const demoOnly = () => toast.info("Demo data only - no broker action sent");
   return (
-    <div className="fr-grid-bg -m-2 space-y-5 rounded-2xl p-2 md:-m-4 md:p-4">
+    <div className="fr-grid-bg -m-2 space-y-5 rounded-2xl px-2 pb-2 pt-1 md:-m-4 md:px-4 md:pb-4 md:pt-2">
       {/* Header */}
       <div className="flex items-center justify-between gap-3">
         <div title="Execute in options — targets, stop-loss & trailing all driven by the underlying futures price.">

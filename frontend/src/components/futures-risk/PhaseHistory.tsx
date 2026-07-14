@@ -478,11 +478,9 @@ export function PhaseHistory({
         <div className="space-y-5">
           {dayGroups.map(({ dateKey, instruments }) => (
             <section key={dateKey} className="space-y-3">
-              <div className="flex flex-wrap items-end justify-between gap-2">
-                <div>
-                  <h3 className="text-lg font-bold tracking-tight">{displayDateLabel(dateKey)}</h3>
-                  <p className="text-sm text-muted-foreground">{instruments.length} instrument(s)</p>
-                </div>
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h3 className="text-lg font-bold tracking-tight">{displayDateLabel(dateKey)}</h3>
+                <p className="text-sm text-muted-foreground">{instruments.length} instrument(s)</p>
               </div>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {instruments.map(({ symbol, phases }) => {
