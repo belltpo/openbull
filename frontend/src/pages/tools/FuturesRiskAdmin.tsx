@@ -757,7 +757,12 @@ export default function FuturesRiskAdmin() {
     <div className="mx-auto w-full max-w-[1500px] space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-xl font-bold tracking-tight sm:text-2xl">Futures-Risk Admin</h1>
+          <h1
+            title="Configure option targets, stop-loss and trailing rules that are driven by the underlying futures price."
+            className="cursor-help text-xl font-bold tracking-tight sm:text-2xl"
+          >
+            Futures-Risk Admin
+          </h1>
           <p className="text-sm text-muted-foreground">
             Default quick-order setup, target template, stop-loss / trailing rules, and contract mapping.
           </p>

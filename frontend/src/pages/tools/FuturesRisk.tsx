@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Activity, History, LayoutGrid, Plus, Settings, TrendingUp, Wallet, Zap } from "lucide-react";
@@ -57,14 +57,14 @@ function HeroStat({
   accent?: string;
 }) {
   return (
-    <div className="fr-glass fr-edge-glow fr-dark-surface-strong relative overflow-hidden rounded-2xl p-4">
+    <div className="fr-glass fr-edge-glow fr-dark-surface-strong relative overflow-hidden rounded-2xl px-3 py-2.5">
       <div className="flex items-center justify-between">
-        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-        <span className={cn("flex h-7 w-7 items-center justify-center rounded-lg bg-foreground/[0.05]", accent)}>{icon}</span>
+        <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+        <span className={cn("flex h-6 w-6 items-center justify-center rounded-md bg-foreground/[0.05]", accent)}>{icon}</span>
       </div>
       <p
         className={cn(
-          "mt-2 text-2xl font-bold tabular-nums",
+          "mt-1 text-xl font-bold tabular-nums",
           tone === "good" && "text-emerald-600 dark:text-emerald-400",
           tone === "bad" && "text-red-600 dark:text-red-400",
         )}
@@ -108,8 +108,7 @@ export default function FuturesRisk() {
   const { user } = useAuth();
   const { mode } = useTradingMode();
   const qc = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
-  const demoEnabled = searchParams.get("demo") === "1";
+  const demoEnabled = false;
   const demoData = useMemo(() => makeFuturesRiskDemoData(), []);
   const [popupOpen, setPopupOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
@@ -247,37 +246,24 @@ export default function FuturesRisk() {
     return map;
   }, [allTrades]);
   const demoOnly = () => toast.info("Demo data only - no broker action sent");
-  const toggleDemo = () => {
-    const next = new URLSearchParams(searchParams);
-    if (demoEnabled) next.delete("demo");
-    else next.set("demo", "1");
-    setSearchParams(next);
-  };
-
   return (
     <div className="fr-grid-bg -m-2 space-y-5 rounded-2xl p-2 md:-m-4 md:p-4">
       {/* Header */}
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-2xl font-bold tracking-tight text-transparent">
+      <div className="flex items-center justify-between gap-3">
+        <div title="Execute in options — targets, stop-loss & trailing all driven by the underlying futures price.">
+          <h1 className="cursor-help bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-2xl font-bold tracking-tight text-transparent">
             Options
           </h1>
-          <p className="text-sm text-muted-foreground">
+          <p className="hidden">
             Execute in options — targets, stop-loss &amp; trailing all driven by the underlying futures price.
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant={demoEnabled ? "default" : "outline"} onClick={toggleDemo}>
-            {demoEnabled ? "Demo On" : "Demo Data"}
-          </Button>
           {user?.is_admin && (
             <Link to="/tools/futures-risk/admin" className={cn(buttonVariants({ variant: "outline" }))}>
               <Settings className="mr-1 h-4 w-4" /> Admin
             </Link>
           )}
-          <Button onClick={() => setPopupOpen(true)} className="shadow-lg shadow-primary/20">
-            <Plus className="mr-1 h-4 w-4" /> New Order
-          </Button>
         </div>
       </div>
 
@@ -323,6 +309,20 @@ export default function FuturesRisk() {
           <History className="h-4 w-4" /> Phase history
         </button>
         </div>
+        {tab === "positions" && (
+          <select
+            aria-label="Position filter"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+            className="h-9 rounded-lg border border-border/70 bg-background/80 px-3 text-sm font-semibold text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:bg-background/70"
+          >
+            {STATUS_FILTERS.map((status) => (
+              <option key={status} value={status}>
+                {STATUS_FILTER_LABELS[status]}
+              </option>
+            ))}
+          </select>
+        )}
         {tab === "phases" && (
           <div className="flex flex-wrap items-center gap-2">
             <PhaseHistoryFilterToolbar
@@ -337,24 +337,6 @@ export default function FuturesRisk() {
 
       {tab === "positions" ? (
         <>
-          {/* Filters */}
-          <div className="fr-glass fr-dark-surface flex w-full flex-col gap-2 rounded-xl border border-border/70 p-3 sm:w-fit sm:min-w-72">
-            <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Position Filter
-            </label>
-            <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-              className="h-10 rounded-lg border border-border/70 bg-background/80 px-3 text-sm font-semibold text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:bg-background/70"
-            >
-              {STATUS_FILTERS.map((s) => (
-                <option key={s} value={s}>
-                  {STATUS_FILTER_LABELS[s]}
-                </option>
-              ))}
-            </select>
-          </div>
-
           {trades.length === 0 ? (
             <div className="fr-glass flex flex-col items-center gap-3 rounded-2xl py-16 text-center">
               <p className="text-sm text-muted-foreground">No {statusFilter === "all" ? "" : statusFilter} positions yet.</p>
