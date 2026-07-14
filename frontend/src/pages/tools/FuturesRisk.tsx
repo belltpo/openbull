@@ -15,7 +15,7 @@ import { FuturesRiskOrderPopup } from "@/components/futures-risk/OrderPopup";
 import { PositionCard } from "@/components/futures-risk/PositionCard";
 import { ModifyPositionDialog } from "@/components/futures-risk/ModifyPositionDialog";
 import { ExitDialog } from "@/components/futures-risk/ExitDialog";
-import { PhaseHistory } from "@/components/futures-risk/PhaseHistory";
+import { PhaseHistory, PhaseHistoryFilterToolbar, type PhaseDateFilter } from "@/components/futures-risk/PhaseHistory";
 import { fmt, livePnl, totalPnl } from "@/components/futures-risk/frFormat";
 import { makeFuturesRiskDemoData } from "@/components/futures-risk/demoData";
 
@@ -114,6 +114,10 @@ export default function FuturesRisk() {
   const [popupOpen, setPopupOpen] = useState(false);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("active");
   const [tab, setTab] = useState<"positions" | "phases">("positions");
+  const today = localDateKey(new Date());
+  const [phaseFilter, setPhaseFilter] = useState<PhaseDateFilter>("today");
+  const [phaseCustomFrom, setPhaseCustomFrom] = useState(today);
+  const [phaseCustomTo, setPhaseCustomTo] = useState(today);
 
   const [modifyTarget, setModifyTarget] = useState<FrTrade | null>(null);
   const [exitTarget, setExitTarget] = useState<FrTrade | null>(null);
@@ -298,7 +302,8 @@ export default function FuturesRisk() {
       </div>
 
       {/* Tabs */}
-      <div className="flex items-center gap-1 rounded-xl bg-foreground/[0.04] p-1 w-fit">
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1 rounded-xl bg-foreground/[0.04] p-1">
         <button
           onClick={() => setTab("positions")}
           className={cn(
@@ -317,6 +322,17 @@ export default function FuturesRisk() {
         >
           <History className="h-4 w-4" /> Phase history
         </button>
+        </div>
+        {tab === "phases" && (
+          <div className="flex flex-wrap items-center gap-2">
+            <PhaseHistoryFilterToolbar
+              filter={phaseFilter}
+              customFrom={phaseCustomFrom}
+              customTo={phaseCustomTo}
+              onFilterChange={setPhaseFilter}
+            />
+          </div>
+        )}
       </div>
 
       {tab === "positions" ? (
@@ -437,7 +453,15 @@ export default function FuturesRisk() {
           )}
         </>
       ) : (
-        <PhaseHistory mode={mode} dataOverride={demoEnabled ? demoData.phases.filter((phase) => phase.mode === mode) : undefined} />
+        <PhaseHistory
+          mode={mode}
+          dataOverride={demoEnabled ? demoData.phases.filter((phase) => phase.mode === mode) : undefined}
+          filter={phaseFilter}
+          customFrom={phaseCustomFrom}
+          customTo={phaseCustomTo}
+          onCustomFromChange={setPhaseCustomFrom}
+          onCustomToChange={setPhaseCustomTo}
+        />
       )}
 
       {/* Dialogs */}

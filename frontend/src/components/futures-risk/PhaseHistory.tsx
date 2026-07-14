@@ -18,9 +18,9 @@ import { useMarketData } from "@/hooks/useMarketData";
 import type { FrPhase } from "@/types/futuresRisk";
 import { durationFmt, fmt, timeFmt } from "./frFormat";
 
-type DateFilter = "today" | "week" | "month" | "custom";
+export type PhaseDateFilter = "today" | "week" | "month" | "custom";
 
-const DATE_FILTER_LABELS: Record<DateFilter, string> = {
+const DATE_FILTER_LABELS: Record<PhaseDateFilter, string> = {
   today: "Today",
   week: "Week",
   month: "Month",
@@ -50,7 +50,7 @@ function displayDateLabel(dateKey: string): string {
   });
 }
 
-function rangeFor(filter: DateFilter, customFrom: string, customTo: string): { from: string; to: string } {
+function rangeFor(filter: PhaseDateFilter, customFrom: string, customTo: string): { from: string; to: string } {
   const now = new Date();
   const to = localDateKey(now);
   if (filter === "custom") return { from: customFrom, to: customTo || customFrom };
@@ -58,6 +58,40 @@ function rangeFor(filter: DateFilter, customFrom: string, customTo: string): { f
   const from = new Date(now);
   from.setDate(now.getDate() - (filter === "week" ? 6 : 29));
   return { from: localDateKey(from), to };
+}
+
+export function PhaseHistoryFilterToolbar({
+  filter,
+  customFrom,
+  customTo,
+  onFilterChange,
+}: {
+  filter: PhaseDateFilter;
+  customFrom: string;
+  customTo: string;
+  onFilterChange: (filter: PhaseDateFilter) => void;
+}) {
+  const range = rangeFor(filter, customFrom, customTo);
+  return (
+    <>
+      <select
+        aria-label="Phase history date range"
+        value={filter}
+        onChange={(event) => onFilterChange(event.target.value as PhaseDateFilter)}
+        className="h-9 w-28 rounded-lg border border-border/70 bg-background/80 px-2 text-sm font-medium text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:bg-background/70"
+      >
+        {(["today", "week", "month", "custom"] as PhaseDateFilter[]).map((value) => (
+          <option key={value} value={value}>{DATE_FILTER_LABELS[value]}</option>
+        ))}
+      </select>
+      <div className="flex h-9 items-center gap-1 rounded-lg border border-border/60 bg-background/45 px-2 text-xs tabular-nums text-muted-foreground">
+        <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+        <span>{range.from}</span>
+        <span>to</span>
+        <span>{range.to}</span>
+      </div>
+    </>
+  );
 }
 
 function phaseOpenPnl(p: FrPhase, liveOpt: number | undefined): number {
@@ -340,16 +374,21 @@ export function PhaseHistory({
   underlying,
   mode,
   dataOverride,
+  filter,
+  customFrom,
+  customTo,
+  onCustomFromChange,
+  onCustomToChange,
 }: {
   underlying?: string;
   mode?: "live" | "sandbox";
   dataOverride?: FrPhase[];
+  filter: PhaseDateFilter;
+  customFrom: string;
+  customTo: string;
+  onCustomFromChange: (value: string) => void;
+  onCustomToChange: (value: string) => void;
 }) {
-  const [filter, setFilter] = useState<DateFilter>("today");
-  const today = localDateKey(new Date());
-  const [customFrom, setCustomFrom] = useState(today);
-  const [customTo, setCustomTo] = useState(today);
-
   const { data } = useQuery({
     queryKey: ["fr-phases", mode ?? "current", underlying ?? "all"],
     queryFn: () => listPhases(underlying, mode),
@@ -415,49 +454,23 @@ export function PhaseHistory({
 
   return (
     <div className="space-y-4">
-      <div className="fr-glass fr-dark-surface flex w-full flex-col gap-3 rounded-xl border border-border/70 p-3 lg:w-fit lg:min-w-[22rem]">
-        <div className="grid gap-2 sm:grid-cols-[minmax(12rem,1fr)_auto] sm:items-end">
-          <div className="space-y-1.5">
-            <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-              Phase History Filter
-            </label>
-            <select
-              value={filter}
-              onChange={(event) => setFilter(event.target.value as DateFilter)}
-              className="h-10 w-full rounded-lg border border-border/70 bg-background/80 px-3 text-sm font-semibold text-foreground outline-none transition-colors focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:bg-background/70"
-            >
-              {(["today", "week", "month", "custom"] as DateFilter[]).map((f) => (
-                <option key={f} value={f}>
-                  {DATE_FILTER_LABELS[f]}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center gap-1 rounded-lg border border-border/60 bg-background/45 px-3 py-2 text-xs text-muted-foreground">
-            <CalendarDays className="h-4 w-4" />
-            <span>{range.from}</span>
-            <span>to</span>
-            <span>{range.to}</span>
-          </div>
+      {filter === "custom" && (
+        <div className="fr-glass fr-dark-surface grid w-full gap-2 rounded-xl border border-border/70 p-3 sm:w-fit sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+          <input
+            type="date"
+            value={customFrom}
+            onChange={(event) => onCustomFromChange(event.target.value)}
+            className="h-9 rounded-lg border border-border/70 bg-background/80 px-3 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:[color-scheme:dark]"
+          />
+          <span className="text-center text-sm text-muted-foreground">to</span>
+          <input
+            type="date"
+            value={customTo}
+            onChange={(event) => onCustomToChange(event.target.value)}
+            className="h-9 rounded-lg border border-border/70 bg-background/80 px-3 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:[color-scheme:dark]"
+          />
         </div>
-        {filter === "custom" && (
-          <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
-            <input
-              type="date"
-              value={customFrom}
-              onChange={(e) => setCustomFrom(e.target.value)}
-              className="h-10 rounded-lg border border-border/70 bg-background/80 px-3 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:[color-scheme:dark]"
-            />
-            <span className="text-center text-sm text-muted-foreground">to</span>
-            <input
-              type="date"
-              value={customTo}
-              onChange={(e) => setCustomTo(e.target.value)}
-              className="h-10 rounded-lg border border-border/70 bg-background/80 px-3 text-sm outline-none focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/30 dark:[color-scheme:dark]"
-            />
-          </div>
-        )}
-      </div>
+      )}
 
       {dayGroups.length === 0 ? (
         <p className="text-sm text-muted-foreground">No phase history for the selected date range.</p>
