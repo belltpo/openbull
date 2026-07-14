@@ -490,27 +490,39 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Child = stack
             };
 
-            TextBlock grip = new TextBlock
+            Border headerShell = new Border
             {
-                Text = "...",
-                Foreground = new SolidColorBrush(Color.FromRgb(130, 130, 130)),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                FontSize = 10,
-                Margin = new Thickness(0, -5, 0, 0)
+                Height = 30,
+                Margin = new Thickness(0, -1, 0, 7),
+                CornerRadius = new CornerRadius(7),
+                Background = new SolidColorBrush(Color.FromRgb(33, 33, 33)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(72, 72, 72)),
+                BorderThickness = new Thickness(1)
             };
-            grip.MouseLeftButtonDown += StartDrag;
-            grip.MouseMove += DragMove;
-            grip.MouseLeftButtonUp += StopDrag;
-            stack.Children.Add(grip);
-
-            Grid header = new Grid { Margin = new Thickness(0, 0, 0, 6) };
+            Grid header = new Grid();
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             header.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            header.MouseLeftButtonDown += StartDrag;
-            header.MouseMove += DragMove;
-            header.MouseLeftButtonUp += StopDrag;
 
+            Border dragArea = new Border
+            {
+                Background = Brushes.Transparent,
+                Cursor = Cursors.SizeAll,
+                Padding = new Thickness(8, 0, 4, 0),
+                ToolTip = "Drag to move OpenBull Quick Order"
+            };
+            dragArea.MouseLeftButtonDown += StartDrag;
+            dragArea.MouseMove += DragMove;
+            dragArea.MouseLeftButtonUp += StopDrag;
+            StackPanel dragContent = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            TextBlock dragGlyph = new TextBlock
+            {
+                Text = "\u2630",
+                Foreground = new SolidColorBrush(Color.FromRgb(115, 175, 255)),
+                FontSize = 13,
+                Margin = new Thickness(0, 0, 7, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
             TextBlock title = new TextBlock
             {
                 Text = "OB Quick",
@@ -519,19 +531,33 @@ namespace NinjaTrader.NinjaScript.Indicators
                 FontSize = 12,
                 VerticalAlignment = VerticalAlignment.Center
             };
-            Grid.SetColumn(title, 0);
-            header.Children.Add(title);
+            TextBlock dragHint = new TextBlock
+            {
+                Text = "DRAG",
+                Foreground = new SolidColorBrush(Color.FromRgb(145, 145, 145)),
+                FontSize = 8,
+                FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(8, 1, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            dragContent.Children.Add(dragGlyph);
+            dragContent.Children.Add(title);
+            dragContent.Children.Add(dragHint);
+            dragArea.Child = dragContent;
+            Grid.SetColumn(dragArea, 0);
+            header.Children.Add(dragArea);
 
-            Button settingsButton = IconButton("\u2699");
+            Button settingsButton = HeaderIconButton("\u2699", "Open Quick Settings");
             settingsButton.Click += (s, e) => ToggleSettings();
             Grid.SetColumn(settingsButton, 1);
             header.Children.Add(settingsButton);
 
-            Button closeButton = IconButton("X");
+            Button closeButton = HeaderIconButton("X", "Minimize OpenBull Quick Order");
             closeButton.Click += (s, e) => CollapseQuickPopup();
             Grid.SetColumn(closeButton, 2);
             header.Children.Add(closeButton);
-            stack.Children.Add(header);
+            headerShell.Child = header;
+            stack.Children.Add(headerShell);
 
             stack.Children.Add(BuildLiveBox());
             stack.Children.Add(BuildButtonGrid());
@@ -843,6 +869,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                 FontSize = 12
             };
             ApplyRoundedButton(button, 7);
+            return button;
+        }
+
+        private Button HeaderIconButton(string text, string tooltip)
+        {
+            Button button = new Button
+            {
+                Content = text,
+                ToolTip = tooltip,
+                Width = 25,
+                Height = 24,
+                Margin = new Thickness(2, 2, 2, 2),
+                Padding = new Thickness(0),
+                Foreground = new SolidColorBrush(Color.FromRgb(230, 230, 230)),
+                Background = new SolidColorBrush(Color.FromRgb(46, 46, 46)),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(86, 86, 86)),
+                BorderThickness = new Thickness(1),
+                FontSize = 12
+            };
+            ApplyRoundedButton(button, 5);
             return button;
         }
 
