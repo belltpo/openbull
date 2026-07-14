@@ -309,7 +309,16 @@ function PhaseCard({
       </div>
 
       {phase.targets.length > 0 && (
-        <div className="mt-3 grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+        <div
+          className={cn(
+            "mt-3 grid gap-1.5",
+            phase.targets.length === 1
+              ? "grid-cols-1"
+              : phase.targets.length === 2
+                ? "grid-cols-2"
+                : "grid-cols-2 sm:grid-cols-4",
+          )}
+        >
           {phase.targets.map((t) => (
             <div
               key={t.seq}
@@ -324,7 +333,7 @@ function PhaseCard({
                 <div className="min-w-0">
                   <div className="font-semibold">T{t.seq}</div>
                   <div className="mt-0.5 tabular-nums">{fmt(t.trigger_price, 0)}</div>
-                  <div className="mt-0.5 text-[11px] opacity-80">{fmt(t.points, 0)} pts / {fmt(t.exit_pct, 0)}%</div>
+                  <div className="mt-0.5 whitespace-nowrap text-[10px] opacity-80">{fmt(t.points, 0)} pts / {fmt(t.exit_pct, 0)}%</div>
                 </div>
                 <div className="shrink-0 text-right">
                   <div>{t.status}</div>
