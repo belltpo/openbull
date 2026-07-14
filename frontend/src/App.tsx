@@ -46,6 +46,7 @@ const StraddlesStrangleChain = lazy(
 );
 const FuturesRisk = lazy(() => import("@/pages/tools/FuturesRisk"));
 const FuturesRiskAdmin = lazy(() => import("@/pages/tools/FuturesRiskAdmin"));
+const FuturesRiskCardDemo = lazy(() => import("@/pages/tools/FuturesRiskCardDemo"));
 const StrategyList = lazy(() => import("@/pages/strategy/List"));
 const StrategyWizard = lazy(() => import("@/pages/strategy/Wizard"));
 const StrategyDetail = lazy(() => import("@/pages/strategy/Detail"));
@@ -358,6 +359,16 @@ function App() {
                     <ProtectedRoute requiresBroker>
                       <Suspense fallback={<ToolFallback />}>
                         <FuturesRiskAdmin />
+                      </Suspense>
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/tools/futures-risk/card-demo"
+                  element={
+                    <ProtectedRoute requiresBroker>
+                      <Suspense fallback={<ToolFallback />}>
+                        <FuturesRiskCardDemo />
                       </Suspense>
                     </ProtectedRoute>
                   }
