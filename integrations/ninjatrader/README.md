@@ -6,6 +6,14 @@ compact chart overlay for Futures-Risk quick orders from OpenBull.
 The standalone live-data monitor is documented separately in
 [`addons/README.md`](addons/README.md). It has no Quick Order dependency.
 
+The separation is enforced by `test-integration-isolation.ps1`. Run it after
+any NinjaTrader integration change:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\test-integration-isolation.ps1
+powershell -ExecutionPolicy Bypass -File .\test-quick-order-symbol-mapping.ps1
+```
+
 ## Flow
 
 `NinjaTrader button -> OpenBull API key endpoint -> Futures-Risk quick-order service -> broker`
@@ -31,15 +39,10 @@ POST /api/v1/futures-risk/quick-order/settings
 POST /api/v1/futures-risk/quick-order/settings/delete
 ```
 
-For live ticks the indicator connects to:
-
-```text
-ws://127.0.0.1:8765
-```
-
-It authenticates with the same OpenBull API key and subscribes to the resolved
-futures, CE, PE, and active-position option contracts. OpenBull pools duplicate
-symbols across charts before sending subscriptions upstream to Dhan.
+Quick Order remains independent from the standalone live-data AddOn. It uses
+only the OpenBull HTTP API on port 8000. The backend keeps both the futures and
+option legs in its centralized market-data cache whenever the broker stream is
+available, and the preview endpoint uses its shared/cache-backed quote fallback.
 
 Required auth:
 
@@ -58,19 +61,25 @@ X-API-KEY header
 1. In OpenBull, create/copy your API key from the API key page.
 2. Keep OpenBull backend running, normally at `http://127.0.0.1:8000`.
 3. In NinjaTrader 8, open `New > NinjaScript Editor`.
-4. Copy `OpenBullQuickOrderIndicator.cs` into NinjaTrader's
-   `bin/Custom/Indicators` folder and `addons/OpenBullLiveDataClient.cs` into
-   `bin/Custom/AddOns`.
-5. Compile. NinjaTrader must be allowed to use `System.Net.WebSockets`.
+4. Copy the Quick Order files to these locations:
+
+   ```text
+   OpenBullQuickOrderIndicator.cs  -> Documents\NinjaTrader 8\bin\Custom\Indicators
+   OpenBullQuickOrderSymbolMapper.cs -> Documents\NinjaTrader 8\bin\Custom\Indicators
+   OpenBullFuturesRiskBridge.cs    -> Documents\NinjaTrader 8\bin\Custom\AddOns
+   Bell_LongEntryTool.cs           -> Documents\NinjaTrader 8\bin\Custom\DrawingTools
+   Bell_ShortEntryTool.cs          -> Documents\NinjaTrader 8\bin\Custom\DrawingTools
+   ```
+
+5. Compile from the NinjaScript Editor.
 6. Restart the OpenBull backend after pulling this integration, otherwise NT
    will receive `{"detail":"Not Found"}` for the new API routes.
 7. Add `OpenBull Quick Order` to any chart.
 8. Set:
    - `OpenBull URL`
    - `API Key`
-   - `Use Live WebSocket = true`
-   - `Live WebSocket URL = ws://127.0.0.1:8765`
-   - `Underlying`
+   - `Auto-detect from chart = true` (default)
+   - `Underlying` only when manually overriding chart detection
    - `Expiry`
    - `CE Strike`
    - `PE Strike`
@@ -100,12 +109,13 @@ to the OpenBull target template id you want this chart to use.
 - `Delete` removes the selected contract quick-order setup from OpenBull.
 - While the settings card is open, dropdown/default values are refreshed from
   OpenBull about every 10 seconds.
-- Futures, CE, and PE LTP values stream from OpenBull over WebSocket. REST
-  preview runs every five seconds only to resolve contracts and refresh the
-  aggregate MTM fallback. It uses OpenBull's cache and does not repeatedly hit
-  Dhan when the stream is healthy.
-- The widget shows a reconnecting/error status when the stream is unavailable;
-  it does not treat stale prices as fresh data.
+- Each indicator instance auto-detects its own chart master instrument. For
+  example, `NIFTY`, `BANKNIFTY_I`, and `CRUDEOIL20JUL26FUT` map independently
+  to `NIFTY`, `BANKNIFTY`, and `CRUDEOIL`.
+- Selecting a different instrument manually in Quick Settings disables
+  auto-detection for that indicator instance, so the override survives reload.
+- Futures, CE, PE, and MTM values refresh through OpenBull's cache-backed live
+  preview. A missing quote is never treated as a zero premium.
 - After a successful quick order, the indicator fetches the created Futures-Risk
   trade and creates/updates a tagged `Bell_LongEntryTool` or
   `Bell_ShortEntryTool` on the chart.

@@ -114,6 +114,7 @@ namespace NinjaTrader.NinjaScript.Indicators
         private readonly Dictionary<ComboBox, TextBlock> comboDisplays = new Dictionary<ComboBox, TextBlock>();
         private readonly Dictionary<ComboBox, Grid> comboRows = new Dictionary<ComboBox, Grid>();
         private readonly Dictionary<StrikeSelectionMethod, RadioButton> strikeMethodButtons = new Dictionary<StrikeSelectionMethod, RadioButton>();
+        private readonly string strikeRadioGroupName = "OpenBullStrikeSelection_" + Guid.NewGuid().ToString("N");
 
         public override string DisplayName
         {
@@ -135,6 +136,7 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 OpenBullUrl = "http://127.0.0.1:8000";
                 ApiKey = "";
+                AutoDetectUnderlying = true;
                 Underlying = "NIFTY";
                 UnderlyingExchange = "NSE_INDEX";
                 Expiry = "07JUL26";
@@ -167,6 +169,10 @@ namespace NinjaTrader.NinjaScript.Indicators
                 LinkedTradeRemovedByUser = false;
                 NinjaTrader.NinjaScript.OpenBullFuturesRiskBridge.Configure(OpenBullUrl, ApiKey);
             }
+            else if (State == State.DataLoaded)
+            {
+                ApplyChartUnderlying();
+            }
             else if (State == State.Historical)
             {
                 AddChartControls();
@@ -181,6 +187,29 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             // Prices shown in the widget come from OpenBull, not the NT chart instrument.
             QueueIndicatorSettingsSync();
+        }
+
+        private void ApplyChartUnderlying()
+        {
+            if (!AutoDetectUnderlying || Instrument == null)
+                return;
+            string masterName = "";
+            string fullName = "";
+            try
+            {
+                fullName = Instrument.FullName ?? "";
+                if (Instrument.MasterInstrument != null)
+                    masterName = Instrument.MasterInstrument.Name ?? "";
+            }
+            catch
+            {
+                return;
+            }
+            string inferred = OpenBullQuickOrderSymbolMapper.InferUnderlying(masterName, fullName, cachedUnderlyings);
+            if (string.IsNullOrWhiteSpace(inferred))
+                return;
+            Underlying = inferred;
+            UnderlyingExchange = OpenBullQuickOrderSymbolMapper.InferExchange(inferred);
         }
 
         protected override void OnRender(ChartControl chartControl, ChartScale chartScale)
@@ -889,6 +918,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }));
             instrumentCombo = ComboRow(stack, "Instrument", value =>
             {
+                AutoDetectUnderlying = false;
                 Underlying = value.ToUpperInvariant();
                 futuresLtp = 0;
                 ceLtp = 0;
@@ -1233,7 +1263,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     Content = method == StrikeSelectionMethod.ITM_OTM ? "ITM / OTM" : method.ToString(),
                     Tag = method,
-                    GroupName = "OpenBullStrikeSelection",
+                    GroupName = strikeRadioGroupName,
                     Margin = new Thickness(0, 0, 7, 0),
                     Foreground = Brushes.White,
                     FontSize = 9,
@@ -3693,6 +3723,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "API Key", GroupName = "OpenBull", Order = 2)]
         public string ApiKey { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Auto-detect from chart", GroupName = "Contract", Order = 9)]
+        public bool AutoDetectUnderlying { get; set; }
 
         [NinjaScriptProperty]
         [TypeConverter(typeof(UnderlyingListConverter))]

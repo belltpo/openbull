@@ -52,6 +52,24 @@ def ensure_streaming(symbol: str, exchange: str) -> None:
         logger.debug("ensure_streaming failed for %s/%s", symbol, exchange, exc_info=True)
 
 
+def ensure_symbols_streaming(symbols: list[dict[str, str]]) -> None:
+    """Best-effort subscription for every distinct Futures-Risk leg.
+
+    A position's rupee P&L is driven by its option premium while target/SL
+    evaluation is driven by its futures contract.  Both legs therefore need
+    to stay in MarketDataCache; subscribing only the future leaves MTM static.
+    """
+    seen: set[tuple[str, str]] = set()
+    for item in symbols or []:
+        symbol = str(item.get("symbol") or "").strip()
+        exchange = str(item.get("exchange") or "").strip()
+        key = (symbol.upper(), exchange.upper())
+        if not symbol or not exchange or key in seen:
+            continue
+        seen.add(key)
+        ensure_streaming(symbol, exchange)
+
+
 # ---------------------------------------------------------------------------
 # Price source
 # ---------------------------------------------------------------------------
@@ -175,6 +193,14 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
             return
         user_id = t.user_id
         fut_symbol, fut_exchange = t.futures_symbol, t.futures_exchange
+        option_symbol, option_exchange = t.option_symbol, t.option_exchange
+
+    # The adapter may be created after application startup (on the first WS
+    # client authentication), so refresh this idempotent request each pass.
+    ensure_symbols_streaming([
+        {"symbol": fut_symbol, "exchange": fut_exchange},
+        {"symbol": option_symbol, "exchange": option_exchange},
+    ])
 
     ctx = ctx_cache.get(user_id, "missing")
     if ctx == "missing":

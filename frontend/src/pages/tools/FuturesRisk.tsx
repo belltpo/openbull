@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -125,9 +125,12 @@ export default function FuturesRisk() {
     refetchInterval: 4000,
     enabled: !demoEnabled,
   });
-  const trades = demoEnabled
-    ? demoData.trades.filter((trade) => trade.mode === mode && (statusFilter === "all" || trade.status === statusFilter))
-    : tradesQuery.data ?? [];
+  const trades = useMemo(
+    () => demoEnabled
+      ? demoData.trades.filter((trade) => trade.mode === mode && (statusFilter === "all" || trade.status === statusFilter))
+      : tradesQuery.data ?? [],
+    [demoData.trades, demoEnabled, mode, statusFilter, tradesQuery.data],
+  );
 
   const allTradesQuery = useQuery({
     queryKey: ["fr-trades", mode, "all"],
@@ -135,7 +138,12 @@ export default function FuturesRisk() {
     refetchInterval: 4000,
     enabled: !demoEnabled,
   });
-  const allTrades = demoEnabled ? demoData.trades.filter((trade) => trade.mode === mode) : allTradesQuery.data ?? (statusFilter === "all" ? trades : []);
+  const allTrades = useMemo(
+    () => demoEnabled
+      ? demoData.trades.filter((trade) => trade.mode === mode)
+      : allTradesQuery.data ?? (statusFilter === "all" ? trades : []),
+    [allTradesQuery.data, demoData.trades, demoEnabled, mode, statusFilter, trades],
+  );
 
   // Subscribe to every active trade's futures + option symbol.
   const subscriptionSymbols = useMemo(() => {
@@ -163,8 +171,11 @@ export default function FuturesRisk() {
     mode: "LTP",
     enabled: !demoEnabled && subscriptionSymbols.length > 0,
   });
-  const ltpOf = (symbol: string, exchange: string): number | undefined =>
-    demoEnabled ? demoData.prices.get(`${exchange}:${symbol}`) : tickMap.get(`${exchange}:${symbol}`)?.data.ltp;
+  const ltpOf = useCallback(
+    (symbol: string, exchange: string): number | undefined =>
+      demoEnabled ? demoData.prices.get(`${exchange}:${symbol}`) : tickMap.get(`${exchange}:${symbol}`)?.data.ltp,
+    [demoData.prices, demoEnabled, tickMap],
+  );
 
   const placeMutation = useMutation({
     mutationFn: (id: number) => placeDraft(id),
@@ -205,7 +216,7 @@ export default function FuturesRisk() {
       todayTrades
         .filter((t) => t.status === "active")
         .reduce((acc, t) => acc + (livePnl(t, ltpOf(t.option_symbol, t.option_exchange)) ?? 0), 0),
-    [todayTrades, tickMap],
+    [ltpOf, todayTrades],
   );
   const realizedTotal = useMemo(() => todayTrades.reduce((a, t) => a + (t.realized_pnl ?? 0), 0), [todayTrades]);
   const positionGroups = useMemo(() => {
@@ -365,7 +376,7 @@ export default function FuturesRisk() {
                       <div className="min-w-0">
                         <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
                         <p className="mt-1 text-sm text-muted-foreground">
-                          Showing latest of {dayInstrumentTrades.length} position(s) on this day
+                          Showing {symbolTrades.length} card(s) · {dayInstrumentTrades.length} position(s) on this day
                         </p>
                       </div>
                     </div>
@@ -384,13 +395,15 @@ export default function FuturesRisk() {
 
                     <div className="grid grid-cols-1 gap-3">
                       <div className="grid min-w-0 grid-cols-1 gap-3">
-                        {latestTrade && (
+                        {symbolTrades.map((trade) => (
                           <PositionCard
-                            key={latestTrade.id}
-                            trade={latestTrade}
-                            liveFut={ltpOf(latestTrade.futures_symbol, latestTrade.futures_exchange)}
-                            liveOpt={ltpOf(latestTrade.option_symbol, latestTrade.option_exchange)}
-                            previousTrades={phaseTrades.filter((item) => item.phase_no > 0 && item.phase_no < latestTrade.phase_no)}
+                            key={trade.id}
+                            trade={trade}
+                            liveFut={ltpOf(trade.futures_symbol, trade.futures_exchange)}
+                            liveOpt={ltpOf(trade.option_symbol, trade.option_exchange)}
+                            previousTrades={phaseTrades.filter(
+                              (item) => item.id !== trade.id && item.phase_no > 0 && item.phase_no < trade.phase_no,
+                            )}
                             liveOptFor={(item) => ltpOf(item.option_symbol, item.option_exchange)}
                             onModify={(tr) => (demoEnabled ? demoOnly() : setModifyTarget(tr))}
                             enableRemoteDetail={!demoEnabled}
@@ -414,7 +427,7 @@ export default function FuturesRisk() {
                             onDelete={(id) => (demoEnabled ? demoOnly() : deleteMutation.mutate(id))}
                             busy={placeMutation.isPending || deleteMutation.isPending}
                           />
-                        )}
+                        ))}
                       </div>
                     </div>
                   </section>

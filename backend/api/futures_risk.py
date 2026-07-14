@@ -551,6 +551,47 @@ def _stream_symbols(instruments: list[dict[str, Any]]) -> list[dict[str, str]]:
     return result
 
 
+def _calculate_session_mtm(
+    session_trades: list[dict[str, Any]],
+    quotes_by_instrument: dict[tuple[str, str], float | int | None],
+) -> dict[str, float | int]:
+    """Calculate independent MTM across every trade in the instrument set.
+
+    Quotes are keyed by (symbol, exchange), not symbol alone, so contracts on
+    different exchanges cannot overwrite one another. Missing/zero quotes are
+    ignored instead of being treated as a real zero premium.
+    """
+    booked_pnl = 0.0
+    open_pnl = 0.0
+    active_count = 0
+    for trade in session_trades:
+        booked_pnl += float(trade.get("realized_pnl") or 0)
+        if trade.get("status") != "active":
+            continue
+        active_count += 1
+        key = _quote_key(
+            str(trade.get("option_symbol") or ""),
+            str(trade.get("option_exchange") or ""),
+        )
+        try:
+            live_opt = float(quotes_by_instrument.get(key) or 0)
+        except (TypeError, ValueError):
+            live_opt = 0.0
+        if live_opt <= 0:
+            continue
+        entry_opt = float(trade.get("entry_option_price") or 0)
+        raw_pnl_qty = trade.get("pnl_qty")
+        remaining_qty = int(raw_pnl_qty if raw_pnl_qty is not None else (trade.get("remaining_qty") or 0))
+        direction = 1 if trade.get("side") == "BUY" else -1
+        open_pnl += (live_opt - entry_opt) * remaining_qty * direction
+    return {
+        "booked": round(booked_pnl, 2),
+        "open": round(open_pnl, 2),
+        "total": round(booked_pnl + open_pnl, 2),
+        "active_count": active_count,
+    }
+
+
 def _quote_payload(symbol: str, exchange: str, auth_token: str, broker_name: str, config: dict) -> dict[str, Any]:
     payloads = _quote_payloads(
         [{"symbol": symbol, "exchange": exchange}],
@@ -659,6 +700,17 @@ async def api_futures_risk_quick_order_preview(request: Request):
             if option_symbol and option_exchange:
                 instruments.append({"symbol": option_symbol, "exchange": option_exchange})
 
+        # Once a broker streaming adapter exists, keep every panel contract and
+        # every active option leg in the centralized cache. This is idempotent
+        # and prevents N simultaneous NinjaTrader panels from causing N REST
+        # quote requests on every refresh.
+        try:
+            from backend.futures_risk.engine import ensure_symbols_streaming
+
+            ensure_symbols_streaming(_stream_symbols(instruments))
+        except Exception:
+            logger.debug("Futures-Risk preview stream subscription skipped", exc_info=True)
+
         quote_map = _quote_payloads(instruments, auth_token, broker_name, config)
         broker_error = _broker_quote_error(quote_map)
         if broker_error:
@@ -673,34 +725,12 @@ async def api_futures_risk_quick_order_preview(request: Request):
             # preview polling to the pooled WebSocket stream.
             "stream_symbols": _stream_symbols(instruments),
         }
-        quotes_by_symbol = {
-            (data["ce"] or {}).get("symbol"): (data["ce"] or {}).get("ltp"),
-            (data["pe"] or {}).get("symbol"): (data["pe"] or {}).get("ltp"),
+        quotes_by_instrument = {
+            key: quote.get("ltp")
+            for key, quote in quote_map.items()
+            if isinstance(quote, dict)
         }
-        for key, quote in quote_map.items():
-            quotes_by_symbol.setdefault(quote.get("symbol"), quote.get("ltp"))
-
-        booked_pnl = 0.0
-        open_pnl = 0.0
-        active_count = 0
-        for trade in session_trades:
-            booked_pnl += float(trade.get("realized_pnl") or 0)
-            if trade.get("status") != "active":
-                continue
-            active_count += 1
-            live_opt = quotes_by_symbol.get(trade.get("option_symbol"))
-            if live_opt is None:
-                continue
-            entry_opt = float(trade.get("entry_option_price") or 0)
-            remaining_qty = int(trade.get("pnl_qty") or trade.get("remaining_qty") or 0)
-            direction = 1 if trade.get("side") == "BUY" else -1
-            open_pnl += (float(live_opt) - entry_opt) * remaining_qty * direction
-        data["mtm"] = {
-            "booked": round(booked_pnl, 2),
-            "open": round(open_pnl, 2),
-            "total": round(booked_pnl + open_pnl, 2),
-            "active_count": active_count,
-        }
+        data["mtm"] = _calculate_session_mtm(session_trades, quotes_by_instrument)
     except FrError as exc:
         return JSONResponse(content={"status": "error", "message": exc.message}, status_code=exc.status)
     except Exception:

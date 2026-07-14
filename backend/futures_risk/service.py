@@ -1471,7 +1471,10 @@ def place_trade(
     try:
         from backend.futures_risk import engine as fr_engine
 
-        fr_engine.ensure_streaming(plan["fut_symbol"], plan["fut_exchange"])
+        fr_engine.ensure_symbols_streaming([
+            {"symbol": plan["fut_symbol"], "exchange": plan["fut_exchange"]},
+            {"symbol": plan["option_symbol"], "exchange": plan["option_exchange"]},
+        ])
     except Exception:
         logger.debug("ensure_streaming skipped", exc_info=True)
 
@@ -1659,7 +1662,10 @@ def place_draft(
     try:
         from backend.futures_risk import engine as fr_engine
 
-        fr_engine.ensure_streaming(plan["fut_symbol"], plan["fut_exchange"])
+        fr_engine.ensure_symbols_streaming([
+            {"symbol": plan["fut_symbol"], "exchange": plan["fut_exchange"]},
+            {"symbol": plan["option_symbol"], "exchange": plan["option_exchange"]},
+        ])
     except Exception:
         logger.debug("ensure_streaming skipped", exc_info=True)
 
