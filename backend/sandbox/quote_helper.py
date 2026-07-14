@@ -148,10 +148,16 @@ def _resolve_broker_for_user(user_id: int) -> tuple[str, str, dict] | None:
         config: dict = {}
         if cfg_row is not None:
             try:
+                extra_config = cfg_row.extra_config or {}
                 config = {
                     "api_key": decrypt_value(cfg_row.api_key),
                     "api_secret": decrypt_value(cfg_row.api_secret),
                     "redirect_url": cfg_row.redirect_url,
+                    # Dhan requires this value as the ``client-id`` header for
+                    # market-data quotes.  Sandbox MARKET orders call this
+                    # helper directly, so preserve it just as the live-order
+                    # and WebSocket contexts do.
+                    "client_id": extra_config.get("client_id") if isinstance(extra_config, dict) else None,
                 }
             except Exception:
                 logger.exception("quote_helper: failed to decrypt broker_config for user %d", user_id)
