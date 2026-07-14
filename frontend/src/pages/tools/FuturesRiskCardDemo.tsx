@@ -22,6 +22,16 @@ type DemoPhase = {
   targets: Array<{ label: string; price: number; state: "hit" | "pending" | "skipped" }>;
 };
 
+type DemoInstrument = {
+  symbol: string;
+  mtm: string;
+  booked: string;
+  targets: string;
+  quantity: string;
+  status: "Completed" | "Stopped" | "Active";
+  phases: DemoPhase[];
+};
+
 const DEMO_PHASES: DemoPhase[] = [
   {
     no: 3,
@@ -85,21 +95,78 @@ const DEMO_PHASES: DemoPhase[] = [
   },
 ];
 
-const DEMO_INSTRUMENTS = [
-  { symbol: "NIFTY", mtm: "Rs. 201.50", booked: "Rs. 201.50", targets: "3/9", quantity: "780" },
-  { symbol: "BANKNIFTY", mtm: "Rs. 428.75", booked: "Rs. 428.75", targets: "5/9", quantity: "450" },
-  { symbol: "FINNIFTY", mtm: "Rs. -64.00", booked: "Rs. -64.00", targets: "1/9", quantity: "520" },
+const DEMO_INSTRUMENTS: DemoInstrument[] = [
+  {
+    symbol: "NIFTY", mtm: "Rs. 201.50", booked: "Rs. 201.50", targets: "3/9", quantity: "780", status: "Completed", phases: DEMO_PHASES,
+  },
+  {
+    symbol: "BANKNIFTY", mtm: "Rs. 428.75", booked: "Rs. 186.25", targets: "5/7", quantity: "450", status: "Active", phases: [
+      {
+        no: 2, status: "active", option: "BANKNIFTY21JUL2654100CE", side: "BUY", lots: 3, quantity: 90, mtm: 242.5,
+        entry: 54080, optionEntry: 286.5, stoploss: 54020, duration: "18m 24s", time: "14:51:36 → open", targetCount: 2,
+        targets: [
+          { label: "T1", price: 54120, state: "hit" }, { label: "T2", price: 54160, state: "hit" },
+          { label: "T3", price: 54200, state: "pending" }, { label: "T4", price: 54240, state: "pending" },
+        ],
+      },
+      {
+        no: 1, status: "completed", option: "BANKNIFTY21JUL2654000PE", side: "SELL", lots: 3, quantity: 90, mtm: 186.25,
+        entry: 53965, optionEntry: 214.25, stoploss: 54025, duration: "11m 08s", time: "14:18:07 → 14:29:15", targetCount: 3,
+        targets: [
+          { label: "T1", price: 53935, state: "hit" }, { label: "T2", price: 53905, state: "hit" }, { label: "T3", price: 53875, state: "hit" },
+        ],
+      },
+    ],
+  },
+  {
+    symbol: "FINNIFTY", mtm: "Rs. -64.00", booked: "Rs. -64.00", targets: "1/10", quantity: "520", status: "Stopped", phases: [
+      {
+        no: 4, status: "stopped", option: "FINNIFTY21JUL25200CE", side: "BUY", lots: 2, quantity: 80, mtm: -126,
+        entry: 25148, optionEntry: 132.4, stoploss: 25098, duration: "3m 07s", time: "15:05:11 → 15:08:18", targetCount: 0,
+        targets: [{ label: "T1", price: 25173, state: "skipped" }, { label: "T2", price: 25198, state: "skipped" }],
+      },
+      {
+        no: 3, status: "completed", option: "FINNIFTY21JUL25150PE", side: "BUY", lots: 2, quantity: 80, mtm: 62,
+        entry: 25190, optionEntry: 96.8, stoploss: 25220, duration: "6m 44s", time: "14:37:22 → 14:44:06", targetCount: 1,
+        targets: [{ label: "T1", price: 25165, state: "hit" }, { label: "T2", price: 25140, state: "pending" }, { label: "T3", price: 25115, state: "pending" }],
+      },
+      {
+        no: 2, status: "completed", option: "FINNIFTY21JUL25200CE", side: "SELL", lots: 2, quantity: 80, mtm: 0,
+        entry: 25225, optionEntry: 105.5, stoploss: 25250, duration: "2m 10s", time: "13:56:29 → 13:58:39", targetCount: 0,
+        targets: [{ label: "T1", price: 25200, state: "skipped" }, { label: "T2", price: 25175, state: "skipped" }],
+      },
+      {
+        no: 1, status: "completed", option: "FINNIFTY21JUL25100PE", side: "BUY", lots: 2, quantity: 80, mtm: 0,
+        entry: 25135, optionEntry: 81.25, stoploss: 25160, duration: "4m 20s", time: "13:22:06 → 13:26:26", targetCount: 0,
+        targets: [{ label: "T1", price: 25110, state: "skipped" }, { label: "T2", price: 25085, state: "skipped" }, { label: "T3", price: 25060, state: "skipped" }],
+      },
+    ],
+  },
 ];
 
 function money(value: number) {
   return `Rs. ${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function MiniMetric({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "good" | "bad" }) {
+function MiniMetric({
+  label,
+  value,
+  sub,
+  tone,
+  labelClassName,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "good" | "bad";
+  labelClassName?: string;
+  valueClassName?: string;
+}) {
   return (
     <div className="fr-dark-surface rounded-lg border border-border/60 bg-background/40 p-2.5">
-      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className={cn("mt-1 text-sm font-semibold tabular-nums", tone === "good" && "text-emerald-500", tone === "bad" && "text-red-500")}>{value}</p>
+      <p className={cn("text-[10px] font-medium uppercase tracking-wide text-muted-foreground", labelClassName)}>{label}</p>
+      <p className={cn("mt-1 text-sm font-semibold tabular-nums", tone === "good" && "text-emerald-500", tone === "bad" && "text-red-500", valueClassName)}>{value}</p>
       {sub ? <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{sub}</p> : null}
     </div>
   );
@@ -136,10 +203,10 @@ function PhasePanel({ phase, symbol, open, onToggle }: { phase: DemoPhase; symbo
       {open ? (
         <div className="mt-3 space-y-3 border-t border-border/60 pt-3">
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <MiniMetric label="Entry" value={phase.entry.toLocaleString("en-IN", { minimumFractionDigits: 2 })} sub={`Option ${money(phase.optionEntry)}`} />
-            <MiniMetric label="Stop-loss" value={phase.stoploss.toLocaleString("en-IN", { minimumFractionDigits: 2 })} sub={phase.status === "stopped" ? "Hit" : "Manual"} tone={phase.status === "stopped" ? "bad" : undefined} />
-            <MiniMetric label="Targets" value={`${hitTargets}/${phase.targets.length}`} sub={phase.status === "stopped" ? "Stopped before target" : `${phase.targetCount} target exits`} />
-            <MiniMetric label="Duration" value={phase.duration} sub={phase.time} />
+            <MiniMetric label="Entry" value={phase.entry.toLocaleString("en-IN", { minimumFractionDigits: 2 })} sub={`Option ${money(phase.optionEntry)}`} labelClassName="text-sky-400" valueClassName="text-sky-300" />
+            <MiniMetric label="Stop-loss" value={phase.stoploss.toLocaleString("en-IN", { minimumFractionDigits: 2 })} sub={phase.status === "stopped" ? "Hit" : "Manual"} labelClassName={phase.status === "stopped" ? "text-red-400" : "text-amber-400"} valueClassName={phase.status === "stopped" ? "text-red-400" : "text-amber-300"} />
+            <MiniMetric label="Targets" value={`${hitTargets}/${phase.targets.length}`} sub={phase.status === "stopped" ? "Stopped before target" : `${phase.targetCount} target exits`} labelClassName="text-emerald-400" valueClassName="text-emerald-300" />
+            <MiniMetric label="Duration" value={phase.duration} sub={phase.time} labelClassName="text-violet-400" valueClassName="text-violet-300" />
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {phase.targets.map((target) => (
@@ -160,9 +227,11 @@ function PhasePanel({ phase, symbol, open, onToggle }: { phase: DemoPhase; symbo
 }
 
 export default function FuturesRiskCardDemo() {
-  const [openPhases, setOpenPhases] = useState<number[]>([3]);
-  const allOpen = openPhases.length === DEMO_PHASES.length;
-  const togglePhase = (phaseNo: number) => setOpenPhases((current) => current.includes(phaseNo) ? current.filter((item) => item !== phaseNo) : [...current, phaseNo]);
+  const [openPhases, setOpenPhases] = useState<Record<string, number[]>>({ NIFTY: [3], BANKNIFTY: [2], FINNIFTY: [4] });
+  const togglePhase = (symbol: string, phaseNo: number) => setOpenPhases((current) => {
+    const open = current[symbol] ?? [];
+    return { ...current, [symbol]: open.includes(phaseNo) ? open.filter((item) => item !== phaseNo) : [...open, phaseNo] };
+  });
 
   return (
     <div className="fr-grid-bg -m-2 min-h-full rounded-2xl px-2 pb-4 pt-1 md:-m-4 md:px-4 md:pb-6 md:pt-2">
@@ -184,7 +253,7 @@ export default function FuturesRiskCardDemo() {
             <div>
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-2xl font-bold tracking-tight">{instrument.symbol}</h2>
-                <span className="rounded-md bg-foreground/10 px-1.5 py-0.5 text-xs font-semibold text-muted-foreground">Completed</span>
+                <span className={cn("rounded-md border px-1.5 py-0.5 text-xs font-semibold", instrument.status === "Stopped" ? "border-red-500/30 bg-red-500/10 text-red-400" : instrument.status === "Active" ? "border-sky-500/30 bg-sky-500/10 text-sky-400" : "border-emerald-500/30 bg-emerald-500/10 text-emerald-500")}>{instrument.status}</span>
               </div>
               <p className="mt-1 text-sm text-muted-foreground">Tue, 14 Jul 2026 · 3 phases · Sandbox</p>
             </div>
@@ -197,19 +266,19 @@ export default function FuturesRiskCardDemo() {
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <MiniMetric label="Booked P&L" value={instrument.booked} tone={instrument.booked.startsWith("Rs. -") ? "bad" : "good"} />
             <MiniMetric label="Targets" value={instrument.targets} sub="Across all phases" />
-            <MiniMetric label="Phase count" value="3" sub="0 active" />
+            <MiniMetric label="Phase count" value={String(instrument.phases.length)} sub={`${instrument.phases.filter((phase) => phase.status === "active").length} active`} />
             <MiniMetric label="Net quantity" value={instrument.quantity} sub="All phases exited" />
           </div>
 
           <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-4">
-            <div className="flex items-center gap-2 text-sm font-semibold"><Target className="h-4 w-4 text-primary" /> All phases <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{DEMO_PHASES.length}</span></div>
-            <button type="button" onClick={() => setOpenPhases(allOpen ? [] : DEMO_PHASES.map((phase) => phase.no))} className="rounded-lg border border-border/70 px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground">
-              {allOpen ? "Collapse all" : "Expand all"}
+            <div className="flex items-center gap-2 text-sm font-semibold"><Target className="h-4 w-4 text-primary" /> All phases <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{instrument.phases.length}</span></div>
+            <button type="button" onClick={() => setOpenPhases((current) => ({ ...current, [instrument.symbol]: (current[instrument.symbol] ?? []).length === instrument.phases.length ? [] : instrument.phases.map((phase) => phase.no) }))} className="rounded-lg border border-border/70 px-2.5 py-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground">
+              {(openPhases[instrument.symbol] ?? []).length === instrument.phases.length ? "Collapse all" : "Expand all"}
             </button>
           </div>
 
           <div className="relative mt-3 space-y-3 border-l border-border/70 pl-4">
-            {DEMO_PHASES.map((phase) => <PhasePanel key={phase.no} phase={phase} symbol={instrument.symbol} open={openPhases.includes(phase.no)} onToggle={() => togglePhase(phase.no)} />)}
+            {instrument.phases.map((phase) => <PhasePanel key={phase.no} phase={phase} symbol={instrument.symbol} open={(openPhases[instrument.symbol] ?? []).includes(phase.no)} onToggle={() => togglePhase(instrument.symbol, phase.no)} />)}
           </div>
         </section>
         ))}
