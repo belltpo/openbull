@@ -3,7 +3,7 @@
  */
 import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, ChevronDown, Clock, Layers, Shield, Target, TrendingUp } from "lucide-react";
+import { CalendarDays, ChevronDown, Clock, Layers, Shield, Target } from "lucide-react";
 
 import {
   Dialog,
@@ -290,10 +290,10 @@ function PhaseCard({
 
       <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 xl:grid-cols-3">
         <Metric label="Phase MTM" value={`Rs. ${fmt(mtm)}`} sub={phase.status === "active" ? "live + booked" : "booked"} valueClassName={pnlTone} />
-        <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} />
-        <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} icon={<Shield className="h-3 w-3" />} />
-        <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={targetQtyLabel(phase, completedTargets)} icon={<Target className="h-3 w-3" />} />
-        <Metric label="Duration" value={durationFmt(phase.duration_sec)} sub={`${timeFmt(phase.entry_time)} -> ${phase.exit_time ? timeFmt(phase.exit_time) : "open"}`} icon={<Clock className="h-3 w-3" />} />
+        <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} valueClassName="text-sky-400" />
+        <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} icon={<Shield className="h-3 w-3" />} valueClassName={phase.status === "stopped" ? "text-red-400" : "text-amber-400"} />
+        <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={targetQtyLabel(phase, completedTargets)} icon={<Target className="h-3 w-3" />} valueClassName="text-emerald-400" />
+        <Metric label="Duration" value={durationFmt(phase.duration_sec)} sub={`${timeFmt(phase.entry_time)} -> ${phase.exit_time ? timeFmt(phase.exit_time) : "open"}`} icon={<Clock className="h-3 w-3" />} valueClassName="text-violet-400" />
       </div>
 
       {phase.targets.length > 0 && (
@@ -367,6 +367,71 @@ function PhaseCard({
         </>
       )}
     </div>
+  );
+}
+
+function InstrumentPhaseTimeline({
+  symbol,
+  phases,
+  liveOptFor,
+}: {
+  symbol: string;
+  phases: FrPhase[];
+  liveOptFor: (phase: FrPhase) => number | undefined;
+}) {
+  const orderedPhases = [...phases].sort((a, b) => b.phase_no - a.phase_no || String(b.entry_time).localeCompare(String(a.entry_time)));
+  const latestPhase = orderedPhases[0];
+  const totalMtm = phases.reduce((sum, phase) => sum + phaseMtm(phase, liveOptFor(phase)), 0);
+  const realized = phases.reduce((sum, phase) => sum + (phase.realized_pnl ?? 0), 0);
+  const active = phases.filter((phase) => phase.status === "active").length;
+  const targetsHit = phases.reduce((sum, phase) => sum + phase.targets_achieved.length, 0);
+  const targetsTotal = phases.reduce((sum, phase) => sum + phase.targets_total, 0);
+  const totalQuantity = phases.reduce((sum, phase) => sum + phase.total_qty, 0);
+  const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
+  const statusTone =
+    latestPhase?.status === "active"
+      ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-300"
+      : latestPhase?.status === "stopped"
+        ? "border-red-400/30 bg-red-400/10 text-red-300"
+        : "border-sky-400/30 bg-sky-400/10 text-sky-300";
+
+  return (
+    <section className="fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
+            {latestPhase ? <span className={cn("rounded-md border px-1.5 py-0.5 text-xs font-semibold capitalize", statusTone)}>{latestPhase.status}</span> : null}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">{phases.length} phase(s) on this trading day · {active} active</p>
+        </div>
+        <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-right">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Overall MTM</p>
+          <p className={cn("text-lg font-bold tabular-nums", totalTone)}>Rs. {fmt(totalMtm)}</p>
+        </div>
+      </div>
+
+      <aside className="mt-4 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+        <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} valueClassName={realized >= 0 ? "text-emerald-500" : "text-red-500"} className="min-h-16 bg-card/55" />
+        <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} sub="Across all phases" valueClassName="text-emerald-400" className="min-h-16 bg-card/55" />
+        <Metric label="Phase count" value={String(phases.length)} sub={`${active} active`} className="min-h-16 bg-card/55" />
+        <Metric label="Net quantity" value={fmt(totalQuantity, 0)} sub="Across all phases" className="min-h-16 bg-card/55" />
+      </aside>
+
+      <div className="mt-5 flex items-center gap-2 border-t border-border/60 pt-4 text-sm font-semibold">
+        <Target className="h-4 w-4 text-primary" /> All phases
+        <span className="rounded-full bg-foreground/10 px-2 py-0.5 text-xs text-muted-foreground">{phases.length}</span>
+      </div>
+
+      <div className="relative mt-3 space-y-3 border-l border-border/70 pl-4">
+        {orderedPhases.map((phase) => (
+          <div key={phase.trade_id} className="relative">
+            <span className={cn("absolute -left-[22px] top-5 h-3 w-3 rounded-full border-2 border-background", phase.status === "stopped" ? "bg-red-500" : phase.status === "active" ? "bg-sky-500" : "bg-emerald-500")} />
+            <PhaseCard phase={phase} liveOpt={liveOptFor(phase)} className="bg-card/60" />
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -484,54 +549,8 @@ export function PhaseHistory({
               </div>
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {instruments.map(({ symbol, phases }) => {
-                  const selectedInstrumentPhases = phases;
-                  const latestPhase = phases[phases.length - 1];
-                  const totalMtm = selectedInstrumentPhases.reduce((sum, p) => sum + phaseMtm(p, liveOpt(p)), 0);
-                  const realized = selectedInstrumentPhases.reduce((sum, p) => sum + (p.realized_pnl ?? 0), 0);
-                  const active = selectedInstrumentPhases.filter((p) => p.status === "active").length;
-                  const targetsHit = selectedInstrumentPhases.reduce((sum, p) => sum + p.targets_achieved.length, 0);
-                  const targetsTotal = selectedInstrumentPhases.reduce((sum, p) => sum + p.targets_total, 0);
-                  const totalTone = totalMtm >= 0 ? "text-emerald-500" : "text-red-500";
-
                   return (
-                    <section key={`${dateKey}:${symbol}`} className="fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4">
-                      <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-                        <div className="min-w-0">
-                          <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            Showing latest of {selectedInstrumentPhases.length} phase(s) on this day
-                          </p>
-                        </div>
-                      </div>
-
-                      <aside className="mb-3 grid grid-cols-2 gap-2 text-right text-sm">
-                        <Metric
-                          label="Overall Instrument MTM"
-                          value={`Rs. ${fmt(totalMtm)}`}
-                          icon={<TrendingUp className="h-3 w-3" />}
-                          valueClassName={totalTone}
-                          className="min-h-16 bg-card/55"
-                        />
-                        <Metric label="Booked P&L" value={`Rs. ${fmt(realized)}`} className="min-h-16 bg-card/55" />
-                        <Metric label="Targets" value={`${targetsHit}/${targetsTotal}`} className="min-h-16 bg-card/55" />
-                        <Metric label="Active Phases" value={String(active)} className="min-h-16 bg-card/55" />
-                      </aside>
-
-                      <div className="grid min-w-0 grid-cols-1 gap-3">
-                        {latestPhase && (
-                          <PhaseCard
-                            key={latestPhase.trade_id}
-                            phase={latestPhase}
-                            liveOpt={liveOpt(latestPhase)}
-                            previousPhases={selectedInstrumentPhases.filter(
-                              (item) => item.phase_no > 0 && item.phase_no < latestPhase.phase_no,
-                            )}
-                            liveOptFor={liveOpt}
-                            className="bg-card/60"
-                          />
-                        )}
-                      </div>
-                    </section>
+                    <InstrumentPhaseTimeline key={`${dateKey}:${symbol}`} symbol={symbol} phases={phases} liveOptFor={liveOpt} />
                   );
                 })}
               </div>
