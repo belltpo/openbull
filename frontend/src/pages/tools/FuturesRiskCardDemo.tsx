@@ -85,6 +85,12 @@ const DEMO_PHASES: DemoPhase[] = [
   },
 ];
 
+const DEMO_INSTRUMENTS = [
+  { symbol: "NIFTY", mtm: "Rs. 201.50", booked: "Rs. 201.50", targets: "3/9", quantity: "780" },
+  { symbol: "BANKNIFTY", mtm: "Rs. 428.75", booked: "Rs. 428.75", targets: "5/9", quantity: "450" },
+  { symbol: "FINNIFTY", mtm: "Rs. -64.00", booked: "Rs. -64.00", targets: "1/9", quantity: "520" },
+];
+
 function money(value: number) {
   return `Rs. ${value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -105,7 +111,7 @@ function statusStyle(status: DemoPhase["status"]) {
   return "border-sky-500/30 bg-sky-500/10 text-sky-400";
 }
 
-function PhasePanel({ phase, open, onToggle }: { phase: DemoPhase; open: boolean; onToggle: () => void }) {
+function PhasePanel({ phase, symbol, open, onToggle }: { phase: DemoPhase; symbol: string; open: boolean; onToggle: () => void }) {
   const hitTargets = phase.targets.filter((target) => target.state === "hit").length;
   return (
     <article className="relative rounded-xl border border-border/70 bg-card/50 p-3 shadow-sm">
@@ -116,7 +122,7 @@ function PhasePanel({ phase, open, onToggle }: { phase: DemoPhase; open: boolean
             <span className="flex items-center gap-1 text-sm font-bold"><Layers className="h-3.5 w-3.5" /> Phase {phase.no}</span>
             <span className={cn("rounded-md border px-1.5 py-0.5 text-[11px] font-semibold capitalize", statusStyle(phase.status))}>{phase.status}</span>
           </div>
-          <p className="mt-1 truncate text-xs text-muted-foreground">{phase.side} {phase.option} · {phase.lots} lots · {phase.quantity} qty</p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">{phase.side} {phase.option.replace("NIFTY", symbol)} · {phase.lots} lots · {phase.quantity} qty</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <div className="text-right">
@@ -171,27 +177,28 @@ export default function FuturesRiskCardDemo() {
         <Link to="/tools/futures-risk" className={cn(buttonVariants({ variant: "outline" }), "shrink-0")}>Back to Positions</Link>
       </header>
 
-      <main className="mt-5 max-w-3xl">
-        <section className="fr-glass fr-dark-surface rounded-2xl border border-border/70 p-4">
+      <main className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        {DEMO_INSTRUMENTS.map((instrument) => (
+        <section key={instrument.symbol} className="fr-glass fr-dark-surface rounded-2xl border border-border/70 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-2xl font-bold tracking-tight">NIFTY</h2>
+                <h2 className="text-2xl font-bold tracking-tight">{instrument.symbol}</h2>
                 <span className="rounded-md bg-foreground/10 px-1.5 py-0.5 text-xs font-semibold text-muted-foreground">Completed</span>
               </div>
               <p className="mt-1 text-sm text-muted-foreground">Tue, 14 Jul 2026 · 3 phases · Sandbox</p>
             </div>
             <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-right">
               <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Overall MTM</p>
-              <p className="text-lg font-bold tabular-nums text-emerald-500">Rs. 201.50</p>
+              <p className={cn("text-lg font-bold tabular-nums", instrument.mtm.startsWith("Rs. -") ? "text-red-500" : "text-emerald-500")}>{instrument.mtm}</p>
             </div>
           </div>
 
           <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            <MiniMetric label="Booked P&L" value="Rs. 201.50" tone="good" />
-            <MiniMetric label="Targets" value="3/9" sub="Across all phases" />
+            <MiniMetric label="Booked P&L" value={instrument.booked} tone={instrument.booked.startsWith("Rs. -") ? "bad" : "good"} />
+            <MiniMetric label="Targets" value={instrument.targets} sub="Across all phases" />
             <MiniMetric label="Phase count" value="3" sub="0 active" />
-            <MiniMetric label="Net quantity" value="780" sub="All phases exited" />
+            <MiniMetric label="Net quantity" value={instrument.quantity} sub="All phases exited" />
           </div>
 
           <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-4">
@@ -202,16 +209,17 @@ export default function FuturesRiskCardDemo() {
           </div>
 
           <div className="relative mt-3 space-y-3 border-l border-border/70 pl-4">
-            {DEMO_PHASES.map((phase) => <PhasePanel key={phase.no} phase={phase} open={openPhases.includes(phase.no)} onToggle={() => togglePhase(phase.no)} />)}
+            {DEMO_PHASES.map((phase) => <PhasePanel key={phase.no} phase={phase} symbol={instrument.symbol} open={openPhases.includes(phase.no)} onToggle={() => togglePhase(phase.no)} />)}
           </div>
         </section>
+        ))}
+      </main>
 
         <aside className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="fr-glass rounded-xl border border-border/60 p-3 text-sm"><TrendingUp className="mb-2 h-4 w-4 text-emerald-500" /><p className="font-semibold">Phase visibility</p><p className="mt-1 text-xs text-muted-foreground">Every phase stays in the primary card, rather than a separate modal.</p></div>
           <div className="fr-glass rounded-xl border border-border/60 p-3 text-sm"><Shield className="mb-2 h-4 w-4 text-sky-400" /><p className="font-semibold">Fast scanning</p><p className="mt-1 text-xs text-muted-foreground">Collapsed rows show status, option, quantity, and MTM at a glance.</p></div>
           <div className="fr-glass rounded-xl border border-border/60 p-3 text-sm"><Clock className="mb-2 h-4 w-4 text-amber-500" /><p className="font-semibold">Details on demand</p><p className="mt-1 text-xs text-muted-foreground">Open a phase to review entry, stop-loss, targets and timing.</p></div>
         </aside>
-      </main>
     </div>
   );
 }
