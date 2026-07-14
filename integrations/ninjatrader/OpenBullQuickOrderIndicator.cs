@@ -3898,15 +3898,29 @@ namespace NinjaTrader.NinjaScript.Indicators
         )
         {
             List<string> candidates = new List<string>();
+            HashSet<string> knownCandidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (configuredUnderlyings != null)
-                candidates.AddRange(configuredUnderlyings);
-            candidates.AddRange(KnownUnderlyings);
-            candidates = candidates
-                .Select(NormalizeCandidate)
-                .Where(value => !string.IsNullOrWhiteSpace(value))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .OrderByDescending(value => value.Length)
-                .ToList();
+            {
+                foreach (string configured in configuredUnderlyings)
+                {
+                    string candidate = NormalizeCandidate(configured);
+                    if (!string.IsNullOrWhiteSpace(candidate) && knownCandidates.Add(candidate))
+                        candidates.Add(candidate);
+                }
+            }
+            foreach (string configured in KnownUnderlyings)
+            {
+                string candidate = NormalizeCandidate(configured);
+                if (!string.IsNullOrWhiteSpace(candidate) && knownCandidates.Add(candidate))
+                    candidates.Add(candidate);
+            }
+            candidates.Sort(delegate(string left, string right)
+            {
+                int lengthComparison = right.Length.CompareTo(left.Length);
+                return lengthComparison != 0
+                    ? lengthComparison
+                    : string.Compare(left, right, StringComparison.OrdinalIgnoreCase);
+            });
 
             foreach (string input in new[] { masterInstrumentName, fullInstrumentName })
             {
