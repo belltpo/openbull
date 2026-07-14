@@ -1,11 +1,10 @@
 $ErrorActionPreference = 'Stop'
 
 $quickOrderPath = Join-Path $PSScriptRoot 'OpenBullQuickOrderIndicator.cs'
-$quickOrderMapperPath = Join-Path $PSScriptRoot 'OpenBullQuickOrderSymbolMapper.cs'
 $liveDataPath = Join-Path $PSScriptRoot 'addons\OpenBullLiveDataAddOn.cs'
 $externalFeedPath = Join-Path $PSScriptRoot 'external_feed\OpenBullExternalDataFeedBridge.cs'
 
-foreach ($path in @($quickOrderPath, $quickOrderMapperPath, $liveDataPath, $externalFeedPath)) {
+foreach ($path in @($quickOrderPath, $liveDataPath, $externalFeedPath)) {
     if (!(Test-Path -LiteralPath $path)) {
         throw "Required NinjaTrader integration source is missing: $path"
     }

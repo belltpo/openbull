@@ -65,7 +65,6 @@ X-API-KEY header
 
    ```text
    OpenBullQuickOrderIndicator.cs  -> Documents\NinjaTrader 8\bin\Custom\Indicators
-   OpenBullQuickOrderSymbolMapper.cs -> Documents\NinjaTrader 8\bin\Custom\Indicators
    OpenBullFuturesRiskBridge.cs    -> Documents\NinjaTrader 8\bin\Custom\AddOns
    Bell_LongEntryTool.cs           -> Documents\NinjaTrader 8\bin\Custom\DrawingTools
    Bell_ShortEntryTool.cs          -> Documents\NinjaTrader 8\bin\Custom\DrawingTools
