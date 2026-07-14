@@ -1298,6 +1298,13 @@ def _extract_order_fill_price(data: dict[str, Any]) -> float | None:
     return None
 
 
+def _apply_sandbox_fill_price(plan: dict[str, Any], response: dict[str, Any]) -> None:
+    """Use the simulator fill, rather than an advisory pre-order quote."""
+    fill_price = _extract_order_fill_price(response)
+    if fill_price is not None:
+        plan["entry_opt"] = fill_price
+
+
 def _broker_order_status(
     order_id: str,
     auth_token: str,
@@ -1402,7 +1409,9 @@ def place_trade(
             broker_status=status,
         )
         return get_trade(user_id, trade_id) or {}
-    if mode != "sandbox":
+    if mode == "sandbox":
+        _apply_sandbox_fill_price(plan, resp)
+    else:
         confirmed, confirm_message, fill_price = _confirm_entry_order(str(entry_order_id), auth_token, broker, config)
         if not confirmed:
             trade_id = _persist_failed_entry(
@@ -1603,7 +1612,9 @@ def place_draft(
             existing_trade_id=trade_id,
         )
         return get_trade(user_id, failed_id) or {}
-    if mode != "sandbox":
+    if mode == "sandbox":
+        _apply_sandbox_fill_price(plan, resp)
+    else:
         confirmed, confirm_message, fill_price = _confirm_entry_order(str(entry_order_id), auth_token, broker, config)
         if not confirmed:
             failed_id = _persist_failed_entry(
@@ -2131,7 +2142,9 @@ def manual_exit(
         if not ok:
             raise FrError(resp.get("message", "Exit order failed"), status)
         exit_order_id = resp.get("orderid")
-        if mode != "sandbox":
+        if mode == "sandbox":
+            exit_fill_price = _extract_order_fill_price(resp)
+        else:
             if not exit_order_id:
                 raise FrError("Broker did not return an exit order id", 502)
             confirmed, confirm_message, fill_price = _confirm_entry_order(

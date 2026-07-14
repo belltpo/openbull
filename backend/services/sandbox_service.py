@@ -214,11 +214,23 @@ def place_order(user_id: int, order_data: dict[str, Any]) -> tuple[bool, dict[st
     # straight to ``complete`` even after market hours, matching openalgo's
     # behaviour where the simulator always fills MARKET at LTP if any LTP is
     # obtainable.
-    ltp = get_ltp_with_fallback(user_id, symbol, exchange)
-    if ltp is not None and ltp > 0:
-        _try_fill_order(row, float(ltp))
+    # A MARKET order already has a freshly validated ``ref_price``. Reusing
+    # it avoids a second broker quote request failing between validation and
+    # fill, which otherwise leaves a valid order without a usable P&L basis.
+    fill_ltp = ref_price if pricetype in ("MARKET", "SL-M") else get_ltp_with_fallback(user_id, symbol, exchange)
+    if fill_ltp is not None and fill_ltp > 0:
+        _try_fill_order(row, float(fill_ltp))
 
-    return True, {"status": "success", "orderid": row.orderid, "mode": "sandbox"}, 200
+    # The order is filled in a separate DB session; reload it and return the
+    # actual simulator fill so Futures-Risk can persist authoritative entry
+    # and exit prices.
+    filled = order_manager.get_order(user_id, row.orderid)
+    response: dict[str, Any] = {"status": "success", "orderid": row.orderid, "mode": "sandbox"}
+    if filled is not None:
+        response["order_status"] = filled.status
+        if filled.average_price is not None and float(filled.average_price) > 0:
+            response["average_price"] = float(filled.average_price)
+    return True, response, 200
 
 
 def modify_order(user_id: int, data: dict[str, Any]) -> tuple[bool, dict[str, Any], int]:

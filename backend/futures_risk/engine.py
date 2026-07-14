@@ -126,7 +126,7 @@ def _place_exit(trade: FrTrade, qty: int, reason: str, ctx: dict | None = None) 
 
     order_id = resp.get("orderid")
     if trade.mode == "sandbox":
-        return True, order_id, "ok", None
+        return True, order_id, "ok", fr_service._extract_order_fill_price(resp)
     if not order_id:
         return False, None, "Broker did not return an exit order id", None
     confirmed, confirm_message, fill_price = fr_service._confirm_entry_order(
