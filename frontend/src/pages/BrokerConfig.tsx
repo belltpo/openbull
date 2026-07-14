@@ -4,9 +4,11 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { listBrokers, getBrokerCredentials, saveBrokerCredentials } from "@/api/broker";
 import type { BrokerConfigData } from "@/types/broker";
 
@@ -202,20 +204,22 @@ export default function BrokerConfig() {
 
             <div className="space-y-2">
               <Label htmlFor="broker-select">Broker</Label>
-              <select
-                id="broker-select"
+              <Select
                 value={selectedBroker}
-                onChange={(e) => setSelectedBroker(e.target.value)}
-                className="flex h-8 w-full rounded-lg border border-input bg-transparent px-2.5 py-1 text-sm transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
+                onValueChange={setSelectedBroker}
               >
-                <option value="">Select a broker...</option>
-                {brokers?.map((b) => (
-                  <option key={b.name} value={b.name}>
-                    {b.display_name}
-                    {b.is_configured ? " (Configured)" : ""}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger id="broker-select" className="h-8 rounded-lg px-2.5 dark:bg-input/30">
+                  <SelectValue placeholder="Select a broker..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {brokers?.map((b) => (
+                    <SelectItem key={b.name} value={b.name}>
+                      {b.display_name}
+                      {b.is_configured ? " (Configured)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {selectedBroker && (() => {
@@ -271,9 +275,8 @@ export default function BrokerConfig() {
                 {help.showApiSecret && (
                   <div className="space-y-2">
                     <Label htmlFor="api-secret">{help.apiSecretLabel}</Label>
-                    <Input
+                    <PasswordInput
                       id="api-secret"
-                      type="password"
                       value={apiSecret}
                       onChange={(e) => setApiSecret(e.target.value)}
                       placeholder={isConfigured ? "Leave blank to keep saved value" : `Enter ${help.apiSecretLabel}`}

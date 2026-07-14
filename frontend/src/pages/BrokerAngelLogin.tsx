@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/components/ui/card";
 import { angelLogin } from "@/api/broker";
@@ -74,9 +75,8 @@ export default function BrokerAngelLogin() {
 
             <div className="space-y-2">
               <Label htmlFor="broker-pin">MPIN</Label>
-              <Input
+              <PasswordInput
                 id="broker-pin"
-                type="password"
                 value={brokerPin}
                 onChange={(e) => setBrokerPin(e.target.value)}
                 placeholder="4-digit MPIN"

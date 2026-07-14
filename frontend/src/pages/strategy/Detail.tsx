@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -2911,9 +2912,8 @@ export default function StrategyDetail() {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="livepw">Account password</Label>
-              <Input
+              <PasswordInput
                 id="livepw"
-                type="password"
                 value={liveModePassword}
                 onChange={(e) => setLiveModePassword(e.target.value)}
                 autoFocus
