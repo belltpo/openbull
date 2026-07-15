@@ -426,8 +426,13 @@ function InstrumentPhaseTimeline({
   const togglePhase = (phaseId: number) => setExpandedPhaseIds((current) => current.includes(phaseId) ? current.filter((id) => id !== phaseId) : [...current, phaseId]);
 
   return (
-    <section className="fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section
+      className={cn(
+        "fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4",
+        expandedPhaseIds.length > 0 && "lg:col-span-2",
+      )}
+    >
+      <div className="flex flex-nowrap items-start justify-between gap-3 max-[380px]:flex-wrap">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-2xl font-bold tracking-tight">{symbol}</h3>
@@ -435,7 +440,7 @@ function InstrumentPhaseTimeline({
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{phases.length} phase(s) on this trading day · {active} active</p>
         </div>
-        <div className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-right">
+        <div className="shrink-0 rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-right">
           <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Overall MTM</p>
           <p className={cn("text-lg font-bold tabular-nums", totalTone)}>Rs. {fmt(totalMtm)}</p>
         </div>
