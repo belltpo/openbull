@@ -809,11 +809,31 @@ export default function Dashboard() {
   const f = funds.data;
 
   const fundCards = [
-    { label: "Available Cash", value: f?.availablecash ?? 0, isPnl: false },
-    { label: "Collateral", value: f?.collateral ?? 0, isPnl: false },
-    { label: "M2M Unrealized", value: f?.m2munrealized ?? 0, isPnl: true },
-    { label: "M2M Realized", value: f?.m2mrealized ?? 0, isPnl: true },
-    { label: "Utilized Debits", value: f?.utiliseddebits ?? 0, isPnl: false },
+    {
+      label: "Available Cash",
+      value: f?.availablecash ?? 0,
+      valueClass: "text-sky-700 dark:text-sky-300",
+    },
+    {
+      label: "Collateral",
+      value: f?.collateral ?? 0,
+      valueClass: "text-violet-700 dark:text-violet-300",
+    },
+    {
+      label: "M2M Unrealized",
+      value: f?.m2munrealized ?? 0,
+      valueClass: pnlColor(f?.m2munrealized ?? 0),
+    },
+    {
+      label: "M2M Realized",
+      value: f?.m2mrealized ?? 0,
+      valueClass: pnlColor(f?.m2mrealized ?? 0),
+    },
+    {
+      label: "Utilized Debits",
+      value: f?.utiliseddebits ?? 0,
+      valueClass: "text-amber-700 dark:text-amber-300",
+    },
   ];
 
   const positionsData = positions.data ?? [];
@@ -862,7 +882,7 @@ export default function Dashboard() {
               <p
                 className={cn(
                   "text-lg font-bold tracking-tight tabular-nums sm:text-xl lg:text-2xl",
-                  card.isPnl ? pnlColor(card.value) : "text-foreground"
+                  card.valueClass
                 )}
               >
                 {formatCurrency(card.value)}
