@@ -136,7 +136,10 @@ function Metric({
   className?: string;
 }) {
   return (
-    <div className={cn("fr-dark-surface rounded-lg border border-border/60 bg-background/40 p-3", className)}>
+    <div
+      title={sub || undefined}
+      className={cn("fr-dark-surface rounded-lg border border-border/60 bg-background/40 p-3", sub && "cursor-help", className)}
+    >
       <div className="flex items-center gap-1 text-[11px] uppercase text-muted-foreground">
         {icon}
         {label}
@@ -426,12 +429,7 @@ function InstrumentPhaseTimeline({
   const togglePhase = (phaseId: number) => setExpandedPhaseIds((current) => current.includes(phaseId) ? current.filter((id) => id !== phaseId) : [...current, phaseId]);
 
   return (
-    <section
-      className={cn(
-        "fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4",
-        expandedPhaseIds.length > 0 ? "lg:col-span-2 xl:col-span-5" : "xl:col-span-4",
-      )}
-    >
+    <section className="fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4">
       <div className="flex flex-nowrap items-start justify-between gap-3 max-[380px]:flex-wrap">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -587,7 +585,7 @@ export function PhaseHistory({
                 <h3 className="text-lg font-bold tracking-tight">{displayDateLabel(dateKey)}</h3>
                 <p className="text-sm text-muted-foreground">{instruments.length} instrument(s)</p>
               </div>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {instruments.map(({ symbol, phases }) => {
                   return (
                     <InstrumentPhaseTimeline key={`${dateKey}:${symbol}`} symbol={symbol} phases={phases} liveOptFor={liveOpt} />
