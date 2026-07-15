@@ -196,7 +196,7 @@ function KpiStrip({
         <div
           key={it.label}
           className={cn(
-            "rounded-lg px-3 py-3 ring-1 ring-inset sm:px-4 sm:py-3.5",
+            "fr-glass fr-dark-surface rounded-xl border px-3 py-3 ring-1 ring-inset sm:px-4 sm:py-3.5",
             it.tint
           )}
         >
@@ -241,7 +241,7 @@ function PositionsSnapshot({
   );
 
   return (
-    <Card className="flex flex-col">
+    <Card className="fr-glass fr-dark-surface flex flex-col border border-border/70 shadow-none">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
         <div>
           <CardTitle className="text-sm font-semibold tracking-tight">
@@ -343,7 +343,7 @@ function StrategiesSnapshot({
   };
 
   return (
-    <Card className="flex flex-col">
+    <Card className="fr-glass fr-dark-surface flex flex-col border border-border/70 shadow-none">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
         <div>
           <CardTitle className="text-sm font-semibold tracking-tight">
@@ -440,7 +440,7 @@ function RecentOrders({
   const recent = useMemo(() => orders.slice(0, 6), [orders]);
 
   return (
-    <Card className="flex flex-col">
+    <Card className="fr-glass fr-dark-surface flex flex-col border border-border/70 shadow-none">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
         <div>
           <CardTitle className="text-sm font-semibold tracking-tight">
@@ -516,7 +516,7 @@ function RecentTrades({
   const recent = useMemo(() => trades.slice(0, 6), [trades]);
 
   return (
-    <Card className="flex flex-col">
+    <Card className="fr-glass fr-dark-surface flex flex-col border border-border/70 shadow-none">
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
         <div>
           <CardTitle className="text-sm font-semibold tracking-tight">
@@ -592,7 +592,7 @@ const quickActions: Array<{
 
 function QuickActions() {
   return (
-    <Card>
+    <Card className="fr-glass fr-dark-surface border border-border/70 shadow-none">
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold tracking-tight">
           Quick Actions
@@ -608,8 +608,8 @@ function QuickActions() {
               key={a.to}
               to={a.to}
               className={cn(
-                "group flex flex-col gap-1 rounded-lg border border-border bg-muted/30 px-3 py-2.5 transition-colors",
-                "hover:border-foreground/30 hover:bg-muted",
+                "fr-dark-surface fr-dark-surface-hover group flex flex-col gap-1 rounded-lg border border-border/70 bg-background/35 px-3 py-2.5 transition-colors",
+                "hover:border-foreground/30 hover:bg-background/55",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               )}
             >
@@ -701,7 +701,7 @@ function MarketClock() {
   }
 
   return (
-    <Card>
+    <Card className="fr-glass fr-dark-surface border border-border/70 shadow-none">
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold tracking-tight">
           Market Clock
@@ -759,7 +759,7 @@ function EmptyState({
   cta?: { label: string; to: string };
 }) {
   return (
-    <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-border/70 bg-muted/30 px-4 py-5">
+    <div className="fr-dark-surface flex flex-col items-start gap-2 rounded-lg border border-dashed border-border/70 bg-background/35 px-4 py-5">
       <p className="text-sm font-semibold tracking-tight text-foreground">
         {title}
       </p>
@@ -829,7 +829,7 @@ export default function Dashboard() {
   ).length;
 
   return (
-    <div className="space-y-6">
+    <div className="fr-grid-bg -m-2 space-y-5 rounded-2xl px-2 pb-3 pt-1 md:-m-4 md:px-4 md:pb-4 md:pt-2">
       {/* Page header */}
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
@@ -852,7 +852,7 @@ export default function Dashboard() {
       {/* Funds — primary tile grid */}
       <div className="grid gap-3 sm:gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         {fundCards.map((card) => (
-          <Card key={card.label}>
+          <Card key={card.label} className="fr-glass fr-dark-surface border border-border/70 py-3 shadow-none">
             <CardHeader className="pb-2">
               <CardTitle className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
                 {card.label}
