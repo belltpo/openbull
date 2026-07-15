@@ -124,6 +124,7 @@ function Metric({
   sub,
   icon,
   valueClassName,
+  subClassName,
   className,
 }: {
   label: string;
@@ -131,6 +132,7 @@ function Metric({
   sub?: string;
   icon?: ReactNode;
   valueClassName?: string;
+  subClassName?: string;
   className?: string;
 }) {
   return (
@@ -140,7 +142,7 @@ function Metric({
         {label}
       </div>
       <div className={cn("mt-1.5 text-sm font-semibold tabular-nums", valueClassName)}>{value}</div>
-      {sub ? <div className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</div> : null}
+      {sub ? <div className={cn("mt-0.5 truncate text-xs text-muted-foreground", subClassName)}>{sub}</div> : null}
     </div>
   );
 }
@@ -302,10 +304,10 @@ function PhaseCard({
 
       <div className={cn(expanded === false && "hidden")}>
       <div className="mt-3 grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-        <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} valueClassName="text-sky-400" />
-        <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} icon={<Shield className="h-3 w-3" />} valueClassName={phase.status === "stopped" ? "text-red-400" : "text-amber-400"} />
-        <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={targetQtyLabel(phase, completedTargets)} icon={<Target className="h-3 w-3" />} valueClassName="text-emerald-400" />
-        <Metric label="Duration" value={durationFmt(phase.duration_sec)} sub={`${timeFmt(phase.entry_time)} -> ${phase.exit_time ? timeFmt(phase.exit_time) : "open"}`} icon={<Clock className="h-3 w-3" />} valueClassName="text-violet-400" />
+        <Metric label="Entry" value={fmt(phase.entry_futures_price)} sub={`Option Rs. ${fmt(phase.entry_option_price)}`} valueClassName="text-sky-400" subClassName="text-[9px]" />
+        <Metric label="Stoploss" value={fmt(phase.sl_price)} sub={phase.sl_basis} icon={<Shield className="h-3 w-3" />} valueClassName={phase.status === "stopped" ? "text-red-400" : "text-amber-400"} subClassName="text-[9px]" />
+        <Metric label="Targets" value={`${completedTargets}/${phase.targets_total}`} sub={targetQtyLabel(phase, completedTargets)} icon={<Target className="h-3 w-3" />} valueClassName="text-emerald-400" subClassName="text-[9px]" />
+        <Metric label="Duration" value={durationFmt(phase.duration_sec)} sub={`${timeFmt(phase.entry_time)} -> ${phase.exit_time ? timeFmt(phase.exit_time) : "open"}`} icon={<Clock className="h-3 w-3" />} valueClassName="text-violet-400" subClassName="text-[9px]" />
       </div>
 
       {phase.targets.length > 0 && (
