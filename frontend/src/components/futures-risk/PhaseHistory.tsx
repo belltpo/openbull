@@ -429,7 +429,7 @@ function InstrumentPhaseTimeline({
     <section
       className={cn(
         "fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4",
-        expandedPhaseIds.length > 0 && "lg:col-span-2",
+        expandedPhaseIds.length > 0 ? "lg:col-span-2 xl:col-span-5" : "xl:col-span-4",
       )}
     >
       <div className="flex flex-nowrap items-start justify-between gap-3 max-[380px]:flex-wrap">
@@ -587,7 +587,7 @@ export function PhaseHistory({
                 <h3 className="text-lg font-bold tracking-tight">{displayDateLabel(dateKey)}</h3>
                 <p className="text-sm text-muted-foreground">{instruments.length} instrument(s)</p>
               </div>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-12">
                 {instruments.map(({ symbol, phases }) => {
                   return (
                     <InstrumentPhaseTimeline key={`${dateKey}:${symbol}`} symbol={symbol} phases={phases} liveOptFor={liveOpt} />
