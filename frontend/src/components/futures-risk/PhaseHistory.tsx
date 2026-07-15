@@ -429,7 +429,7 @@ function InstrumentPhaseTimeline({
   const togglePhase = (phaseId: number) => setExpandedPhaseIds((current) => current.includes(phaseId) ? current.filter((id) => id !== phaseId) : [...current, phaseId]);
 
   return (
-    <section className="fr-glass fr-dark-surface h-fit rounded-2xl border border-border/70 p-4">
+    <section className="fr-glass fr-dark-surface h-full rounded-2xl border border-border/70 p-4">
       <div className="flex flex-nowrap items-start justify-between gap-3 max-[380px]:flex-wrap">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -585,7 +585,7 @@ export function PhaseHistory({
                 <h3 className="text-lg font-bold tracking-tight">{displayDateLabel(dateKey)}</h3>
                 <p className="text-sm text-muted-foreground">{instruments.length} instrument(s)</p>
               </div>
-              <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
+              <div className="grid auto-rows-fr grid-cols-1 items-stretch gap-4 lg:grid-cols-2 xl:grid-cols-3">
                 {instruments.map(({ symbol, phases }) => {
                   return (
                     <InstrumentPhaseTimeline key={`${dateKey}:${symbol}`} symbol={symbol} phases={phases} liveOptFor={liveOpt} />
