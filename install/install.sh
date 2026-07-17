@@ -14,7 +14,7 @@ export APT_LISTCHANGES_FRONTEND=none
 # OpenBull - Automated Installation Script
 # FastAPI + React 19 + PostgreSQL + Redis + Nginx + Systemd + UFW
 # Supports apex domains and subdomains (e.g. bull.marketcalls.in)
-# Only user input required: domain name
+# Interactive input: domain name and Let's Encrypt notification email.
 # GitHub: https://github.com/belltpo/openbull
 # ============================================================================
 
@@ -85,15 +85,22 @@ install_package() {
 }
 
 wait_for_dpkg_lock() {
-    local max_wait=300
+    local max_wait="${OPENBULL_APT_LOCK_TIMEOUT:-900}"
     local waited=0
+    if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -lt 1 ]; then
+        max_wait=900
+    fi
     # Use pgrep (part of procps — always installed) instead of fuser (psmisc).
     while pgrep -x unattended-upgr >/dev/null 2>&1 \
        || pgrep -x apt-get          >/dev/null 2>&1 \
        || pgrep -x apt              >/dev/null 2>&1 \
        || pgrep -x dpkg             >/dev/null 2>&1; do
         if [ $waited -ge $max_wait ]; then
-            log_error "Timeout waiting for apt/dpkg lock"
+            echo ""
+            log_error "Timeout after ${max_wait}s waiting for apt/dpkg to finish"
+            log_error "Active package-manager processes:"
+            ps -eo pid,etime,stat,comm,args | awk 'NR == 1 || $4 ~ /^(apt|apt-get|dpkg|unattended-upgr)$/' || true
+            log_error "Do not delete apt/dpkg lock files. Inspect the processes above, then rerun the installer after they finish."
             exit 1
         fi
         if [ $waited -eq 0 ]; then
@@ -102,6 +109,10 @@ wait_for_dpkg_lock() {
         printf "."
         sleep 5
         waited=$((waited + 5))
+        if [ $((waited % 60)) -eq 0 ]; then
+            echo ""
+            log_warn "Package manager still active after ${waited}s; continuing to wait (limit ${max_wait}s)..."
+        fi
     done
     if [ $waited -gt 0 ]; then
         echo ""
@@ -135,7 +146,7 @@ IS_REINSTALL=false
 [ -f "$APP_ROOT/.env" ] && IS_REINSTALL=true
 
 # ============================================================================
-# Gather Configuration (domain is the ONLY input)
+# Gather Configuration
 # ============================================================================
 
 while true; do
@@ -146,15 +157,37 @@ while true; do
     log_error "Invalid domain format. Please try again."
 done
 
-# Derive admin email from domain (apex portion). Used for Let's Encrypt.
+# Derive the default notification email from the apex domain.
 DOMAIN_PARTS=$(echo "$DOMAIN" | tr '.' '\n' | wc -l)
 if [ "$DOMAIN_PARTS" -eq 2 ]; then
-    ADMIN_EMAIL="admin@$DOMAIN"
+    DEFAULT_ADMIN_EMAIL="admin@$DOMAIN"
     IS_SUBDOMAIN=false
 else
     APEX_DOMAIN=$(echo "$DOMAIN" | awk -F. '{n=NF; print $(n-1)"."$n}')
-    ADMIN_EMAIL="admin@$APEX_DOMAIN"
+    DEFAULT_ADMIN_EMAIL="admin@$APEX_DOMAIN"
     IS_SUBDOMAIN=true
+fi
+
+validate_email() {
+    [[ "$1" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]
+}
+
+if [ -n "${OPENBULL_SSL_EMAIL:-}" ]; then
+    ADMIN_EMAIL="$OPENBULL_SSL_EMAIL"
+else
+    while true; do
+        read -rp "Email for SSL certificate notifications [$DEFAULT_ADMIN_EMAIL]: " ADMIN_EMAIL
+        ADMIN_EMAIL="${ADMIN_EMAIL:-$DEFAULT_ADMIN_EMAIL}"
+        if validate_email "$ADMIN_EMAIL"; then
+            break
+        fi
+        log_error "Invalid email address. Please try again."
+    done
+fi
+
+if ! validate_email "$ADMIN_EMAIL"; then
+    log_error "Invalid SSL notification email: $ADMIN_EMAIL"
+    exit 1
 fi
 
 # Detect Cloudflare proxy: the domain resolves to a Cloudflare IP and the
@@ -172,7 +205,7 @@ if [ "$IS_CLOUDFLARE" = true ]; then
 fi
 
 log_info "Domain:       $DOMAIN"
-log_info "SSL email:    $ADMIN_EMAIL (auto-derived)"
+log_info "SSL email:    $ADMIN_EMAIL"
 log_info "Install path: $APP_ROOT"
 [ "$IS_REINSTALL" = true ] && log_warn "Re-install detected (existing .env will be backed up)"
 echo ""

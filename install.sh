@@ -89,6 +89,27 @@ normalize_public_url() {
   fi
 }
 
+domain_host_from_value() {
+  local value="$1"
+  value="${value#https://}"
+  value="${value#http://}"
+  value="${value%%/*}"
+  value="${value%%:*}"
+  printf '%s' "$value"
+}
+
+default_ssl_email() {
+  local host
+  local apex
+  host="$(domain_host_from_value "$1")"
+  apex="$(awk -F. '{ if (NF >= 2) print $(NF-1) "." $NF; else print $0 }' <<<"$host")"
+  printf 'admin@%s' "$apex"
+}
+
+validate_email() {
+  [[ "$1" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]]
+}
+
 print_header() {
   echo -e "${BLUE}"
   echo "OpenBull Live Deployment"
@@ -104,6 +125,14 @@ collect_common_inputs() {
 
   DOMAIN="$(prompt_default "Live domain or public URL" "openbull.example.com")"
   PUBLIC_URL="$(normalize_public_url "$DOMAIN")"
+  DEFAULT_SSL_EMAIL="$(default_ssl_email "$DOMAIN")"
+  while true; do
+    SSL_EMAIL="$(prompt_default "Email for SSL certificate notifications" "$DEFAULT_SSL_EMAIL")"
+    if validate_email "$SSL_EMAIL"; then
+      break
+    fi
+    echo "Please enter a valid email address."
+  done
   REPO_URL="$(prompt_default "Git repository URL" "$DEFAULT_REPO")"
   REPO_BRANCH="$(prompt_default "Git branch to deploy" "$DEFAULT_BRANCH")"
   APP_ROOT="$(prompt_default "Server app directory" "/var/www/openbull")"
@@ -137,6 +166,7 @@ print_summary() {
   echo "Deployment summary"
   echo "  Mode:                  $DEPLOY_MODE"
   echo "  Public URL:            $PUBLIC_URL"
+  echo "  SSL email:             $SSL_EMAIL"
   echo "  Repo:                  $REPO_URL"
   echo "  Branch:                $REPO_BRANCH"
   echo "  App root:              $APP_ROOT"
@@ -164,6 +194,7 @@ export_for_child_installer() {
   export OPENBULL_DB_NAME="$DB_NAME"
   export OPENBULL_DB_USER="$DB_USER"
   export OPENBULL_DB_PASSWORD="$DB_PASSWORD"
+  export OPENBULL_SSL_EMAIL="$SSL_EMAIL"
 }
 
 fresh_install() {
@@ -173,9 +204,8 @@ fresh_install() {
     exit 1
   fi
   export_for_child_installer
-  local domain_host="${PUBLIC_URL#https://}"
-  domain_host="${domain_host#http://}"
-  domain_host="${domain_host%%/*}"
+  local domain_host
+  domain_host="$(domain_host_from_value "$PUBLIC_URL")"
   log_info "Running install/install.sh with the selected repo, branch, app root, service, and database values."
   printf '%s\n' "$domain_host" | bash "$SCRIPT_DIR/install/install.sh" 2>&1 | tee -a "$DEPLOY_LOG"
 }
