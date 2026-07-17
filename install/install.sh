@@ -84,22 +84,30 @@ install_package() {
     fi
 }
 
+package_manager_active() {
+    pgrep -x apt-get >/dev/null 2>&1 \
+        || pgrep -x apt >/dev/null 2>&1 \
+        || pgrep -x dpkg >/dev/null 2>&1 \
+        || pgrep -f '(^|[[:space:]/])unattended-upgrade([[:space:]]|$)' >/dev/null 2>&1 \
+        || pgrep -f '(^|[[:space:]])/usr/lib/apt/apt\.systemd\.daily([[:space:]]|$)' >/dev/null 2>&1
+}
+
 wait_for_dpkg_lock() {
     local max_wait="${OPENBULL_APT_LOCK_TIMEOUT:-900}"
     local waited=0
     if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -lt 1 ]; then
         max_wait=900
     fi
-    # Use pgrep (part of procps — always installed) instead of fuser (psmisc).
-    while pgrep -x unattended-upgr >/dev/null 2>&1 \
-       || pgrep -x apt-get          >/dev/null 2>&1 \
-       || pgrep -x apt              >/dev/null 2>&1 \
-       || pgrep -x dpkg             >/dev/null 2>&1; do
+    # Match real package operations, but not Ubuntu's persistent
+    # unattended-upgrade-shutdown --wait-for-signal watcher.
+    while package_manager_active; do
         if [ $waited -ge $max_wait ]; then
             echo ""
             log_error "Timeout after ${max_wait}s waiting for apt/dpkg to finish"
             log_error "Active package-manager processes:"
-            ps -eo pid,etime,stat,comm,args | awk 'NR == 1 || $4 ~ /^(apt|apt-get|dpkg|unattended-upgr)$/' || true
+            ps -eo pid,etime,stat,comm,args | awk \
+                'NR == 1 || $4 ~ /^(apt|apt-get|dpkg)$/ || ($0 ~ /unattended-upgrade/ && $0 !~ /unattended-upgrade-shutdown/) || $0 ~ /apt\.systemd\.daily/' \
+                || true
             log_error "Do not delete apt/dpkg lock files. Inspect the processes above, then rerun the installer after they finish."
             exit 1
         fi
