@@ -83,11 +83,12 @@ Visit **http://127.0.0.1:5173** (the Vite server binds to IPv4 loopback only).
 
 ## Production deployment
 
-`install/install.sh` is a Cloudflare-aware Ubuntu installer that sets up Postgres, Redis, nginx with A-grade security headers, systemd units, certbot, and the swap file (helpful on small VMs). Re-run `install/update.sh` to pull, run `migrate_all.py`, build the frontend, and reload services. `install/perftuning.sh` applies sensible Postgres/Redis kernel + ulimit tuning.
+The top-level `install.sh` is the supported production entrypoint. It offers fresh install, update, and build/check modes while preserving the live `.env`, running migrations, rebuilding the frontend, restarting OpenBull, reloading nginx, and checking `/health`. The underlying `install/install.sh` and `install/update.sh` scripts remain available for direct operations. `install/perftuning.sh` applies sensible Postgres/Redis kernel + ulimit tuning.
 
 ```bash
-sudo ./install/install.sh
-# follow the certbot prompts; nginx proxies /auth, /web, /upstox, /zerodha, /ws to the backend
+chmod +x install.sh install/*.sh
+sudo ./install.sh
+# Select 1 for a fresh server or 2 to update an existing live deployment.
 ```
 
 ## API endpoints (35+)

@@ -15,7 +15,7 @@ export APT_LISTCHANGES_FRONTEND=none
 # FastAPI + React 19 + PostgreSQL + Redis + Nginx + Systemd + UFW
 # Supports apex domains and subdomains (e.g. bull.marketcalls.in)
 # Only user input required: domain name
-# GitHub: https://github.com/marketcalls/openbull
+# GitHub: https://github.com/belltpo/openbull
 # ============================================================================
 
 # Colors
@@ -32,7 +32,7 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()  { echo -e "\n${CYAN}=== $1 ===${NC}\n"; }
 
 # Configuration (overridable by the root install.sh entrypoint)
-REPO_URL="${OPENBULL_REPO_URL:-https://github.com/marketcalls/openbull.git}"
+REPO_URL="${OPENBULL_REPO_URL:-https://github.com/belltpo/openbull.git}"
 REPO_BRANCH="${OPENBULL_REPO_BRANCH:-main}"
 APP_ROOT="${OPENBULL_APP_ROOT:-/var/www/openbull}"
 BACKEND_DIR="$APP_ROOT"
