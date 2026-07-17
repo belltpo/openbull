@@ -161,6 +161,73 @@ collect_common_inputs() {
   if prompt_yes_no "Run health check after deployment" y; then RUN_HEALTHCHECK="yes"; fi
 }
 
+env_value() {
+  local file="$1"
+  local key="$2"
+  [[ -f "$file" ]] || return 0
+  sed -n -E "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*['\"]?([^'\"]*)['\"]?[[:space:]]*$/\1/p" "$file" | head -1
+}
+
+existing_certbot_email() {
+  local email=""
+  if [[ -d /etc/letsencrypt/accounts ]]; then
+    email="$(grep -Rho 'mailto:[A-Za-z0-9._%+-]*@[A-Za-z0-9.-]*' /etc/letsencrypt/accounts 2>/dev/null \
+      | head -1 | sed 's/^mailto://' || true)"
+  fi
+  printf '%s' "$email"
+}
+
+collect_update_inputs() {
+  # Update mode consumes the deployment that is already installed. It must not
+  # ask for (or risk changing) domain/database values on every code release.
+  APP_ROOT="${OPENBULL_APP_ROOT:-$SCRIPT_DIR}"
+  if [[ ! -d "$APP_ROOT/.git" ]]; then
+    APP_ROOT="/var/www/openbull"
+  fi
+  if [[ ! -d "$APP_ROOT/.git" ]]; then
+    log_error "No existing OpenBull Git checkout found. Use Fresh install mode."
+    exit 1
+  fi
+
+  DEFAULT_REPO="$(git -C "$APP_ROOT" remote get-url origin 2>/dev/null || default_repo_url)"
+  DEFAULT_BRANCH="$(git -C "$APP_ROOT" branch --show-current 2>/dev/null || true)"
+  REPO_URL="${OPENBULL_REPO_URL:-$DEFAULT_REPO}"
+  REPO_BRANCH="${OPENBULL_REPO_BRANCH:-${DEFAULT_BRANCH:-main}}"
+  SERVICE_NAME="${OPENBULL_SERVICE_NAME:-openbull}"
+  NODE_VERSION="${OPENBULL_NODE_VERSION:-20}"
+
+  local env_file="$APP_ROOT/.env"
+  local frontend_url
+  frontend_url="$(env_value "$env_file" FRONTEND_URL)"
+  if [[ -n "$frontend_url" && "$frontend_url" =~ ^https?:// ]]; then
+    DOMAIN="$frontend_url"
+  else
+    local nginx_domain=""
+    nginx_domain="$(grep -RhsE '^[[:space:]]*server_name[[:space:]]+' /etc/nginx/sites-enabled 2>/dev/null \
+      | sed -E 's/.*server_name[[:space:]]+([^ ;]+).*/\1/' | grep -v '^_$' | head -1 || true)"
+    DOMAIN="${nginx_domain:-openbull.example.com}"
+  fi
+  PUBLIC_URL="$(normalize_public_url "$DOMAIN")"
+  SSL_EMAIL="${OPENBULL_SSL_EMAIL:-$(existing_certbot_email)}"
+  SSL_EMAIL="${SSL_EMAIL:-$(default_ssl_email "$DOMAIN")}"
+
+  # These values are informational during an update; the existing .env stays
+  # authoritative and is backed up before any build/restart operation.
+  DB_HOST="existing .env"
+  DB_PORT=""
+  DB_NAME="preserved"
+  DB_USER="preserved"
+  DB_PASSWORD="preserved"
+
+  RUN_DEPS="yes"
+  RUN_MIGRATIONS="yes"
+  RUN_FRONTEND_BUILD="yes"
+  RUN_PERMISSIONS="yes"
+  RUN_RESTART="yes"
+  RUN_NGINX_RELOAD="yes"
+  RUN_HEALTHCHECK="yes"
+}
+
 print_summary() {
   echo ""
   echo "Deployment summary"
@@ -172,7 +239,11 @@ print_summary() {
   echo "  App root:              $APP_ROOT"
   echo "  Service:               $SERVICE_NAME"
   echo "  Node.js:               $NODE_VERSION"
-  echo "  Database:              $DB_USER@$DB_HOST:$DB_PORT/$DB_NAME"
+  if [[ "$DEPLOY_MODE" == "update live" ]]; then
+    echo "  Database/config:       preserve existing $APP_ROOT/.env"
+  else
+    echo "  Database:              $DB_USER@$DB_HOST:$DB_PORT/$DB_NAME"
+  fi
   echo "  Install deps:          $RUN_DEPS"
   echo "  Run migrations:        $RUN_MIGRATIONS"
   echo "  Build frontend:        $RUN_FRONTEND_BUILD"
@@ -223,6 +294,24 @@ update_live() {
   run_cmd git -C "$APP_ROOT" remote set-url origin "$REPO_URL"
   run_cmd git -C "$APP_ROOT" fetch origin "$REPO_BRANCH"
   run_cmd git -C "$APP_ROOT" checkout "$REPO_BRANCH"
+
+  # Fresh installers and Windows-authored checkouts can leave harmless
+  # line-ending/file-mode drift. Real server edits must also be preserved, not
+  # overwritten. A named stash handles both and is deliberately not popped
+  # over the newly deployed source.
+  local stash_name="openbull-update-$TIMESTAMP"
+  local dirty_status=""
+  dirty_status="$(git -C "$APP_ROOT" status --porcelain --untracked-files=normal)"
+  if [[ -n "$dirty_status" ]]; then
+    local backup_dir="/var/backups/openbull/$TIMESTAMP"
+    run_cmd mkdir -p "$backup_dir"
+    git -C "$APP_ROOT" status --short > "$backup_dir/git-status.txt"
+    git -C "$APP_ROOT" diff --binary > "$backup_dir/tracked-changes.patch"
+    log_warn "Server checkout contains local changes; backing them up and stashing before update."
+    log_info "Backup: $backup_dir"
+    run_cmd git -C "$APP_ROOT" stash push --include-untracked -m "$stash_name"
+    log_info "The stash is retained for manual recovery: git -C '$APP_ROOT' stash list"
+  fi
   run_cmd git -C "$APP_ROOT" pull --ff-only origin "$REPO_BRANCH"
 
   if [[ -f "$APP_ROOT/.env" ]]; then
@@ -319,7 +408,7 @@ MODE="${MODE:-2}"
 
 case "$MODE" in
   1) DEPLOY_MODE="fresh install"; collect_common_inputs ;;
-  2) DEPLOY_MODE="update live"; collect_common_inputs ;;
+  2) DEPLOY_MODE="update live"; collect_update_inputs ;;
   3) DEPLOY_MODE="build/check only" ;;
   *) log_error "Invalid selection: $MODE"; exit 1 ;;
 esac
