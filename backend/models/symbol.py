@@ -22,4 +22,5 @@ class SymToken(Base):
     __table_args__ = (
         Index("idx_symtoken_symbol_exchange", "symbol", "exchange"),
         Index("idx_symtoken_brsymbol_exchange", "brsymbol", "exchange"),
+        Index("idx_symtoken_exchange_type_symbol", "exchange", "instrumenttype", "symbol"),
     )

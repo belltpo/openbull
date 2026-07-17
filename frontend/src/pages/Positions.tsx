@@ -50,7 +50,7 @@ export default function Positions() {
   const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState<PendingConfirm | null>(null);
 
-  const { data: positions, isLoading, error } = useQuery({
+  const { data: positions, error } = useQuery({
     queryKey: ["positions"],
     queryFn: getPositions,
     refetchInterval: 15000,
@@ -134,17 +134,6 @@ export default function Positions() {
     },
     onSettled: () => setConfirming(null),
   });
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-          <p className="text-sm text-muted-foreground">Loading positions...</p>
-        </div>
-      </div>
-    );
-  }
 
   if (error) {
     return (

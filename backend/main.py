@@ -128,7 +128,10 @@ async def lifespan(app: FastAPI):
     # Load symbol cache if symtoken table has data
     try:
         from backend.broker.upstox.mapping.order_data import _load_symbol_cache
-        await _load_symbol_cache()
+        # PostgreSQL is the source of truth and loads the five in-process maps
+        # predictably. Avoid multi-megabyte Redis HGETALL calls during startup;
+        # the post-login master refresh mirrors Redis after the app is ready.
+        await _load_symbol_cache(force_db=True, warm_redis=False)
     except Exception as e:
         logger.info("Symbol cache not loaded (will load after master contract download): %s", e)
 

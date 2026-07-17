@@ -306,14 +306,6 @@ def master_contract_download(auth_token: str | None = None) -> dict:
 
         asyncio.run(_db_ops())
 
-        async def _refresh_caches():
-            from backend.utils import symtoken_cache
-            from backend.broker.upstox.mapping.order_data import _load_symbol_cache
-            await symtoken_cache.warm_from_db()
-            await _load_symbol_cache()
-
-        asyncio.run(_refresh_caches())
-
         logger.info("Dhan master contract download completed successfully")
         return {
             "status": "success",

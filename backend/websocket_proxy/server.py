@@ -18,6 +18,7 @@ Client protocol (JSON over WebSocket):
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -44,6 +45,7 @@ MODE_MAP = {"LTP": MODE_LTP, "QUOTE": MODE_QUOTE, "DEPTH": MODE_DEPTH, "FULL": M
 
 # -- module-level state (single-user) --
 _adapter: BaseBrokerAdapter | None = None
+_adapter_signature: str | None = None
 _adapter_lock = asyncio.Lock()
 _clients: dict[str, websockets.WebSocketServerProtocol] = {}
 _authenticated_clients: set[str] = set()  # client_ids that have authenticated
@@ -53,6 +55,7 @@ _subscription_lock = asyncio.Lock()
 _last_send_time: dict[tuple[str, str], float] = {}  # (symbol, exchange) -> timestamp
 _server: websockets.WebSocketServer | None = None
 _zmq_task: asyncio.Task | None = None
+_adapter_monitor_task: asyncio.Task | None = None
 
 LTP_THROTTLE_SEC = 0.05  # 50ms
 MAX_WS_CONNECTIONS = 10
@@ -79,6 +82,71 @@ def _create_adapter(broker_name: str, auth_token: str, config: dict) -> BaseBrok
     raise ValueError(f"No streaming adapter for broker: {broker_name}")
 
 
+def _context_signature(broker_name: str, auth_token: str, config: dict) -> str:
+    """Fingerprint credentials without retaining/logging the raw token."""
+    client_id = str((config or {}).get("client_id") or "")
+    material = f"{broker_name}:{client_id}:{auth_token}"
+    return hashlib.sha256(material.encode("utf-8", errors="ignore")).hexdigest()
+
+
+def _adapter_is_healthy(adapter: BaseBrokerAdapter | None) -> bool:
+    if adapter is None:
+        return False
+    explicit = getattr(adapter, "is_healthy", None)
+    if isinstance(explicit, bool):
+        return explicit
+    return bool(getattr(adapter, "_running", True) and getattr(adapter, "_connected", True))
+
+
+async def _replace_adapter(broker_name: str, auth_token: str, config: dict) -> None:
+    """Atomically replace a dead/stale adapter and replay pooled demand."""
+    global _adapter, _adapter_signature, _zmq_task, _upstream_subscriptions
+
+    old_adapter = _adapter
+    old_zmq_task = _zmq_task
+    _adapter = None
+    _adapter_signature = None
+    _zmq_task = None
+    _upstream_subscriptions = {}
+
+    if old_zmq_task is not None:
+        old_zmq_task.cancel()
+        await asyncio.gather(old_zmq_task, return_exceptions=True)
+    if old_adapter is not None:
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(None, old_adapter.disconnect)
+        except Exception:
+            logger.debug("Old adapter disconnect failed", exc_info=True)
+        try:
+            old_adapter.cleanup_zmq()
+        except Exception:
+            logger.debug("Old adapter ZMQ cleanup failed", exc_info=True)
+
+    adapter = _create_adapter(broker_name, auth_token, config)
+    try:
+        zmq_port = adapter.setup_zmq()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, adapter.connect)
+        _adapter = adapter
+        _adapter_signature = _context_signature(broker_name, auth_token, config)
+        _zmq_task = asyncio.create_task(_zmq_listener(zmq_port))
+        get_market_data_cache().set_connected(True, authenticated=True)
+        await _sync_upstream_subscriptions()
+        logger.info("Adapter %s created and connected (ZMQ port %d)", broker_name, zmq_port)
+    except Exception:
+        try:
+            adapter.disconnect()
+        except Exception:
+            pass
+        try:
+            adapter.cleanup_zmq()
+        except Exception:
+            pass
+        get_market_data_cache().set_connected(False)
+        raise
+
+
 async def _send_json(ws, data: dict) -> None:
     try:
         await ws.send(json.dumps(data))
@@ -95,6 +163,30 @@ async def _broadcast(client_ids: set[str], message: dict) -> None:
             tasks.append(_send_json(ws, message))
     if tasks:
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def _adapter_health_monitor() -> None:
+    """Surface broker-action errors and recycle clients after expired auth."""
+    last_issue_key = ""
+    while True:
+        await asyncio.sleep(2.0)
+        adapter = _adapter
+        issue = getattr(adapter, "broker_issue", None) if adapter is not None else None
+        if not isinstance(issue, dict):
+            last_issue_key = ""
+            continue
+        issue_key = f"{issue.get('code')}:{issue.get('broker')}"
+        if issue_key != last_issue_key:
+            await _broadcast(set(_authenticated_clients), issue)
+            last_issue_key = issue_key
+        if issue.get("code") == "BROKER_AUTH_REQUIRED":
+            for client_id in list(_authenticated_clients):
+                ws = _clients.get(client_id)
+                if ws is not None:
+                    try:
+                        await ws.close(code=4001, reason="Broker authentication refresh required")
+                    except Exception:
+                        pass
 
 
 def _desired_upstream_subscriptions() -> dict[tuple[str, str], int]:
@@ -245,7 +337,7 @@ def _ack(payload: dict, request_id) -> dict:
 
 
 async def _handle_client(ws: websockets.WebSocketServerProtocol) -> None:
-    global _adapter, _zmq_task
+    global _adapter, _adapter_signature, _zmq_task
 
     # Enforce connection limit
     if len(_clients) >= MAX_WS_CONNECTIONS:
@@ -290,19 +382,14 @@ async def _handle_client(ws: websockets.WebSocketServerProtocol) -> None:
 
                 # Create adapter if needed (single-user: one adapter at a time)
                 async with _adapter_lock:
-                    if _adapter is None:
+                    signature = _context_signature(broker_name, auth_token, config)
+                    if (
+                        _adapter is None
+                        or _adapter_signature != signature
+                        or not _adapter_is_healthy(_adapter)
+                    ):
                         try:
-                            _adapter = _create_adapter(broker_name, auth_token, config)
-                            zmq_port = _adapter.setup_zmq()
-
-                            # Connect adapter in a background thread (it blocks)
-                            loop = asyncio.get_running_loop()
-                            await loop.run_in_executor(None, _adapter.connect)
-
-                            # Start ZMQ listener
-                            _zmq_task = asyncio.create_task(_zmq_listener(zmq_port))
-                            get_market_data_cache().set_connected(True, authenticated=True)
-                            logger.info("Adapter %s created and connected (ZMQ port %d)", broker_name, zmq_port)
+                            await _replace_adapter(broker_name, auth_token, config)
                         except Exception as e:
                             logger.exception("Failed to create adapter: %s", e)
                             # Release any resources the partial setup acquired
@@ -318,6 +405,7 @@ async def _handle_client(ws: websockets.WebSocketServerProtocol) -> None:
                                 except Exception:
                                     pass
                             _adapter = None
+                            _adapter_signature = None
                             get_market_data_cache().set_connected(False)
                             await _send_json(ws, _ack({"type": "auth", "status": "error", "message": "Broker connection failed"}, request_id))
                             continue
@@ -423,20 +511,26 @@ async def _handle_client(ws: websockets.WebSocketServerProtocol) -> None:
 
 async def start_ws_proxy(host: str, port: int) -> None:
     """Start the WebSocket proxy server (runs forever until cancelled)."""
-    global _server
+    global _server, _adapter_monitor_task
     _server = await websockets.serve(
         _handle_client, host, port,
         ping_interval=30,
         ping_timeout=10,
         max_size=MAX_MESSAGE_SIZE,
     )
+    _adapter_monitor_task = asyncio.create_task(_adapter_health_monitor())
     logger.info("WebSocket proxy listening on ws://%s:%d", host, port)
     await asyncio.Future()  # run forever
 
 
 async def shutdown_ws_proxy() -> None:
     """Gracefully shut down the proxy, adapter, and ZMQ listener."""
-    global _adapter, _zmq_task, _server, _upstream_subscriptions
+    global _adapter, _adapter_signature, _zmq_task, _adapter_monitor_task, _server, _upstream_subscriptions
+
+    if _adapter_monitor_task:
+        _adapter_monitor_task.cancel()
+        await asyncio.gather(_adapter_monitor_task, return_exceptions=True)
+        _adapter_monitor_task = None
 
     if _zmq_task:
         _zmq_task.cancel()
@@ -453,6 +547,7 @@ async def shutdown_ws_proxy() -> None:
             pass
         _adapter.cleanup_zmq()
         _adapter = None
+        _adapter_signature = None
         get_market_data_cache().set_connected(False)
 
     if _server:

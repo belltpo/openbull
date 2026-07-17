@@ -21,7 +21,7 @@ _brsymbol_exchange_to_symbol: dict[tuple[str, str], str] | None = None  # (brsym
 _symbol_cache = None
 
 
-async def _load_symbol_cache():
+async def _load_symbol_cache(*, force_db: bool = False, warm_redis: bool = True):
     """Hydrate in-memory symbol lookup dicts.
 
     Source of truth priority:
@@ -38,7 +38,7 @@ async def _load_symbol_cache():
     # which would leave orders unable to resolve a token — so we only accept the
     # Redis result when it's non-empty and otherwise fall through to the DB.
     try:
-        if await symtoken_cache.is_ready():
+        if not force_db and await symtoken_cache.is_ready():
             tok2sym, tok2symex, symex2tok, symex2brsym, brsymex2sym = (
                 await symtoken_cache.load_into_memory_dicts()
             )
@@ -68,10 +68,11 @@ async def _load_symbol_cache():
     logger.info("Symbol cache hydrated from PostgreSQL: %d entries", len(_token_to_symbol))
 
     # Best-effort: mirror into Redis for next time. Never blocks correctness.
-    try:
-        await symtoken_cache.warm_from_db()
-    except Exception:
-        logger.debug("Redis symtoken warm skipped", exc_info=True)
+    if warm_redis:
+        try:
+            await symtoken_cache.warm_from_db()
+        except Exception:
+            logger.debug("Redis symtoken warm skipped", exc_info=True)
 
 
 def _get_symbol_from_cache(token: str) -> str | None:

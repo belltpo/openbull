@@ -1,263 +1,213 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getWebSocketApiKey, getWebSocketConfig } from "@/api/websocket";
+import { notifyBrokerIssue } from "@/lib/brokerIssue";
 
 export type SubscriptionMode = "LTP" | "Quote" | "Depth";
-
-export interface DepthLevel {
-  price?: number;
-  quantity?: number;
-  orders?: number;
-}
-
+export interface DepthLevel { price?: number; quantity?: number; orders?: number; }
 export interface MarketTickData {
-  ltp?: number;
-  open?: number;
-  high?: number;
-  low?: number;
-  close?: number;
-  volume?: number;
-  oi?: number;
-  bid_price?: number;
-  ask_price?: number;
-  bid_size?: number;
-  ask_size?: number;
+  ltp?: number; open?: number; high?: number; low?: number; close?: number;
+  volume?: number; oi?: number; bid_price?: number; ask_price?: number;
+  bid_size?: number; ask_size?: number;
   depth?: { buy?: DepthLevel[]; sell?: DepthLevel[] };
-  change?: number;
-  change_percent?: number;
+  change?: number; change_percent?: number;
 }
-
 export interface SymbolData {
-  symbol: string;
-  exchange: string;
-  data: MarketTickData;
-  lastUpdate: number;
+  symbol: string; exchange: string; data: MarketTickData; lastUpdate: number;
 }
-
 export type ConnectionState =
-  | "idle"
-  | "connecting"
-  | "connected"
-  | "authenticating"
-  | "authenticated"
-  | "error"
-  | "closed";
-
+  | "idle" | "connecting" | "connected" | "authenticating"
+  | "authenticated" | "error" | "closed";
 interface UseMarketDataOptions {
   symbols: Array<{ symbol: string; exchange: string }>;
   mode?: SubscriptionMode;
   enabled?: boolean;
 }
-
 interface UseMarketDataReturn {
-  data: Map<string, SymbolData>;
-  isConnected: boolean;
-  isAuthenticated: boolean;
-  state: ConnectionState;
-  error: string | null;
+  data: Map<string, SymbolData>; isConnected: boolean; isAuthenticated: boolean;
+  state: ConnectionState; error: string | null;
 }
 
 const symKey = (sym: string, exch: string) => `${exch}:${sym}`;
-
 function normalizeMode(mode: SubscriptionMode): "LTP" | "QUOTE" | "DEPTH" {
   if (mode === "Quote") return "QUOTE";
   if (mode === "Depth") return "DEPTH";
   return "LTP";
 }
 
-/**
- * Single-WS hook for live market data — mirrors the protocol exposed by the
- * OpenBull WebSocket proxy (see backend/websocket_proxy + WebSocketTest.tsx).
- *
- * Intended for one consumer at a time per page (option chain). Opens a fresh
- * WS on mount, authenticates, subscribes to `symbols`, and emits the latest
- * tick per symbol via the returned `data` map. Closes on unmount.
- */
+/** Resilient live-data hook: reconnects, reauthenticates and replays demand. */
 export function useMarketData({
-  symbols,
-  mode = "LTP",
-  enabled = true,
+  symbols, mode = "LTP", enabled = true,
 }: UseMarketDataOptions): UseMarketDataReturn {
   const [data, setData] = useState<Map<string, SymbolData>>(new Map());
   const [state, setState] = useState<ConnectionState>("idle");
   const [error, setError] = useState<string | null>(null);
-
   const wsRef = useRef<WebSocket | null>(null);
   const subscribedRef = useRef<Set<string>>(new Set());
-  const pendingSubsRef = useRef<Array<{ symbol: string; exchange: string }>>([]);
+  const desiredRef = useRef(symbols);
+  const modeRef = useRef(normalizeMode(mode));
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
 
-  // Stable key for the current symbol set — used to drive resubscription.
   const symbolsKey = useMemo(
     () => symbols.map((s) => symKey(s.symbol, s.exchange)).sort().join(","),
-    [symbols]
+    [symbols],
   );
-
   const wireMode = normalizeMode(mode);
 
-  // Connect once, and tear down on unmount.
+  useEffect(() => {
+    desiredRef.current = symbols;
+    modeRef.current = wireMode;
+  }, [symbolsKey, wireMode, symbols]);
+
   useEffect(() => {
     if (!enabled) {
-      setState("idle");
       return;
     }
+    let disposed = false;
+    const subscriptions = subscribedRef.current;
 
-    let cancelled = false;
+    const clearReconnect = () => {
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+    };
+
+    const scheduleReconnect = (connect: () => void) => {
+      if (disposed || reconnectTimerRef.current !== null) return;
+      const attempt = reconnectAttemptRef.current++;
+      const delay = Math.min(30_000, 750 * 2 ** Math.min(attempt, 6));
+      setState("closed");
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        connect();
+      }, delay);
+    };
 
     const connect = async () => {
+      if (disposed) return;
+      clearReconnect();
       setState("connecting");
-      setError(null);
-      let url: string;
-      let apiKey: string;
       try {
-        const [cfg, key] = await Promise.all([
-          getWebSocketConfig(),
-          getWebSocketApiKey(),
-        ]);
-        url = cfg.websocket_url;
-        apiKey = key;
-      } catch (e) {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Failed to fetch WS config");
-        setState("error");
-        return;
-      }
-      if (cancelled) return;
+        const [cfg, apiKey] = await Promise.all([getWebSocketConfig(), getWebSocketApiKey()]);
+        if (disposed) return;
+        const ws = new WebSocket(cfg.websocket_url);
+        wsRef.current = ws;
 
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setState("authenticating");
-        ws.send(JSON.stringify({ action: "authenticate", api_key: apiKey }));
-      };
-
-      ws.onmessage = (evt) => {
-        let msg: Record<string, unknown>;
-        try {
-          msg = JSON.parse(evt.data as string);
-        } catch {
-          return;
-        }
-
-        if (msg.type === "auth") {
-          if (msg.status === "success") {
-            setState("authenticated");
-            // Flush any queued subscriptions
-            const queued = pendingSubsRef.current;
-            pendingSubsRef.current = [];
-            if (queued.length > 0) {
-              ws.send(
-                JSON.stringify({ action: "subscribe", symbols: queued, mode: wireMode })
-              );
-              for (const s of queued) subscribedRef.current.add(symKey(s.symbol, s.exchange));
+        ws.onopen = () => {
+          if (disposed || ws !== wsRef.current) return;
+          setState("authenticating");
+          ws.send(JSON.stringify({ action: "authenticate", api_key: apiKey }));
+        };
+        ws.onmessage = (evt) => {
+          if (disposed || ws !== wsRef.current) return;
+          let msg: Record<string, unknown>;
+          try { msg = JSON.parse(evt.data as string); } catch { return; }
+          if (msg.type === "auth") {
+            if (msg.status === "success") {
+              reconnectAttemptRef.current = 0;
+              setError(null);
+              setState("authenticated");
+              subscriptions.clear();
+              const desired = desiredRef.current;
+              if (desired.length) {
+                ws.send(JSON.stringify({ action: "subscribe", symbols: desired, mode: modeRef.current }));
+                desired.forEach((s) => subscriptions.add(symKey(s.symbol, s.exchange)));
+              }
+            } else {
+              const message = String(msg.message ?? "Authentication failed");
+              setError(message);
+              setState("error");
+              notifyBrokerIssue({
+                code: "BROKER_AUTH_REQUIRED", broker: String(msg.broker ?? "dhan"),
+                message: `${message}. Re-login in Broker Configuration.`, action_url: "/broker/config",
+              });
+              ws.close();
             }
-          } else {
-            setError(String(msg.message ?? "Authentication failed"));
-            setState("error");
+            return;
           }
-          return;
-        }
-
-        if (msg.type === "market_data") {
+          if (msg.type === "broker_issue") {
+            notifyBrokerIssue(msg);
+            setError(String(msg.message ?? "Broker data issue"));
+            return;
+          }
+          if (msg.type !== "market_data") return;
           const symbol = String(msg.symbol ?? "");
           const exchange = String(msg.exchange ?? "");
-          const tick = (msg.data as MarketTickData) ?? {};
           if (!symbol || !exchange) return;
+          const tick = (msg.data as MarketTickData) ?? {};
           const key = symKey(symbol, exchange);
           setData((prev) => {
             const next = new Map(prev);
-            const existing = next.get(key)?.data ?? {};
             next.set(key, {
-              symbol,
-              exchange,
-              data: { ...existing, ...tick },
+              symbol, exchange,
+              data: { ...(next.get(key)?.data ?? {}), ...tick },
               lastUpdate: Date.now(),
             });
             return next;
           });
-        }
-      };
-
-      ws.onerror = () => {
-        if (cancelled) return;
-        setError("WebSocket error");
+        };
+        ws.onerror = () => {
+          if (disposed || ws !== wsRef.current) return;
+          setError("Live data connection interrupted; reconnecting automatically");
+          setState("error");
+          try { ws.close(); } catch { /* close handler retries */ }
+        };
+        ws.onclose = () => {
+          if (disposed || ws !== wsRef.current) return;
+          wsRef.current = null;
+          subscriptions.clear();
+          scheduleReconnect(connect);
+        };
+      } catch (cause) {
+        if (disposed) return;
+        setError(cause instanceof Error ? cause.message : "Failed to start live data");
         setState("error");
-      };
-
-      ws.onclose = () => {
-        if (cancelled) return;
-        setState("closed");
-        wsRef.current = null;
-        subscribedRef.current.clear();
-      };
+        scheduleReconnect(connect);
+      }
     };
 
     connect();
-
     return () => {
-      cancelled = true;
+      disposed = true;
+      clearReconnect();
       const ws = wsRef.current;
-      if (ws) {
-        try {
-          ws.close();
-        } catch {
-          /* ignore */
-        }
-      }
       wsRef.current = null;
-      subscribedRef.current.clear();
-      pendingSubsRef.current = [];
-      setData(new Map());
+      if (ws) try { ws.close(); } catch { /* ignore */ }
+      subscriptions.clear();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
-  // Diff subscriptions when the symbol set or mode changes.
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || state !== "authenticated") return;
     const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
     const desired = new Set(symbols.map((s) => symKey(s.symbol, s.exchange)));
     const current = subscribedRef.current;
-
     const toAdd = symbols.filter((s) => !current.has(symKey(s.symbol, s.exchange)));
-    const toRemove = [...current]
-      .filter((k) => !desired.has(k))
-      .map((k) => {
-        const idx = k.indexOf(":");
-        return { exchange: k.slice(0, idx), symbol: k.slice(idx + 1) };
-      });
-
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      // Queue everything for after auth
-      pendingSubsRef.current = [...symbols];
-      return;
-    }
-    if (state !== "authenticated") {
-      pendingSubsRef.current = [...symbols];
-      return;
-    }
-
-    if (toAdd.length > 0) {
+    const toRemove = [...current].filter((key) => !desired.has(key)).map((key) => {
+      const split = key.indexOf(":");
+      return { exchange: key.slice(0, split), symbol: key.slice(split + 1) };
+    });
+    if (toAdd.length) {
       ws.send(JSON.stringify({ action: "subscribe", symbols: toAdd, mode: wireMode }));
-      for (const s of toAdd) current.add(symKey(s.symbol, s.exchange));
+      toAdd.forEach((s) => current.add(symKey(s.symbol, s.exchange)));
     }
-    if (toRemove.length > 0) {
+    if (toRemove.length) {
       ws.send(JSON.stringify({ action: "unsubscribe", symbols: toRemove, mode: wireMode }));
-      for (const s of toRemove) current.delete(symKey(s.symbol, s.exchange));
-      // Drop stale entries from the data map
+      toRemove.forEach((s) => current.delete(symKey(s.symbol, s.exchange)));
       setData((prev) => {
         const next = new Map(prev);
-        for (const s of toRemove) next.delete(symKey(s.symbol, s.exchange));
+        toRemove.forEach((s) => next.delete(symKey(s.symbol, s.exchange)));
         return next;
       });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbolsKey, wireMode, enabled, state]);
+  }, [symbolsKey, wireMode, enabled, state, symbols]);
 
+  const effectiveState: ConnectionState = enabled ? state : "idle";
   return {
-    data,
-    state,
-    isConnected: state === "connected" || state === "authenticated" || state === "authenticating",
-    isAuthenticated: state === "authenticated",
-    error,
+    data, state: effectiveState,
+    isConnected: effectiveState === "connected" || effectiveState === "authenticated" || effectiveState === "authenticating",
+    isAuthenticated: effectiveState === "authenticated", error,
   };
 }

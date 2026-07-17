@@ -1,4 +1,5 @@
 import axios from "axios";
+import { notifyBrokerIssue } from "@/lib/brokerIssue";
 
 const api = axios.create({
   baseURL: "",
@@ -15,9 +16,13 @@ const api = axios.create({
 const PUBLIC_PATHS = new Set(["/", "/login", "/setup"]);
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    notifyBrokerIssue(response.data);
+    return response;
+  },
   (error) => {
-    if (error.response?.status === 401) {
+    const brokerIssue = notifyBrokerIssue(error.response?.data);
+    if (error.response?.status === 401 && !brokerIssue) {
       const currentPath = window.location.pathname;
       if (!PUBLIC_PATHS.has(currentPath)) {
         window.location.href = "/login";

@@ -30,7 +30,7 @@ export default function ApiKey() {
   const hideTimer = useRef<number | null>(null);
   const tickTimer = useRef<number | null>(null);
 
-  const { data, isLoading, error } = useQuery({
+  const { data, error } = useQuery({
     queryKey: ["apikey"],
     queryFn: getApiKey,
   });
@@ -88,17 +88,6 @@ export default function ApiKey() {
   };
 
   useEffect(() => () => clearTimers(), []);
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-          <p className="text-sm text-muted-foreground">Loading API key…</p>
-        </div>
-      </div>
-    );
-  }
 
   if (error) {
     return (

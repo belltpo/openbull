@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.concurrency import run_in_threadpool
 
 from backend.api.futures_risk import _broker_quote_error, _quote_key, _quote_payloads
 from backend.dependencies import BrokerContext, get_broker_context, get_current_user, get_db
@@ -60,7 +61,7 @@ class ContractQuickOrderSettings(BaseModel):
 
 @router.get("/config")
 async def get_config(user: User = Depends(get_current_user)):
-    return {"status": "success", "data": fr.get_config_map()}
+    return {"status": "success", "data": await run_in_threadpool(fr.get_config_map)}
 
 
 @router.post("/config")
@@ -140,7 +141,7 @@ class TargetTemplateUpdate(BaseModel):
 
 @router.get("/target-templates")
 async def get_target_templates(user: User = Depends(get_current_user)):
-    return {"status": "success", "data": fr.list_target_templates()}
+    return {"status": "success", "data": await run_in_threadpool(fr.list_target_templates)}
 
 
 @router.post("/target-templates")
@@ -177,7 +178,7 @@ async def remove_target_template(template_id: int, user: User = Depends(get_curr
 
 @router.get("/targets")
 async def get_targets(template_id: int | None = None, user: User = Depends(get_current_user)):
-    return {"status": "success", "data": fr.list_targets(template_id=template_id)}
+    return {"status": "success", "data": await run_in_threadpool(fr.list_targets, template_id=template_id)}
 
 
 @router.post("/targets")
@@ -236,7 +237,7 @@ class SymbolMapUpdate(BaseModel):
 
 @router.get("/symbol-maps")
 async def get_symbol_maps(user: User = Depends(get_current_user)):
-    return {"status": "success", "data": fr.list_symbol_maps()}
+    return {"status": "success", "data": await run_in_threadpool(fr.list_symbol_maps)}
 
 
 @router.post("/symbol-maps")
@@ -271,7 +272,7 @@ async def remove_symbol_map(map_id: int, user: User = Depends(get_current_user))
 
 @router.get("/resolve-futures")
 async def resolve_futures(underlying: str, user: User = Depends(get_current_user)):
-    fut = fr.resolve_futures(underlying)
+    fut = await run_in_threadpool(fr.resolve_futures, underlying)
     if fut is None:
         raise HTTPException(status_code=404, detail=f"No futures mapping for {underlying}")
     return {"status": "success", "data": fut}
@@ -283,7 +284,7 @@ async def expiries(
     exchange: str = "NSE_INDEX",
     user: User = Depends(get_current_user),
 ):
-    return {"status": "success", "data": fr.list_expiries(underlying, exchange)}
+    return {"status": "success", "data": await run_in_threadpool(fr.list_expiries, underlying, exchange)}
 
 
 @router.get("/strikes")
@@ -294,7 +295,8 @@ async def strikes(
     exchange: str = "NSE_INDEX",
     ctx: BrokerContext = Depends(get_broker_context),
 ):
-    data = fr.list_strikes(
+    data = await run_in_threadpool(
+        fr.list_strikes,
         underlying, exchange, expiry, option_type,
         ctx.auth_token, ctx.broker_name, ctx.broker_config,
     )
@@ -322,13 +324,13 @@ async def quick_order_preview(
     """
     try:
         mode = await get_trading_mode(db)
-        maps = [m for m in fr.list_symbol_maps() if m.get("enabled")]
+        maps = [m for m in await run_in_threadpool(fr.list_symbol_maps) if m.get("enabled")]
         selected_map = next(
             (m for m in maps if str(m.get("underlying", "")).upper() == payload.underlying.upper()),
             None,
         )
         underlying_exchange = str((selected_map or {}).get("underlying_exchange") or payload.underlying_exchange)
-        fut = fr.resolve_futures(payload.underlying)
+        fut = await run_in_threadpool(fr.resolve_futures, payload.underlying)
         if fut is None:
             raise FrError(f"No futures mapping configured for {payload.underlying}", 404)
 
@@ -363,12 +365,14 @@ async def quick_order_preview(
                 ctx.broker_config,
             )
             instruments.append({"symbol": pe["symbol"], "exchange": pe["exchange"]})
-        quote_map = _quote_payloads(instruments, ctx.auth_token, ctx.broker_name, ctx.broker_config)
+        quote_map = await run_in_threadpool(
+            _quote_payloads, instruments, ctx.auth_token, ctx.broker_name, ctx.broker_config,
+        )
         broker_error = _broker_quote_error(quote_map)
         if broker_error:
             raise HTTPException(
                 status_code=broker_error["status_code"],
-                detail=broker_error["body"].get("message", "Broker quote service temporarily unavailable"),
+                detail=broker_error["body"],
             )
         data: dict[str, Any] = {
             "mode": mode,
@@ -437,7 +441,8 @@ async def place_trade(
 ):
     mode = await get_trading_mode(db)
     try:
-        trade = fr.place_trade(
+        trade = await run_in_threadpool(
+            fr.place_trade,
             user_id=ctx.user.id,
             mode=mode,
             auth_token=ctx.auth_token,
@@ -477,7 +482,7 @@ async def list_trades(
     db: AsyncSession = Depends(get_db),
 ):
     selected_mode = mode or await get_trading_mode(db)
-    return {"status": "success", "data": fr.list_trades(user.id, status, mode=selected_mode)}
+    return {"status": "success", "data": await run_in_threadpool(fr.list_trades, user.id, status, mode=selected_mode)}
 
 
 @router.get("/phases")
@@ -490,7 +495,7 @@ async def list_phases(
     """Phase history grouped by (underlying, session) with per-phase lifecycle
     summary (entry/exit, P&L, duration, achieved targets, exit kind)."""
     selected_mode = mode or await get_trading_mode(db)
-    return {"status": "success", "data": fr.list_phases(user.id, underlying, mode=selected_mode)}
+    return {"status": "success", "data": await run_in_threadpool(fr.list_phases, user.id, underlying, mode=selected_mode)}
 
 
 @router.get("/trades/{trade_id}")
@@ -499,7 +504,7 @@ async def get_trade(
     mode: str | None = Query(None, pattern="^(live|sandbox)$"),
     user: User = Depends(get_current_user),
 ):
-    trade = fr.get_trade(user.id, trade_id, mode=mode)
+    trade = await run_in_threadpool(fr.get_trade, user.id, trade_id, mode=mode)
     if trade is None:
         raise HTTPException(status_code=404, detail="Trade not found")
     return {"status": "success", "data": trade}
@@ -559,7 +564,7 @@ async def delete_trade(trade_id: int, user: User = Depends(get_current_user)):
 async def exit_trade(trade_id: int, user: User = Depends(get_current_user)):
     """Full manual close of an active trade."""
     try:
-        trade = fr.manual_exit(user.id, trade_id)
+        trade = await run_in_threadpool(fr.manual_exit, user.id, trade_id)
     except FrError as e:
         raise HTTPException(status_code=e.status, detail=e.message)
     return {"status": "success", "data": trade}
@@ -569,7 +574,7 @@ async def exit_trade(trade_id: int, user: User = Depends(get_current_user)):
 async def partial_exit(trade_id: int, payload: PartialExit, user: User = Depends(get_current_user)):
     """Exit a specific quantity; the trade stays active if a remainder is left."""
     try:
-        trade = fr.manual_exit(user.id, trade_id, qty=payload.qty)
+        trade = await run_in_threadpool(fr.manual_exit, user.id, trade_id, qty=payload.qty)
     except FrError as e:
         raise HTTPException(status_code=e.status, detail=e.message)
     return {"status": "success", "data": trade}
@@ -579,7 +584,7 @@ async def partial_exit(trade_id: int, payload: PartialExit, user: User = Depends
 async def emergency_exit(trade_id: int, user: User = Depends(get_current_user)):
     """Forced full close (emergency)."""
     try:
-        trade = fr.manual_exit(user.id, trade_id, emergency=True)
+        trade = await run_in_threadpool(fr.manual_exit, user.id, trade_id, emergency=True)
     except FrError as e:
         raise HTTPException(status_code=e.status, detail=e.message)
     return {"status": "success", "data": trade}

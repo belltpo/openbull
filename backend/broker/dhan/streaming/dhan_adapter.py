@@ -93,6 +93,38 @@ class DhanAdapter(BaseBrokerAdapter):
         self._reconnect_reset_signal = False
         self._fatal_error: bool = False
         self._fatal_error_message: str = ""
+        self._rate_limited_until: float = 0.0
+
+    @property
+    def is_healthy(self) -> bool:
+        """Whether the adapter can currently accept subscriptions."""
+        return bool(self._running and self._connected and not self._fatal_error)
+
+    @property
+    def broker_issue(self) -> dict | None:
+        if self._fatal_error:
+            return {
+                "type": "broker_issue", "status": "error",
+                "code": "BROKER_AUTH_REQUIRED", "broker": "dhan",
+                "message": "Dhan authentication expired. Re-login in Broker Configuration.",
+                "action_url": "/broker/config", "requires_broker_reauth": True,
+            }
+        if self._rate_limited_until > time.monotonic():
+            return {
+                "type": "broker_issue", "status": "error",
+                "code": "BROKER_RATE_LIMIT", "broker": "dhan",
+                "message": "Dhan data rate limit reached. Regenerate or re-login the broker API connection.",
+                "action_url": "/broker/config", "requires_broker_reauth": True,
+                "retry_after_seconds": max(1, int(self._rate_limited_until - time.monotonic())),
+            }
+        return None
+
+    def _set_cache_connection(self, connected: bool) -> None:
+        try:
+            from backend.services.market_data_cache import get_market_data_cache
+            get_market_data_cache().set_connected(connected, authenticated=connected)
+        except Exception:
+            logger.debug("Unable to update MarketDataCache connection state", exc_info=True)
 
     def _extract_client_id(self) -> str | None:
         cfg = self.broker_config or {}
@@ -316,6 +348,11 @@ class DhanAdapter(BaseBrokerAdapter):
                 )
                 break
 
+            if self._rate_limited_until > time.monotonic():
+                delay = self._rate_limited_until - time.monotonic()
+                logger.warning("Dhan WS rate-limit cooldown active; reconnecting in %.1fs", delay)
+                time.sleep(delay)
+
             # Flaky-but-reachable session resets the budget (only consecutive
             # failures burn it).
             if self._reconnect_reset_signal:
@@ -323,18 +360,25 @@ class DhanAdapter(BaseBrokerAdapter):
 
             reconnect_attempts += 1
             if reconnect_attempts > RECONNECT_MAX_TRIES:
-                logger.error("Dhan WS max reconnect attempts (%d) reached", RECONNECT_MAX_TRIES)
-                break
-            delay = min(2 * (1.5 ** reconnect_attempts), RECONNECT_MAX_DELAY)
+                # Keep trying forever for transient network/feed failures.  A
+                # credential failure is handled by the fatal-error branch
+                # above and requires a fresh authenticated adapter.
+                logger.warning(
+                    "Dhan WS still unavailable after %d attempts; continuing at capped delay",
+                    reconnect_attempts,
+                )
+            delay = min(2 * (1.5 ** min(reconnect_attempts, 50)), RECONNECT_MAX_DELAY)
             logger.info("Reconnecting Dhan WS in %.1fs (attempt %d)...", delay, reconnect_attempts)
             time.sleep(delay)
 
     def _on_open(self, ws) -> None:
         logger.info("Dhan WS connected")
         self._connected = True
+        self._rate_limited_until = 0.0
         self._reconnect_reset_signal = True
         self._last_msg_time = time.time()
         self._start_health_check()
+        self._set_cache_connection(True)
 
         # Resubscribe everything on (re)connect, grouped by (segment, mode)
         groups: dict[str, list[dict]] = defaultdict(list)
@@ -346,7 +390,12 @@ class DhanAdapter(BaseBrokerAdapter):
                 groups[dhan_mode].append({"ExchangeSegment": segment, "SecurityId": security_id})
 
         for dhan_mode, instruments in groups.items():
-            self._send_subscribe(instruments, dhan_mode)
+            try:
+                self._send_subscribe(instruments, dhan_mode)
+            except Exception:
+                logger.exception("Dhan resubscribe failed; forcing reconnect")
+                self._force_reconnect()
+                break
 
     def _on_message(self, ws, message) -> None:
         self._last_msg_time = time.time()
@@ -359,17 +408,18 @@ class DhanAdapter(BaseBrokerAdapter):
     def _on_error(self, ws, error) -> None:
         logger.error("Dhan WS error: %s", error)
         self._connected = False
+        self._set_cache_connection(False)
         if self._is_fatal_auth_error(error):
             self._mark_fatal_error(str(error))
         elif self._is_rate_limit_error(error):
-            self._mark_fatal_error(
-                "Dhan rate limit reached. Stop streaming retries and reconnect after broker cooldown. "
-                f"({error})"
-            )
+            self._rate_limited_until = time.monotonic() + 90.0
+            logger.warning("Dhan streaming rate limit reached; cooling down for 90s (%s)", error)
+            self._force_reconnect()
 
     def _on_close(self, ws, code, msg) -> None:
         logger.info("Dhan WS closed (code=%s, msg=%s)", code, msg)
         self._connected = False
+        self._set_cache_connection(False)
         # Match the close MESSAGE text only (Dhan sends "807 token expired" /
         # "808 auth failed" style text). We deliberately skip the numeric WS
         # close code: a benign code that happens to contain "807"/"401" must not
@@ -446,6 +496,17 @@ class DhanAdapter(BaseBrokerAdapter):
             message,
         )
 
+    def _force_reconnect(self) -> None:
+        """Close the current socket while retaining the desired subscriptions."""
+        self._connected = False
+        self._set_cache_connection(False)
+        ws = self._ws
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                logger.debug("Dhan socket close during reconnect failed", exc_info=True)
+
     # ---- Subscription wire ----
 
     def _send_subscribe(self, instruments: list[dict], dhan_mode: str) -> None:
@@ -463,10 +524,17 @@ class DhanAdapter(BaseBrokerAdapter):
                 "InstrumentList": batch,
             }
             try:
+                if not self._connected or self._ws is None:
+                    raise ConnectionError("Dhan WebSocket is not connected")
+                sock = getattr(self._ws, "sock", None)
+                if sock is None or not getattr(sock, "connected", False):
+                    raise ConnectionError("Dhan WebSocket socket is closed")
                 self._ws.send(json.dumps(msg))
                 logger.debug("Subscribed batch of %d in %s mode", len(batch), dhan_mode)
             except Exception as e:
                 logger.error("Dhan subscribe send failed: %s", e)
+                self._force_reconnect()
+                raise
 
     # ---- Binary parsing ----
 

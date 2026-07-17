@@ -110,7 +110,7 @@ export default function OrderBook() {
     direction: "desc",
   });
 
-  const { data: orders, isLoading, error } = useQuery({
+  const { data: orders, error } = useQuery({
     queryKey: ["orderbook"],
     queryFn: getOrderbook,
     refetchInterval: 15000,
@@ -193,17 +193,6 @@ export default function OrderBook() {
     },
     onSettled: () => setConfirming(null),
   });
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-          <p className="text-sm text-muted-foreground">Loading orders...</p>
-        </div>
-      </div>
-    );
-  }
 
   if (error) {
     return (

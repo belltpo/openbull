@@ -7,6 +7,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,8 @@ async def api_option_chain(request: Request):
             status_code=400,
         )
 
-    success, response_data, status_code = get_option_chain(
+    success, response_data, status_code = await run_in_threadpool(
+        get_option_chain,
         underlying=underlying,
         exchange=exchange,
         expiry_date=expiry_date,

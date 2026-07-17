@@ -7,6 +7,7 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,8 @@ async def api_multiquotes(request: Request):
             status_code=400,
         )
 
-    success, response_data, status_code = get_multi_quotes_with_auth(
+    success, response_data, status_code = await run_in_threadpool(
+        get_multi_quotes_with_auth,
         symbols_list=symbols, auth_token=auth_token, broker=broker_name, config=config,
     )
     return JSONResponse(content=response_data, status_code=status_code)

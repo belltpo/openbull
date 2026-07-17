@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.futures_risk import service as fr
@@ -499,6 +500,12 @@ def _quote_payloads_unlocked(
     )
     message = response.get("message") if isinstance(response, dict) else None
     retry_after = response.get("retry_after_seconds") if isinstance(response, dict) else None
+    broker_code = response.get("code") if isinstance(response, dict) else None
+    broker_issue = {
+        key: response.get(key)
+        for key in ("code", "broker", "action_url", "requires_broker_reauth")
+        if isinstance(response, dict) and response.get(key) is not None
+    }
     results_by_key: dict[tuple[str, str], dict[str, Any]] = {}
     if ok and isinstance(response, dict):
         for quote in response.get("results", []) or []:
@@ -531,6 +538,8 @@ def _quote_payloads_unlocked(
                 payload["status_code"] = status_code
             if retry_after:
                 payload["retry_after_seconds"] = retry_after
+            if broker_code:
+                payload.update(broker_issue)
         payloads[key] = payload
 
     return payloads
@@ -617,6 +626,9 @@ def _broker_quote_error(payloads: dict[tuple[str, str], dict[str, Any]]) -> dict
             "status": "error",
             "message": payload.get("message") or "Broker quote service temporarily unavailable",
         }
+        for key in ("code", "broker", "action_url", "requires_broker_reauth"):
+            if payload.get(key) is not None:
+                result[key] = payload.get(key)
         if payload.get("retry_after_seconds"):
             result["retry_after_seconds"] = payload.get("retry_after_seconds")
         return {"body": result, "status_code": status_code}
@@ -711,7 +723,9 @@ async def api_futures_risk_quick_order_preview(request: Request):
         except Exception:
             logger.debug("Futures-Risk preview stream subscription skipped", exc_info=True)
 
-        quote_map = _quote_payloads(instruments, auth_token, broker_name, config)
+        quote_map = await run_in_threadpool(
+            _quote_payloads, instruments, auth_token, broker_name, config,
+        )
         broker_error = _broker_quote_error(quote_map)
         if broker_error:
             return JSONResponse(content=broker_error["body"], status_code=broker_error["status_code"])
@@ -779,7 +793,8 @@ async def api_futures_risk_quick_order(request: Request):
     )
 
     try:
-        trade = fr.place_trade(
+        trade = await run_in_threadpool(
+            fr.place_trade,
             user_id=user_id,
             mode=mode,
             auth_token=auth_token,

@@ -785,17 +785,6 @@ export default function Dashboard() {
   const { funds, positions, holdings, orders, trades, strategies } =
     useDashboardData();
 
-  if (funds.isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-          <p className="text-sm text-muted-foreground">Loading dashboard…</p>
-        </div>
-      </div>
-    );
-  }
-
   if (funds.error) {
     return (
       <div className="flex items-center justify-center py-20">

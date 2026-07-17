@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from threading import Thread
 from urllib.parse import quote, urlparse, urlunparse
@@ -311,6 +312,14 @@ def _start_master_contract_download(broker_name: str, auth_token: str):
     from backend.services.symbol_service import download_master_contracts
     from backend.services.master_contract_status import set_downloading, set_success, set_error
 
+    async def _refresh_symbol_cache() -> None:
+        from backend.broker.upstox.mapping.order_data import _load_symbol_cache
+        from backend.utils.redis_client import close_redis
+        try:
+            await _load_symbol_cache(force_db=True, warm_redis=True)
+        finally:
+            await close_redis()
+
     def _background():
         try:
             set_downloading(broker_name)
@@ -318,10 +327,10 @@ def _start_master_contract_download(broker_name: str, auth_token: str):
             logger.info("Master contract download result for %s: %s", broker_name, result)
             if result.get("status") == "success":
                 set_success(broker_name, result.get("count", 0))
-                # Reload symbol cache after successful download
-                import asyncio
-                from backend.broker.upstox.mapping.order_data import _load_symbol_cache
-                asyncio.run(_load_symbol_cache())
+                # This thread owns a short-lived event loop and, through the
+                # loop-scoped Redis factory, its own connection pool. The
+                # expensive 200k+ symbol rebuild never blocks FastAPI pages.
+                asyncio.run(_refresh_symbol_cache())
             else:
                 set_error(broker_name, result.get("message", "Unknown error"))
         except Exception as e:

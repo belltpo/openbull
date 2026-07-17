@@ -6,10 +6,12 @@ with other apps on the same Redis instance. TTLs are applied at write time; we
 never rely on maxmemory eviction for correctness.
 """
 
+import asyncio
 import json
 import logging
 import time
 from typing import Any
+from weakref import WeakKeyDictionary
 
 import redis.asyncio as redis
 
@@ -19,6 +21,14 @@ logger = logging.getLogger(__name__)
 
 KEY_PREFIX = "openbull:"
 
+# redis.asyncio connection pools are bound to the event loop that first uses
+# them.  A single process-global client is therefore unsafe when synchronous
+# broker jobs use ``asyncio.run()`` in worker threads: the next request on the
+# FastAPI loop sees "Future attached to a different loop" / "Event loop is
+# closed".  Keep one lazy client per live loop instead.  ``_client`` remains a
+# compatibility/debug pointer to the most recently requested client; it is
+# never used as the source of truth.
+_clients_by_loop: WeakKeyDictionary[asyncio.AbstractEventLoop, redis.Redis] = WeakKeyDictionary()
 _client: redis.Redis | None = None
 
 # --- Circuit breaker -------------------------------------------------------
@@ -54,29 +64,35 @@ def _reset_breaker() -> None:
 
 
 def get_redis() -> redis.Redis:
-    """Return the shared async Redis client (lazy-initialized)."""
+    """Return a Redis client owned by the current running event loop."""
     global _client
-    if _client is None:
+    loop = asyncio.get_running_loop()
+    client = _clients_by_loop.get(loop)
+    if client is None:
         settings = get_settings()
-        _client = redis.from_url(
+        client = redis.from_url(
             settings.redis_url,
             encoding="utf-8",
             decode_responses=True,
             socket_connect_timeout=1,
             socket_timeout=1,
         )
-        logger.info("Redis client initialized at %s", settings.redis_url)
-    return _client
+        _clients_by_loop[loop] = client
+        logger.info("Redis client initialized at %s for loop=%s", settings.redis_url, id(loop))
+    _client = client
+    return client
 
 
 async def close_redis() -> None:
     global _client
-    if _client is not None:
+    loop = asyncio.get_running_loop()
+    client = _clients_by_loop.pop(loop, None)
+    if client is not None:
         try:
-            await _client.aclose()
+            await client.aclose()
         except Exception:
             pass
-        _client = None
+    _client = None
     _reset_breaker()
 
 

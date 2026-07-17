@@ -2,10 +2,12 @@
 Symbol search and master contract download routes.
 """
 
+import asyncio
 import logging
 from threading import Thread
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from starlette.concurrency import run_in_threadpool
 
 from backend.dependencies import get_broker_context, get_current_user, BrokerContext
 from backend.models.user import User
@@ -52,7 +54,7 @@ async def option_underlyings(
             status_code=400,
             detail=f"exchange must be one of {sorted(_OPTION_UNDERLYING_EXCHANGES)}",
         )
-    names = get_option_underlyings(exchange)
+    names = await run_in_threadpool(get_option_underlyings, exchange)
     return {"status": "success", "data": names}
 
 
@@ -66,11 +68,20 @@ async def trigger_master_download(
     """
     broker_name = ctx.broker_name
     auth_token = ctx.auth_token
+    async def _refresh_symbol_cache() -> None:
+        from backend.broker.upstox.mapping.order_data import _load_symbol_cache
+        from backend.utils.redis_client import close_redis
+        try:
+            await _load_symbol_cache(force_db=True, warm_redis=True)
+        finally:
+            await close_redis()
 
     def _background_download():
         try:
             result = download_master_contracts(broker_name, auth_token=auth_token)
             logger.info("Master contract download result for %s: %s", broker_name, result)
+            if result.get("status") == "success":
+                asyncio.run(_refresh_symbol_cache())
         except Exception as e:
             logger.error("Background master contract download failed: %s", e)
 

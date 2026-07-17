@@ -126,7 +126,10 @@ def _make_api_call(
     method: str = "POST", payload: str = "", retry_count: int = 0,
 ) -> dict:
     """Call Dhan with rate limiting + retry on 805 (rate limit hit)."""
-    MAX_RETRIES = 3
+    # One controlled retry is enough.  Longer 2/4/8 second retry storms make
+    # every page and Quick Order caller pile up behind the same Dhan limit.
+    # The shared quote gateway applies a 90-second circuit breaker afterwards.
+    MAX_RETRIES = 1
     RETRY_DELAY = 2.0
 
     _apply_rate_limit()

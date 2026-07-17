@@ -37,7 +37,7 @@ def download_master_contracts(broker_name: str, auth_token: str | None = None) -
         return {"status": "error", "message": str(e)}
 
 
-_OPTION_SYMBOL_PREFIX_RE = re.compile(r"^([A-Z0-9]+?)(\d{2}[A-Z]{3}\d{2})\d")
+_OPTION_SYMBOL_PREFIX_RE = re.compile(r"^([A-Z0-9.&-]+?)(\d{2}[A-Z]{3}\d{2})\d")
 
 
 def get_option_underlyings(exchange: str) -> list[dict]:
@@ -55,23 +55,28 @@ def get_option_underlyings(exchange: str) -> list[dict]:
     """
     from backend.services.market_data_service import _run_query
 
+    # Derive every base ticker in PostgreSQL instead of selecting one arbitrary
+    # MIN(symbol) per company name.  The old grouping could hide NIFTY or
+    # BANKNIFTY when brokers reused/inconsistently populated ``name``.
     rows = _run_query(
-        "SELECT MIN(symbol), name FROM symtoken "
-        "WHERE exchange = :exch AND instrumenttype IN ('CE','PE') "
+        "SELECT substring(upper(symbol) from "
+        "'^([A-Z0-9.&-]+?)[0-9]{2}[A-Z]{3}[0-9]{2}[0-9]') AS underlying, "
+        "MIN(COALESCE(NULLIF(name, ''), symbol)) "
+        "FROM symtoken "
+        "WHERE exchange = :exch "
+        "AND (instrumenttype IN ('CE','PE','OPTIDX','OPTSTK','OPTFUT','OPTCUR') "
+        "     OR upper(symbol) ~ '(CE|PE)$') "
         "AND symbol IS NOT NULL AND symbol != '' "
-        "GROUP BY name "
-        "ORDER BY name",
+        "GROUP BY underlying HAVING underlying IS NOT NULL "
+        "ORDER BY underlying",
         {"exch": exchange.upper()},
     )
     out: list[dict] = []
     seen: set[str] = set()
-    for sample_symbol, name in rows:
-        if not sample_symbol:
+    for underlying, name in rows:
+        if not underlying:
             continue
-        m = _OPTION_SYMBOL_PREFIX_RE.match(sample_symbol.upper())
-        if not m:
-            continue
-        prefix = m.group(1)
+        prefix = str(underlying).upper()
         # Skip exchange test instruments that the broker dumps into the master.
         if "NSETEST" in prefix or "BSETEST" in prefix:
             continue

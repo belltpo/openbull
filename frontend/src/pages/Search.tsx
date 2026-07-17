@@ -30,6 +30,7 @@ import {
 import { searchSymbols } from "@/api/symbols";
 import { EXCHANGES } from "@/types/symbol";
 import { useSupportedExchanges } from "@/hooks/useSupportedExchanges";
+import { useMarketData } from "@/hooks/useMarketData";
 import { cn } from "@/lib/utils";
 
 const MAX_ROWS = 50; // backend LIMIT 50
@@ -177,6 +178,15 @@ function SearchPanel({
 
   const resultCount = data?.length ?? 0;
   const hitCap = resultCount === MAX_ROWS;
+  const liveSymbols = useMemo(
+    () => (data ?? []).map((row) => ({ symbol: row.symbol, exchange: row.exchange })),
+    [data],
+  );
+  const { data: liveData, state: liveState } = useMarketData({
+    symbols: liveSymbols,
+    mode: "Quote",
+    enabled: liveSymbols.length > 0,
+  });
 
   const hint = useMemo(() => {
     if (exchange === "NFO" || exchange === "BFO") {
@@ -276,6 +286,8 @@ function SearchPanel({
                     <TableHead>Name</TableHead>
                     <TableHead>Exchange</TableHead>
                     <TableHead>Type</TableHead>
+                    <TableHead className="text-right">Live LTP</TableHead>
+                    <TableHead className="text-right">Volume</TableHead>
                     <TableHead>Expiry</TableHead>
                     <TableHead className="text-right">Strike</TableHead>
                     <TableHead className="text-right">Lot</TableHead>
@@ -286,7 +298,9 @@ function SearchPanel({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {data.map((row, i) => (
+                  {data.map((row, i) => {
+                    const tick = liveData.get(`${row.exchange}:${row.symbol}`)?.data;
+                    return (
                     <TableRow
                       key={`${row.token ?? row.symbol}-${i}`}
                       className={i % 2 === 0 ? "bg-muted/30" : ""}
@@ -300,6 +314,12 @@ function SearchPanel({
                       </TableCell>
                       <TableCell>
                         <Badge variant="outline">{row.exchange}</Badge>
+                      </TableCell>
+                      <TableCell className="text-right font-mono font-semibold text-emerald-600 dark:text-emerald-400">
+                        {tick?.ltp != null ? fmt(tick.ltp) : liveState === "authenticated" ? "—" : "connecting…"}
+                      </TableCell>
+                      <TableCell className="text-right font-mono">
+                        {tick?.volume != null ? tick.volume.toLocaleString("en-IN") : "—"}
                       </TableCell>
                       <TableCell>
                         {row.instrumenttype ? (
@@ -320,7 +340,8 @@ function SearchPanel({
                       <TableCell>{row.brexchange ?? "—"}</TableCell>
                       <TableCell className="font-mono text-xs">{row.token ?? "—"}</TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>

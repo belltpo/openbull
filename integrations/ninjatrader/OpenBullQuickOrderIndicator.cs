@@ -3626,6 +3626,12 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (string.IsNullOrWhiteSpace(value))
                 return "No response";
             value = value.Replace("\r", " ").Replace("\n", " ").Trim();
+            string lower = value.ToLowerInvariant();
+            if (lower.Contains("broker_rate_limit") || lower.Contains("rate limit") || lower.Contains("\"805\""))
+                return "Dhan rate limit - re-login/regenerate API in OpenBull Broker Config";
+            if (lower.Contains("broker_auth_required") || lower.Contains("authentication expired")
+                || lower.Contains("token invalid") || lower.Contains("invalid or expired"))
+                return "Dhan login expired - re-login in OpenBull Broker Config";
             if (value.StartsWith("{", StringComparison.Ordinal))
             {
                 string message = ExtractJsonValue(value, "message");

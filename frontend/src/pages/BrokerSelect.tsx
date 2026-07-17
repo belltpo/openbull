@@ -10,7 +10,7 @@ export default function BrokerSelect() {
   const [redirecting, setRedirecting] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  const { data: brokers, isLoading, error } = useQuery({
+  const { data: brokers, error } = useQuery({
     queryKey: ["brokers"],
     queryFn: listBrokers,
   });
@@ -28,17 +28,6 @@ export default function BrokerSelect() {
       setRedirecting(null);
     }
   };
-
-  if (isLoading) {
-    return (
-      <div className="flex min-h-screen items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-          <p className="text-sm text-muted-foreground">Loading brokers...</p>
-        </div>
-      </div>
-    );
-  }
 
   if (error) {
     return (

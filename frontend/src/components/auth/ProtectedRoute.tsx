@@ -11,14 +11,9 @@ export function ProtectedRoute({ children, requiresBroker = false }: ProtectedRo
   const { user, loading } = useAuth();
 
   if (loading) {
-    return (
-      <div className="flex h-screen w-full items-center justify-center">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-          <p className="text-sm text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    );
+    // Avoid blocking every route with a full-screen spinner during the brief
+    // cold-start session verification. Navigations reuse the query cache.
+    return null;
   }
 
   if (!user) {

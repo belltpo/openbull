@@ -1,7 +1,7 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { TradingModeProvider } from "@/contexts/TradingModeContext";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
@@ -54,11 +54,7 @@ const StrategyEdit = lazy(() => import("@/pages/strategy/Edit"));
 const Playground = lazy(() => import("@/pages/Playground"));
 
 function ToolFallback() {
-  return (
-    <div className="flex h-[500px] items-center justify-center">
-      <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-    </div>
-  );
+  return null;
 }
 
 const queryClient = new QueryClient({
@@ -66,16 +62,46 @@ const queryClient = new QueryClient({
     queries: {
       retry: 1,
       refetchOnWindowFocus: false,
+      staleTime: 30_000,
+      gcTime: 30 * 60_000,
     },
   },
 });
 
+function RoutePreloader() {
+  const { user } = useAuth();
+  useEffect(() => {
+    if (!user) return;
+    const preload = () => {
+      void Promise.allSettled([
+        import("@/pages/tools/OptionChain"), import("@/pages/tools/OITracker"),
+        import("@/pages/tools/MaxPain"), import("@/pages/tools/OptionGreeks"),
+        import("@/pages/tools/IVSmile"), import("@/pages/tools/VolSurface"),
+        import("@/pages/tools/StraddleChart"), import("@/pages/tools/GEXDashboard"),
+        import("@/pages/tools/StrategyBuilder"), import("@/pages/tools/StrategyPortfolio"),
+        import("@/pages/tools/StraddlesStrangleChain"), import("@/pages/tools/FuturesRisk"),
+        import("@/pages/tools/FuturesRiskAdmin"), import("@/pages/strategy/List"),
+        import("@/pages/strategy/Wizard"), import("@/pages/strategy/Detail"),
+      ]);
+    };
+    if ("requestIdleCallback" in window) {
+      const idleId = window.requestIdleCallback(preload, { timeout: 5000 });
+      return () => window.cancelIdleCallback(idleId);
+    }
+    const timer = globalThis.setTimeout(preload, 1500);
+    return () => globalThis.clearTimeout(timer);
+  }, [user]);
+  return null;
+}
+
 function App() {
+
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <BrowserRouter>
           <AuthProvider>
+            <RoutePreloader />
             <TradingModeProvider>
               <Routes>
               {/* Public routes */}

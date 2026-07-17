@@ -73,7 +73,7 @@ export default function TradeBook() {
     direction: "desc",
   });
 
-  const { data: trades, isLoading, error } = useQuery({
+  const { data: trades, error } = useQuery({
     queryKey: ["tradebook"],
     queryFn: getTradebook,
     refetchInterval: 15000,
@@ -96,17 +96,6 @@ export default function TradeBook() {
       return sort.direction === "asc" ? c : -c;
     });
   }, [trades, sort]);
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="flex flex-col items-center gap-4">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-          <p className="text-sm text-muted-foreground">Loading trades...</p>
-        </div>
-      </div>
-    );
-  }
 
   if (error) {
     return (
