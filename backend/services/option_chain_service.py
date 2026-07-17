@@ -22,6 +22,27 @@ from backend.services.quotes_service import get_multi_quotes_with_auth, get_quot
 
 logger = logging.getLogger(__name__)
 
+_QUOTE_ERROR_FIELDS = (
+    "code",
+    "broker",
+    "broker_message",
+    "requires_broker_reauth",
+    "action_url",
+    "retry_after_seconds",
+)
+
+
+def _quote_failure(prefix: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Preserve broker guidance so API clients can show the correct action."""
+    result: dict[str, Any] = {
+        "status": "error",
+        "message": f"{prefix}: {payload.get('message', 'unknown quote error')}",
+    }
+    for field in _QUOTE_ERROR_FIELDS:
+        if field in payload:
+            result[field] = payload[field]
+    return result
+
 
 def _strike_labels(strikes: list[float], atm: float, count: int | None) -> list[dict]:
     """Return strikes around ATM with CE/PE labels (ITMn / ATM / OTMn)."""
@@ -115,10 +136,7 @@ def get_option_chain(
             auth_token=auth_token, broker=broker, config=config,
         )
         if not ok:
-            return False, {
-                "status": "error",
-                "message": f"Failed to fetch underlying LTP: {qdata.get('message', 'unknown')}",
-            }, status_code
+            return False, _quote_failure("Failed to fetch underlying LTP", qdata), status_code
 
         underlying_data = qdata.get("data", {})
         underlying_ltp = underlying_data.get("ltp")
@@ -149,14 +167,34 @@ def get_option_chain(
         if not symbols_to_fetch:
             return False, {"status": "error", "message": "No valid option symbols found"}, 404
 
-        ok_q, mqdata, _ = get_multi_quotes_with_auth(
+        ok_q, mqdata, quote_status = get_multi_quotes_with_auth(
             symbols_list=symbols_to_fetch,
             auth_token=auth_token, broker=broker, config=config,
         )
+        if not ok_q:
+            # Never turn an upstream failure (especially Dhan 805/rate limit)
+            # into a successful option chain containing misleading zeroes.
+            return False, _quote_failure("Failed to fetch option quotes", mqdata), quote_status
+
         quotes_map: dict[str, dict] = {}
-        if ok_q:
-            for q in mqdata.get("results", []):
-                quotes_map[q.get("symbol")] = q
+        usable_quotes = 0
+        for q in mqdata.get("results", []):
+            symbol = q.get("symbol")
+            if symbol:
+                quotes_map[symbol] = q
+                if not q.get("error") and any(
+                    key in q for key in ("ltp", "open", "high", "low", "volume", "oi", "bid", "ask")
+                ):
+                    usable_quotes += 1
+
+        if not quotes_map or usable_quotes == 0:
+            return False, {
+                "status": "error",
+                "code": "QUOTE_UNAVAILABLE",
+                "broker": str(broker or "").lower(),
+                "message": "No live option quotes are available yet. The page will retry automatically.",
+                "action_url": "/broker/config",
+            }, 503
 
         chain = []
         for item in labelled:

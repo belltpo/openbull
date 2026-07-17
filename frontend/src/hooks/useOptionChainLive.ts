@@ -67,7 +67,14 @@ export function useOptionChainLive(params: {
     enabled: liveEnabled && !!underlying && !!exchange && !!expiryDate,
     refetchInterval: oiRefreshInterval,
     refetchIntervalInBackground: false,
-    retry: 0,
+    // Retry only transient feed warm-up/unavailable responses. A broker 429
+    // is intentionally not retried here; the shared quote gateway cooldown
+    // and persistent Broker Configuration alert handle it without a storm.
+    retry: (failureCount, error: unknown) => {
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      return status === 503 && failureCount < 2;
+    },
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 4000),
   });
 
   // When the tab returns from hidden, kick an immediate refetch so the user

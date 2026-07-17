@@ -372,14 +372,26 @@ export default function OptionChain() {
   const underlyingsQuery = useQuery({
     queryKey: ["option-underlyings", exchange],
     queryFn: () => fetchUnderlyings(exchange),
-    retry: 0,
-    staleTime: 5 * 60_000,
+    retry: 2,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
   });
   const underlyings = useMemo<UnderlyingOption[]>(() => {
-    if (underlyingsQuery.data?.status === "success" && underlyingsQuery.data.data.length > 0) {
-      return underlyingsQuery.data.data;
+    // A master-contract refresh may briefly return a partial list. Keep the
+    // canonical index/commodity choices searchable while merging in every
+    // DB-discovered symbol instead of replacing one list with the other.
+    const merged = new Map<string, UnderlyingOption>();
+    for (const item of FALLBACK_UNDERLYINGS[exchange] ?? []) {
+      merged.set(item.symbol.toUpperCase(), item);
     }
-    return FALLBACK_UNDERLYINGS[exchange];
+    if (underlyingsQuery.data?.status === "success") {
+      for (const item of underlyingsQuery.data.data) {
+        const symbol = item.symbol.toUpperCase();
+        merged.set(symbol, { ...item, symbol });
+      }
+    }
+    return [...merged.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
   }, [underlyingsQuery.data, exchange]);
 
   // When the available underlyings change, snap to the first one if the
@@ -508,7 +520,7 @@ export default function OptionChain() {
           </div>
           <div className="space-y-1">
             <label className="block text-xs text-muted-foreground">
-              Underlying {underlyingsQuery.isLoading ? "(loading…)" : `(${underlyings.length})`}
+              Underlying ({underlyings.length})
             </label>
             <UnderlyingCombobox
               value={underlying}
@@ -517,7 +529,7 @@ export default function OptionChain() {
                 setUnderlying(sym);
                 setExpiry("");
               }}
-              loading={underlyingsQuery.isLoading}
+              loading={false}
               className="w-56"
             />
           </div>
@@ -704,9 +716,9 @@ export default function OptionChain() {
           {chainError ? (
             <div className="p-6 text-center text-sm text-destructive">{chainError}</div>
           ) : !data && isLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-muted border-t-primary" />
-            </div>
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              Loading the latest option chain…
+            </p>
           ) : !data ? (
             <p className="py-8 text-center text-sm text-muted-foreground">
               Pick an exchange, underlying and expiry to load the chain.

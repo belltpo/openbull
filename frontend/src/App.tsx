@@ -72,24 +72,41 @@ function RoutePreloader() {
   const { user } = useAuth();
   useEffect(() => {
     if (!user) return;
-    const preload = () => {
+    // Index the most frequently used route chunks as soon as authentication
+    // succeeds. This keeps navigation instant without bundling every heavy
+    // Plotly analytics page into the initial login download.
+    const preloadPrimary = () => {
       void Promise.allSettled([
-        import("@/pages/tools/OptionChain"), import("@/pages/tools/OITracker"),
-        import("@/pages/tools/MaxPain"), import("@/pages/tools/OptionGreeks"),
-        import("@/pages/tools/IVSmile"), import("@/pages/tools/VolSurface"),
-        import("@/pages/tools/StraddleChart"), import("@/pages/tools/GEXDashboard"),
-        import("@/pages/tools/StrategyBuilder"), import("@/pages/tools/StrategyPortfolio"),
-        import("@/pages/tools/StraddlesStrangleChain"), import("@/pages/tools/FuturesRisk"),
+        import("@/pages/tools/OptionChain"), import("@/pages/tools/FuturesRisk"),
         import("@/pages/tools/FuturesRiskAdmin"), import("@/pages/strategy/List"),
         import("@/pages/strategy/Wizard"), import("@/pages/strategy/Detail"),
       ]);
     };
+    const preloadAnalytics = () => {
+      void Promise.allSettled([
+        import("@/pages/tools/OITracker"),
+        import("@/pages/tools/MaxPain"), import("@/pages/tools/OptionGreeks"),
+        import("@/pages/tools/IVSmile"), import("@/pages/tools/VolSurface"),
+        import("@/pages/tools/StraddleChart"), import("@/pages/tools/GEXDashboard"),
+        import("@/pages/tools/StrategyBuilder"), import("@/pages/tools/StrategyPortfolio"),
+        import("@/pages/tools/StraddlesStrangleChain"), import("@/pages/strategy/Edit"),
+        import("@/pages/Playground"),
+      ]);
+    };
+
+    const primaryTimer = globalThis.setTimeout(preloadPrimary, 0);
     if ("requestIdleCallback" in window) {
-      const idleId = window.requestIdleCallback(preload, { timeout: 5000 });
-      return () => window.cancelIdleCallback(idleId);
+      const idleId = window.requestIdleCallback(preloadAnalytics, { timeout: 2500 });
+      return () => {
+        globalThis.clearTimeout(primaryTimer);
+        window.cancelIdleCallback(idleId);
+      };
     }
-    const timer = globalThis.setTimeout(preload, 1500);
-    return () => globalThis.clearTimeout(timer);
+    const analyticsTimer = globalThis.setTimeout(preloadAnalytics, 750);
+    return () => {
+      globalThis.clearTimeout(primaryTimer);
+      globalThis.clearTimeout(analyticsTimer);
+    };
   }, [user]);
   return null;
 }

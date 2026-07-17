@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from backend.broker.dhan.streaming.dhan_adapter import DhanAdapter
-from backend.services import quotes_service, symbol_service
+from backend.services import option_chain_service, quotes_service, symbol_service
 from backend.utils import redis_client
 
 
@@ -131,6 +131,100 @@ class SymbolDiscoveryTests(unittest.TestCase):
         ]):
             rows = symbol_service.get_option_underlyings("NFO")
         self.assertEqual([row["symbol"] for row in rows], ["BANKNIFTY", "NIFTY"])
+
+
+class OptionChainQuoteFailureTests(unittest.TestCase):
+    def _common_patches(self):
+        return (
+            patch.object(option_chain_service, "_fetch_available_strikes", return_value=[24000.0]),
+            patch.object(option_chain_service, "_lookup_chain_symbols", return_value={
+                24000.0: {
+                    "CE": {"symbol": "NIFTY28JUL2624000CE", "lotsize": 65, "tick_size": 0.05},
+                    "PE": {"symbol": "NIFTY28JUL2624000PE", "lotsize": 65, "tick_size": 0.05},
+                },
+            }),
+        )
+
+    def test_underlying_rate_limit_keeps_structured_relogin_fields(self):
+        rate_issue = {
+            "status": "error", "code": "BROKER_RATE_LIMIT", "broker": "dhan",
+            "message": "Dhan data rate limit reached.", "requires_broker_reauth": True,
+            "action_url": "/broker/config", "retry_after_seconds": 90,
+        }
+        with patch.object(option_chain_service, "get_quotes_with_auth", return_value=(False, rate_issue, 429)):
+            ok, response, status = option_chain_service.get_option_chain(
+                "NIFTY", "NFO", "28JUL26", 5, "token", "dhan", {"client_id": "1"},
+            )
+        self.assertFalse(ok)
+        self.assertEqual(status, 429)
+        self.assertEqual(response["code"], "BROKER_RATE_LIMIT")
+        self.assertTrue(response["requires_broker_reauth"])
+        self.assertEqual(response["action_url"], "/broker/config")
+
+    def test_option_batch_rate_limit_is_not_returned_as_zero_chain(self):
+        rate_issue = {
+            "status": "error", "code": "BROKER_RATE_LIMIT", "broker": "dhan",
+            "message": "Dhan data rate limit reached.", "requires_broker_reauth": True,
+            "action_url": "/broker/config", "retry_after_seconds": 90,
+        }
+        strike_patch, symbol_patch = self._common_patches()
+        with (
+            patch.object(option_chain_service, "get_quotes_with_auth", return_value=(
+                True, {"status": "success", "data": {"ltp": 24010.0, "prev_close": 23900.0}}, 200,
+            )),
+            strike_patch,
+            symbol_patch,
+            patch.object(option_chain_service, "get_multi_quotes_with_auth", return_value=(False, rate_issue, 429)),
+        ):
+            ok, response, status = option_chain_service.get_option_chain(
+                "NIFTY", "NFO", "28JUL26", 5, "token", "dhan", {"client_id": "1"},
+            )
+        self.assertFalse(ok)
+        self.assertEqual(status, 429)
+        self.assertEqual(response["code"], "BROKER_RATE_LIMIT")
+        self.assertNotIn("chain", response)
+
+    def test_empty_option_batch_is_retryable_error_not_zero_chain(self):
+        strike_patch, symbol_patch = self._common_patches()
+        with (
+            patch.object(option_chain_service, "get_quotes_with_auth", return_value=(
+                True, {"status": "success", "data": {"ltp": 24010.0, "prev_close": 23900.0}}, 200,
+            )),
+            strike_patch,
+            symbol_patch,
+            patch.object(option_chain_service, "get_multi_quotes_with_auth", return_value=(
+                True, {"status": "success", "results": []}, 200,
+            )),
+        ):
+            ok, response, status = option_chain_service.get_option_chain(
+                "NIFTY", "NFO", "28JUL26", 5, "token", "dhan", {"client_id": "1"},
+            )
+        self.assertFalse(ok)
+        self.assertEqual(status, 503)
+        self.assertEqual(response["code"], "QUOTE_UNAVAILABLE")
+        self.assertNotIn("chain", response)
+
+    def test_all_error_option_rows_are_not_rendered_as_zero_chain(self):
+        strike_patch, symbol_patch = self._common_patches()
+        with (
+            patch.object(option_chain_service, "get_quotes_with_auth", return_value=(
+                True, {"status": "success", "data": {"ltp": 24010.0, "prev_close": 23900.0}}, 200,
+            )),
+            strike_patch,
+            symbol_patch,
+            patch.object(option_chain_service, "get_multi_quotes_with_auth", return_value=(
+                True, {"status": "success", "results": [
+                    {"symbol": "NIFTY28JUL2624000CE", "exchange": "NFO", "error": "No quote data"},
+                    {"symbol": "NIFTY28JUL2624000PE", "exchange": "NFO", "error": "No quote data"},
+                ]}, 200,
+            )),
+        ):
+            ok, response, status = option_chain_service.get_option_chain(
+                "NIFTY", "NFO", "28JUL26", 5, "token", "dhan", {"client_id": "1"},
+            )
+        self.assertFalse(ok)
+        self.assertEqual(status, 503)
+        self.assertEqual(response["code"], "QUOTE_UNAVAILABLE")
 
 
 if __name__ == "__main__":
