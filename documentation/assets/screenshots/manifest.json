@@ -1,0 +1,608 @@
+{
+  "captured_at": "2026-07-20T11:38:40.722672+00:00",
+  "git_commit": "62e378056b664fbd8c8f29649c362b5b31d01d59",
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "device_scale_factor": 1
+  },
+  "database": "dedicated local documentation database",
+  "broker": "sandbox-only documentation fixture; no provider contacted",
+  "fixtures": [
+    "one stopped Documentation NIFTY Spread lifecycle strategy",
+    "one active Documentation Bull Call Spread portfolio strategy",
+    "one open sandbox order",
+    "one executed sandbox trade",
+    "one open sandbox position",
+    "one sandbox holding and fund row"
+  ],
+  "captures": [
+    {
+      "route": "/",
+      "file": "home/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/",
+      "title": "frontend",
+      "width": 1440,
+      "height": 2062,
+      "body_text_sha256": "6dcc8f39ac5b15d7a93aee3cd9780bec599837ee2ab5317c311bc15f0d00e2b5",
+      "body_text_preview": "Open | Bull | v1.0 | AGPL 3.0 | GitHub |  | SELF-HOSTED · OPEN SOURCE · OPTIONS FIRST |  | OpenBull |  | Self-hosted, open-source options trading platform. Built for Indian markets, owned by you. |  | One canonical API across every supported Indian broker. Real-ti"
+    },
+    {
+      "route": "/setup",
+      "file": "setup/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/setup",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "ce166b936419ac269cb68ea6f7d8554280c748fcc69dc1c0bfb9a2e1cc36f11e",
+      "body_text_preview": "Initial Setup | Create your admin account | Username | Email | Password | Confirm Password | Create Account |  | Already set up? Sign in"
+    },
+    {
+      "route": "/login",
+      "file": "login/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/login",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "603e45af8a5ab4c3180fb607ab3d1d9c9df18fd97d1ac08a6063fbce8422c1ab",
+      "body_text_preview": "OpenBull | Sign in to your account | Username | Password | Sign In"
+    },
+    {
+      "route": "/broker/select",
+      "file": "broker-select/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/broker/select",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "c66e89d21dfafb4f697c282004f03821df4244919d96bd135b29e9c2bef2a55c",
+      "body_text_preview": "Select Broker |  | Choose a broker to authenticate with |  | Angel One (SmartAPI) | Not Configured | Exchanges: NSE, BSE, NFO, BFO, CDS, MCX, NSE_INDEX, BSE_INDEX, MCX_INDEX | Configure | Dhan | Not Configured | Exchanges: NSE, BSE, NFO, BFO, CDS, BCD, MCX, NS"
+    },
+    {
+      "route": "/broker/angel/totp",
+      "file": "broker-angel-totp/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/broker/angel/totp",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "43e3c00332211695dc772b2f326d77258e50fe85b2f47cd44f80cfe06868de80",
+      "body_text_preview": "Login with Angel One | Angel One SmartAPI uses your trading credentials with TOTP. Enter your Client Code, MPIN and current TOTP from your authenticator app. | Client Code | MPIN | TOTP Code |  | From your Angel SmartAPI authenticator app (Google Authe"
+    },
+    {
+      "route": "/broker/dhan/token",
+      "file": "broker-dhan-token/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/broker/dhan/token",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "19594ffb1b830a20eb4a42e87feb7d0299db821cde3626f631605a5262d9a841",
+      "body_text_preview": "Connect Dhan | Paste your personal DhanHQ access token and Client ID. No partner app required. | Dhan Client ID | Access Token (JWT) | Connect Dhan |  | Where to get these |  | web.dhan.co → Profile → DhanHQ Trading API → generate an access token. Your Cli"
+    },
+    {
+      "route": "/quick-order",
+      "file": "quick-order/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/quick-order",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "3b473c04fda544b40d1e830c9ca79ded71ba78f66fc3de193bbe3e52d338a6d6",
+      "body_text_preview": "Quick Order |  | FUTURES LIVE |  | No futures mapping |  | -- |  | Buy CE | -- CE | LTP -- | Sell CE | -- CE | LTP -- | Buy PE | -- PE | LTP -- | Sell PE | -- PE | LTP --"
+    },
+    {
+      "route": "/playground",
+      "file": "playground/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/playground",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "4c0538c5b82fbeea4fb2762c0b87409f6369621ff31d6a9a82f698a463698b22",
+      "body_text_preview": "OB | openbull | REST API | WebSocket | Sandbox Mode | Dashboard | D | ACCOUNT | POST | Funds | POST | Holdings | POST | Margin | POST | OrderBook | POST | PositionBook | POST | Positions | POST | TradeBook | ORDERS | POST | BasketOrder | POST | CancelAllOrder | POST | CancelOrder | POST | CloseAllPo"
+    },
+    {
+      "route": "/playground",
+      "action": "Switch to WebSocket mode",
+      "file": "playground/01-websocket-mode.png",
+      "final_url": "http://127.0.0.1:5173/playground",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "680adc9846b89005cf891bd3ac5c1265d16dcb596560e6447f121ab488fd4a7a",
+      "body_text_preview": "OB | openbull | REST API | WebSocket | Sandbox Mode | Dashboard | D | Disconnected | Connect | Auto-reconnect | Select a template... | 1 | {\"action\": \"authenticate\", \"api_key\": \"...\"} |  | Ctrl+Enter to send | Send Message | Message Log | 0 | ⋄ |  | No messages yet |  | Send a messag"
+    },
+    {
+      "route": "/dashboard",
+      "file": "dashboard/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/dashboard",
+      "title": "frontend",
+      "width": 1440,
+      "height": 975,
+      "body_text_sha256": "48268ea9ab2ab120ed3bdc1ff1da79e1845ed7b931053c25fc8ff6dc24eff129",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Dashboard |  | Overview of your trading account |  | Press ⌘K to search sy"
+    },
+    {
+      "route": "/broker/config",
+      "file": "broker-config/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/broker/config",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "7f70c837bc30695cc6641fd320fd35226c48ccdee06f865621fd0294e57477a7",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Broker Configuration |  | Configure your broker API credentials |  | API C"
+    },
+    {
+      "route": "/broker/config",
+      "action": "Open broker selector",
+      "file": "broker-config/01-open-broker-selector.png",
+      "final_url": "http://127.0.0.1:5173/broker/config",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "0b496905f8a96ca19f81596ab6632224e4edbfc9de6dcd6e5e08fbd2ca681de8",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Broker Configuration |  | Configure your broker API credentials |  | API C"
+    },
+    {
+      "route": "/apikey",
+      "file": "api-key/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/apikey",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "4724528c47b981999ee1f8066d186c9770550025ac6aa4246f195f003246ebe6",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | API Key |  | Manage your API key for external access |  | Your API Key | Use"
+    },
+    {
+      "route": "/search",
+      "file": "search/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/search?ex=NSE",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "cafcbb96a81ad0aa5bd037492bc920bf73cb8141e26bea78b0cdd924a28ba698",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Symbol Search |  | Look up instruments from the master contract using "
+    },
+    {
+      "route": "/orderbook",
+      "file": "order-book/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/orderbook",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "f6103541f1d6f5f4aeddfa8e62bda119a0c39f09812185e2af1c33a3cbc7f0e2",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Orderbook |  | View all your orders |  | Export CSV | Cancel All (1) | Orders | "
+    },
+    {
+      "route": "/orderbook",
+      "action": "Open order modification dialog",
+      "file": "order-book/01-modify-order.png",
+      "final_url": "http://127.0.0.1:5173/orderbook",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "f14709430f698373beec7e663e9cb4729b932b4956c2bf1bc1ad05572dd7a2e6",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Orderbook |  | View all your orders |  | Export CSV | Cancel All (1) | Orders | "
+    },
+    {
+      "route": "/orderbook",
+      "action": "Open single-order cancellation confirmation",
+      "file": "order-book/02-cancel-order-confirmation.png",
+      "final_url": "http://127.0.0.1:5173/orderbook",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "77bba5e6fd72c3f4056d49bafc728f80c0b215ad1acf8fb643c3a1cc9b63949c",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Orderbook |  | View all your orders |  | Export CSV | Cancel All (1) | Orders | "
+    },
+    {
+      "route": "/orderbook",
+      "action": "Open cancel-all confirmation",
+      "file": "order-book/03-cancel-all-confirmation.png",
+      "final_url": "http://127.0.0.1:5173/orderbook",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "cef5ef313782b89a1988709131820b143b44c74da6bc7fd37b55d7611b9f0b97",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Orderbook |  | View all your orders |  | Export CSV | Cancel All (1) | Orders | "
+    },
+    {
+      "route": "/tradebook",
+      "file": "trade-book/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tradebook",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "bd51f16fdcd1d89758e2f579ebe318386662135db7ae946633a9e3ce4580b2e3",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Tradebook |  | View all executed trades |  | Export CSV | Trades | 1 trade fou"
+    },
+    {
+      "route": "/positions",
+      "file": "positions/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/positions",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "0e8bd73f94928c80a2a4ec336f07654f4cb6365942eeb395f69fbd057bde282d",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Positions |  | View your open positions |  | Export CSV | Close All (1) | Open"
+    },
+    {
+      "route": "/positions",
+      "action": "Open single-position close confirmation",
+      "file": "positions/01-close-position-confirmation.png",
+      "final_url": "http://127.0.0.1:5173/positions",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "7ee8c980667d84374586791ef213cf65e71899d93fe7af2539cc5a63d622c4ed",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Positions |  | View your open positions |  | Export CSV | Close All (1) | Open"
+    },
+    {
+      "route": "/positions",
+      "action": "Open close-all confirmation",
+      "file": "positions/02-close-all-confirmation.png",
+      "final_url": "http://127.0.0.1:5173/positions",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "008a07f2d8b039e10668fa9d33a0a90e280476ac2635ee2f912a7414b07990f0",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Positions |  | View your open positions |  | Export CSV | Close All (1) | Open"
+    },
+    {
+      "route": "/holdings",
+      "file": "holdings/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/holdings",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "e251dd2399a1ee22fd16bb0fd9d7eabf5a355c94576cfcfe07607d95d61427d8",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Holdings |  | View your stock holdings |  | Export CSV | Stock Holdings | 1 ho"
+    },
+    {
+      "route": "/websocket/test",
+      "file": "websocket-test/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/websocket/test",
+      "title": "frontend",
+      "width": 1440,
+      "height": 1169,
+      "body_text_sha256": "272025575995511118ffc90216ef0eb108f46c84234091eddf646aeedd1c1018",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | WebSocket Test |  | Dev tool for exercising the broker streaming adapt"
+    },
+    {
+      "route": "/logs",
+      "file": "logs/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/logs",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "515df7ad224c4d1200b7c0f8eebda5f660aa8749c0877a21c1100eae438bf2f0",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Trade Logs |  | Event-driven log of every authenticated order action —"
+    },
+    {
+      "route": "/sandbox",
+      "file": "sandbox/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/sandbox",
+      "title": "frontend",
+      "width": 1440,
+      "height": 1495,
+      "body_text_sha256": "a0abc95183bd6d70290cce8310115516a8075abf34d284ee7f16a70bb5116d71",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Sandbox |  | Capital, leverage and square-off settings for the simulat"
+    },
+    {
+      "route": "/sandbox",
+      "action": "Open sandbox reset confirmation",
+      "file": "sandbox/01-reset-confirmation.png",
+      "final_url": "http://127.0.0.1:5173/sandbox",
+      "title": "frontend",
+      "width": 1440,
+      "height": 1495,
+      "body_text_sha256": "a9dc629fcabfedcded00a439f5aff05ec412bbd71b2ec94730e51fff1ae5d822",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Sandbox |  | Capital, leverage and square-off settings for the simulat"
+    },
+    {
+      "route": "/sandbox/mypnl",
+      "file": "sandbox-pnl/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/sandbox/mypnl",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "e669222a6a20991870d499121105c0e8b5a1dd861d61490d2068a3209f835331",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Sandbox P&L History |  | One snapshot per trading day written at 23:55"
+    },
+    {
+      "route": "/tools",
+      "file": "tools/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "a6ba1248186298cefc88ed5d5b2847ec877b35d9a353f6ca820c6b7c914a45e6",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Tools |  | Trading utilities built on top of OpenBull's market data an"
+    },
+    {
+      "route": "/tools/optionchain",
+      "file": "option-chain/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/optionchain",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "e453020f31b1c20849df99c735dd4353192db53552256f55b5b22c8d61927f2f",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Option Chain |  | Strikes around ATM with live LTP, Bid/Ask, OI and Vo"
+    },
+    {
+      "route": "/tools/oitracker",
+      "file": "oi-tracker/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/oitracker",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "7713bffaa92992cef243739025c5c8270252fbacb9aa5751c288587b2b418b80",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | OI Tracker |  | Snapshot of CE vs PE Open Interest per strike around A"
+    },
+    {
+      "route": "/tools/maxpain",
+      "file": "max-pain/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/maxpain",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "fc33c2fe5a81336b9110689b292349282e827ea3203c2d2cf99e4ba81ad30c0d",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Max Pain |  | Strike where total option-writer payout to buyers is min"
+    },
+    {
+      "route": "/tools/greeks",
+      "file": "option-greeks/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/greeks",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "4cb08d033c13388620126b05415b6359cc75ac02e3965e7f3a5fbf7cab44be4c",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Option Greeks |  | Black-76 IV and Delta / Gamma / Theta / Vega at eve"
+    },
+    {
+      "route": "/tools/ivsmile",
+      "file": "iv-smile/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/ivsmile",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "dff35b836f3959875b7b4231dfae5b0313e768e856f24b74f2a07077c17ae400",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | IV Smile |  | Call vs Put implied volatility across strikes for a sing"
+    },
+    {
+      "route": "/tools/volsurface",
+      "file": "volatility-surface/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/volsurface",
+      "title": "frontend",
+      "width": 1440,
+      "height": 963,
+      "body_text_sha256": "864bafd54aabae032facc574f30197eb2683add9c94c2dbf9f30917fd5164938",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Volatility Surface |  | 3D IV surface across strikes × expiries — OTM "
+    },
+    {
+      "route": "/tools/straddle",
+      "file": "straddle/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/straddle",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "6f7c6fe36fcb53fc142453f1fff79bb62134c017173b60bce8181a8143eb8be4",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Straddle Chart |  | Dynamic ATM Straddle (CE+PE at the live ATM strike"
+    },
+    {
+      "route": "/tools/gex",
+      "file": "gex/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/gex",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "244eed61d1f0efbb459f1e48bf80308f5d5c115d660896bdef7c253cb32b7163",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | GEX Dashboard |  | Gamma Exposure per strike (γ × OI × lot size). OI w"
+    },
+    {
+      "route": "/tools/straddles-strangle-chain",
+      "file": "straddle-strangle-chain/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/straddles-strangle-chain",
+      "title": "frontend",
+      "width": 1440,
+      "height": 934,
+      "body_text_sha256": "55d1fda6e6b58dbe07a8ea8ca9db1a684ee579f5afaba8d60aa19fcdb45068f2",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Straddles & Strangles Chain |  | Scan ATM straddles & OTM strangles ac"
+    },
+    {
+      "route": "/tools/strategybuilder",
+      "file": "strategy-builder/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/strategybuilder",
+      "title": "frontend",
+      "width": 1440,
+      "height": 1288,
+      "body_text_sha256": "f0dad2be8d30a2933081ba6879fdfc4dc367fa6b45d932f200e8729648b6e31d",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Strategy Builder |  | Multi-leg option strategy designer. Build a bask"
+    },
+    {
+      "route": "/tools/strategyportfolio",
+      "file": "strategy-portfolio/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/strategyportfolio",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "3fe2325bddccc32673c404c0dcbacac0906d5386b8b4a9bf49a3f5f965d742c6",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Strategy Portfolio |  | Saved strategies with live aggregated P&L. Cli"
+    },
+    {
+      "route": "/tools/strategyportfolio",
+      "action": "Expand a saved strategy",
+      "file": "strategy-portfolio/01-expanded-strategy.png",
+      "final_url": "http://127.0.0.1:5173/tools/strategyportfolio",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "f305869ea7ff66f4c39b314a523f5253ab8e3e40e773fc1ac715cd4862a0055f",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Strategy Portfolio |  | Saved strategies with live aggregated P&L. Cli"
+    },
+    {
+      "route": "/tools/strategyportfolio",
+      "action": "Open close-strategy dialog",
+      "file": "strategy-portfolio/02-close-strategy.png",
+      "final_url": "http://127.0.0.1:5173/tools/strategyportfolio",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "09af1f7514b113df662de97b230499c723e6bc8fd1a9decb99b3eab18e63722b",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Strategy Portfolio |  | Saved strategies with live aggregated P&L. Cli"
+    },
+    {
+      "route": "/tools/strategyportfolio",
+      "action": "Open delete-strategy confirmation",
+      "file": "strategy-portfolio/03-delete-strategy-confirmation.png",
+      "final_url": "http://127.0.0.1:5173/tools/strategyportfolio",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "211a4582a193ce614ee499305c39efe762376ca8ee27765efcff1e605a8cddcf",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Strategy Portfolio |  | Saved strategies with live aggregated P&L. Cli"
+    },
+    {
+      "route": "/tools/futures-risk",
+      "file": "futures-risk/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/futures-risk",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "54ed3be22440988a2355549e6eb57f8cf7e14b4b3f82b7be13c7721cdd1da43c",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Options | Admin |  | UNREALIZED P&L |  | ₹0.00 |  | REALIZED P&L |  | ₹0.00 |  | ACTIVE | "
+    },
+    {
+      "route": "/tools/futures-risk",
+      "action": "Open phase history",
+      "file": "futures-risk/01-phase-history.png",
+      "final_url": "http://127.0.0.1:5173/tools/futures-risk",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "166ef06ba44e0b3c030d7eb827bdada206bd8f1211bad6d5efe303104b734d6a",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Options | Admin |  | UNREALIZED P&L |  | ₹0.00 |  | REALIZED P&L |  | ₹0.00 |  | ACTIVE | "
+    },
+    {
+      "route": "/tools/futures-risk",
+      "action": "Open Quick Order",
+      "file": "futures-risk/02-quick-order.png",
+      "final_url": "http://127.0.0.1:5173/tools/futures-risk",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "e88fa997574d132ee76988e371d3067d889407642be906b7caab301efa50b9a6",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Options | Admin |  | UNREALIZED P&L |  | ₹0.00 |  | REALIZED P&L |  | ₹0.00 |  | ACTIVE | "
+    },
+    {
+      "route": "/tools/futures-risk/admin",
+      "file": "futures-risk-admin/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/futures-risk/admin",
+      "title": "frontend",
+      "width": 1440,
+      "height": 1257,
+      "body_text_sha256": "b07928aae554091118f340e37955f97d1d0deb6ec210aec7e6438e31f4a14272",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Futures-Risk Admin |  | Default quick-order setup, target template, st"
+    },
+    {
+      "route": "/tools/futures-risk/card-demo",
+      "file": "futures-risk-card-demo/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/tools/futures-risk/card-demo",
+      "title": "frontend",
+      "width": 1440,
+      "height": 1049,
+      "body_text_sha256": "2ad751deec6b7618a434b8da12d8acf35a6e2e745c9cdf88a1c0dcddef708c25",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | All-phases card demo | Demo only |  | One instrument card showing the cu"
+    },
+    {
+      "route": "/tools/futures-risk/card-demo",
+      "action": "Expand every instrument timeline",
+      "file": "futures-risk-card-demo/01-expand-all.png",
+      "final_url": "http://127.0.0.1:5173/tools/futures-risk/card-demo",
+      "title": "frontend",
+      "width": 1440,
+      "height": 1644,
+      "body_text_sha256": "0578c14e482b94f4375952536ab8bfcfe67bea788895510b9eb9afdff51fa138",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | All-phases card demo | Demo only |  | One instrument card showing the cu"
+    },
+    {
+      "route": "/strategy",
+      "file": "strategy-list/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/strategy",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "afb6d57b860bfc9fad90689a0013d166bcbefd68da018f5833ca96fc2a4fe68c",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Strategies |  | Multi-leg options strategies with end-to-end risk mana"
+    },
+    {
+      "route": "/strategy/new",
+      "file": "strategy-wizard/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/strategy/new",
+      "title": "frontend",
+      "width": 1440,
+      "height": 1959,
+      "body_text_sha256": "92cf6c6439359deec9bd1bc53e610ab5287773e99711bad42023c938efb37c68",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | New strategy |  | Configure legs and risk. Sandbox-only until you expl"
+    },
+    {
+      "route": "/strategy/new",
+      "action": "Select signal-driven strategy",
+      "file": "strategy-wizard/01-signal-driven.png",
+      "final_url": "http://127.0.0.1:5173/strategy/new",
+      "title": "frontend",
+      "width": 1440,
+      "height": 2112,
+      "body_text_sha256": "e8c1880a79668cd66e36b2833515d272816269681c0c4e30bfc7571b21268ea2",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | New strategy |  | Configure legs and risk. Sandbox-only until you expl"
+    },
+    {
+      "route": "/strategy/1",
+      "file": "strategy-detail/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/strategy/1",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "8dabd171a36b697cfb260ef1152027fd41ca16c45d8cd9ce92e6c7d87569a908",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Weekly & Monthly Expiries | Documentation NIFTY Spread | stopped | SANDB"
+    },
+    {
+      "route": "/strategy/1",
+      "action": "Open strategy setup tab",
+      "file": "strategy-detail/01-setup-tab.png",
+      "final_url": "http://127.0.0.1:5173/strategy/1",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "dad4facda13008838441982e653002bdd687eedb92ac4d03cd04bfb9d169105e",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Weekly & Monthly Expiries | Documentation NIFTY Spread | stopped | SANDB"
+    },
+    {
+      "route": "/strategy/1",
+      "action": "Open strategy webhook tab",
+      "file": "strategy-detail/02-webhook-tab.png",
+      "final_url": "http://127.0.0.1:5173/strategy/1",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "e4a0b8368950a37f7067f6ac2805dd6e3fad82bdbc3b509ec29e5c4fdeb36aa5",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Weekly & Monthly Expiries | Documentation NIFTY Spread | stopped | SANDB"
+    },
+    {
+      "route": "/strategy/1/edit",
+      "file": "strategy-edit/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/strategy/1/edit",
+      "title": "frontend",
+      "width": 1440,
+      "height": 1959,
+      "body_text_sha256": "d49700f8a092d28ed666785f6401f74b725b4e25a357cc0653272199eae8793a",
+      "body_text_preview": "Open | Bull | Dashboard | Positions | Orders | ▾ | Portfolio | ▾ | Strategies | ▾ | Tools | ▾ | Search symbols | ⌘ | K | Live | Sandbox | DA | SANDBOX MODE | · | orders are simulated, no real money or broker calls | Edit \"Documentation NIFTY Spread\" |  | Edits are committed immediately"
+    },
+    {
+      "route": "/documentation-route-not-found",
+      "file": "not-found/00-complete-page.png",
+      "final_url": "http://127.0.0.1:5173/documentation-route-not-found",
+      "title": "frontend",
+      "width": 1440,
+      "height": 900,
+      "body_text_sha256": "7069c6d44fb1014435e318d87bf0be4321ac1ad3bd3d6ae0e803e1d7dc8b0d45",
+      "body_text_preview": "404 |  | Page not found |  | The page you are looking for does not exist. |  | Back to Dashboard"
+    }
+  ]
+}
