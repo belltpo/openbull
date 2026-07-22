@@ -23,6 +23,7 @@ using WpfRectangle = System.Windows.Shapes.Rectangle;
 using NinjaTrader.Gui;
 using NinjaTrader.Gui.Tools;
 using NinjaTrader.NinjaScript;
+using NinjaTrader.Cbi;
 
 namespace NinjaTrader.NinjaScript.AddOns
 {
@@ -30,11 +31,13 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         public string Symbol { get; private set; }
         public string Exchange { get; private set; }
+        public string NinjaTraderInstrument { get; private set; }
 
-        public OpenBullLiveSymbol(string symbol, string exchange)
+        public OpenBullLiveSymbol(string symbol, string exchange, string ninjaTraderInstrument)
         {
             Symbol = symbol ?? "";
             Exchange = exchange ?? "";
+            NinjaTraderInstrument = ninjaTraderInstrument ?? "";
         }
 
         public string Key
@@ -342,13 +345,42 @@ namespace NinjaTrader.NinjaScript.AddOns
                 throw new InvalidOperationException("External Data Feed is not connected. Connect it before enabling chart delivery.");
         }
 
-        public void SendLast(string externalSymbol, double price)
+        public string ResolveInstrument(string instrumentName)
         {
-            if (client == null || string.IsNullOrWhiteSpace(externalSymbol) || price <= 0)
+            string requested = (instrumentName ?? "").Trim();
+            if (requested.Length == 0)
+                throw new InvalidOperationException("A NinjaTrader chart instrument mapping is required.");
+
+            Instrument instrument = Instrument.GetInstrument(requested);
+            if (instrument == null)
+                throw new InvalidOperationException(
+                    "NinjaTrader instrument '" + requested + "' was not found. " +
+                    "Use the exact chart @INSTRUMENT_FULL value.");
+
+            if (instrument.MasterInstrument != null &&
+                instrument.MasterInstrument.InstrumentType == InstrumentType.Future &&
+                instrument.Expiry.Year <= 1900)
+            {
+                throw new InvalidOperationException(
+                    "NinjaTrader futures mapping '" + requested + "' has no contract expiry. " +
+                    "Use the full chart name, for example 'CRUDEOIL19AUG26FUT AUG26'.");
+            }
+
+            string resolved = (instrument.FullName ?? "").Trim();
+            if (resolved.Length == 0)
+                throw new InvalidOperationException("NinjaTrader could not resolve instrument '" + requested + "'.");
+            return resolved;
+        }
+
+        public void SendLast(string ninjaTraderInstrument, double price)
+        {
+            if (client == null || string.IsNullOrWhiteSpace(ninjaTraderInstrument) || price <= 0)
                 return;
-            int result = Convert.ToInt32(lastMethod.Invoke(client, new object[] { externalSymbol, price, 1 }));
+            int result = Convert.ToInt32(lastMethod.Invoke(client, new object[] { ninjaTraderInstrument, price, 1 }));
             if (result != 0)
-                throw new InvalidOperationException("NinjaTrader rejected tick for " + externalSymbol + ". Check its External symbol map.");
+                throw new InvalidOperationException(
+                    "NinjaTrader rejected tick for '" + ninjaTraderInstrument + "'. " +
+                    "Confirm the exact full contract name and External Data Feed connection.");
         }
 
         public void Dispose()
@@ -412,6 +444,9 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         protected override void OnWindowDestroyed(Window window)
         {
+            if (!(window is ControlCenter))
+                return;
+
             NTMenuItem item = menuItem;
             NTMenuItem parent = parentMenuItem;
             menuItem = null;
@@ -617,6 +652,8 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         private readonly ObservableCollection<OpenBullLiveQuote> quotes = new ObservableCollection<OpenBullLiveQuote>();
         private readonly Dictionary<string, OpenBullLiveQuote> quotesByKey = new Dictionary<string, OpenBullLiveQuote>();
+        private readonly object chartMappingLock = new object();
+        private readonly Dictionary<string, string> chartInstrumentByKey = new Dictionary<string, string>();
         private TextBox streamUrlBox;
         private PasswordBox apiKeyBox;
         private TextBox symbolsBox;
@@ -652,7 +689,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             TextBlock info = new TextBlock
             {
-                Text = "Standalone OpenBull live quote monitor and External Data Feed bridge. Enter exact Dhan symbols as EXCHANGE:SYMBOL, one per line.",
+                Text = "Enter one broker subscription per line. For chart delivery use EXCHANGE:SYMBOL => NinjaTrader @INSTRUMENT_FULL.",
                 TextWrapping = TextWrapping.Wrap,
                 Margin = new Thickness(0, 0, 0, 10),
             };
@@ -682,8 +719,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 AcceptsReturn = true,
                 TextWrapping = TextWrapping.NoWrap,
                 VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Text = "MCX:CRUDEOIL20JUL26FUT",
-                ToolTip = "One exact Dhan symbol per line, for example: MCX:CRUDEOIL20JUL26FUT or NSE_INDEX:NIFTY",
+                Text = "MCX:CRUDEOIL19AUG26FUT => CRUDEOIL19AUG26FUT AUG26",
+                ToolTip = "Example: MCX:CRUDEOIL19AUG26FUT => CRUDEOIL19AUG26FUT AUG26. The right side must exactly match the chart's @INSTRUMENT_FULL value.",
             };
             Grid.SetRow(symbolsBox, 2);
             root.Children.Add(symbolsBox);
@@ -707,7 +744,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 IsChecked = true,
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(8, 0, 0, 0),
-                ToolTip = "Requires the built-in External Data Feed. The Dhan symbol must match the Instrument's External symbol map.",
+                ToolTip = "Requires External Data Feed and an explicit => NinjaTrader @INSTRUMENT_FULL mapping for every subscription.",
             };
             Grid.SetColumn(feedChartsCheckBox, 2);
             actions.Children.Add(feedChartsCheckBox);
@@ -731,6 +768,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             };
             quoteGrid.Columns.Add(new DataGridTextColumn { Header = "Exchange", Binding = new Binding("Exchange") });
             quoteGrid.Columns.Add(new DataGridTextColumn { Header = "Symbol", Binding = new Binding("Symbol") });
+            quoteGrid.Columns.Add(new DataGridTextColumn { Header = "NinjaTrader", Binding = new Binding("NinjaTraderInstrument") });
             quoteGrid.Columns.Add(new DataGridTextColumn { Header = "LTP", Binding = new Binding("Ltp") { StringFormat = "N2" } });
             quoteGrid.Columns.Add(new DataGridTextColumn { Header = "Mode", Binding = new Binding("Mode") });
             quoteGrid.Columns.Add(new DataGridTextColumn { Header = "Updated (local)", Binding = new Binding("UpdatedLocal") { StringFormat = "HH:mm:ss.fff" } });
@@ -768,6 +806,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return;
             }
 
+            if (feedChartsCheckBox.IsChecked == true && symbols.Any(item => string.IsNullOrWhiteSpace(item.NinjaTraderInstrument)))
+            {
+                SetStatus("Chart delivery requires EXCHANGE:SYMBOL => NinjaTrader @INSTRUMENT_FULL for every line.", false);
+                return;
+            }
+
             Disconnect();
             quotes.Clear();
             quotesByKey.Clear();
@@ -777,11 +821,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                 try
                 {
                     chartTickSink = new NinjaTraderExternalTickSink();
+                    lock (chartMappingLock)
+                    {
+                        foreach (OpenBullLiveSymbol symbol in symbols)
+                            chartInstrumentByKey[symbol.Key] = chartTickSink.ResolveInstrument(symbol.NinjaTraderInstrument);
+                    }
                 }
                 catch (Exception ex)
                 {
+                    if (chartTickSink != null)
+                        chartTickSink.Dispose();
                     chartTickSink = null;
                     SetStatus("Chart delivery disabled: " + ex.Message, false);
+                    return;
                 }
             }
             client = new OpenBullLiveDataClient(endpoint.AbsoluteUri, apiKeyBox.Password, OnTick, OnState);
@@ -803,6 +855,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 chartTickSink.Dispose();
                 chartTickSink = null;
             }
+            lock (chartMappingLock)
+                chartInstrumentByKey.Clear();
             if (connectButton != null) connectButton.IsEnabled = true;
             if (disconnectButton != null) disconnectButton.IsEnabled = false;
             if (statusText != null) SetStatus("Disconnected", false);
@@ -828,10 +882,21 @@ namespace NinjaTrader.NinjaScript.AddOns
             foreach (string raw in (text ?? "").Replace(";", "\n").Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 string value = raw.Trim();
-                int separator = value.IndexOf(':');
-                if (separator <= 0 || separator == value.Length - 1)
+                string subscription = value;
+                string ninjaTraderInstrument = "";
+                int mappingSeparator = value.IndexOf("=>", StringComparison.Ordinal);
+                if (mappingSeparator >= 0)
+                {
+                    subscription = value.Substring(0, mappingSeparator).Trim();
+                    ninjaTraderInstrument = value.Substring(mappingSeparator + 2).Trim();
+                }
+                int separator = subscription.IndexOf(':');
+                if (separator <= 0 || separator == subscription.Length - 1)
                     continue;
-                OpenBullLiveSymbol symbol = new OpenBullLiveSymbol(value.Substring(separator + 1).Trim(), value.Substring(0, separator).Trim());
+                OpenBullLiveSymbol symbol = new OpenBullLiveSymbol(
+                    subscription.Substring(separator + 1).Trim(),
+                    subscription.Substring(0, separator).Trim(),
+                    ninjaTraderInstrument);
                 if (!string.IsNullOrWhiteSpace(symbol.Symbol) && !string.IsNullOrWhiteSpace(symbol.Exchange))
                     result[symbol.Key] = symbol;
             }
@@ -842,13 +907,18 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (tick == null || tick.Ltp <= 0)
                 return;
+            string key = (tick.Exchange ?? "").ToUpperInvariant() + ":" + (tick.Symbol ?? "").ToUpperInvariant();
             if (chartTickSink != null && chartTickError == null)
             {
                 try
                 {
-                    // Dhan symbol and External map must match, for example
-                    // CRUDEOIL20JUL26FUT.
-                    chartTickSink.SendLast(tick.Symbol, tick.Ltp);
+                    string ninjaTraderInstrument;
+                    lock (chartMappingLock)
+                    {
+                        if (!chartInstrumentByKey.TryGetValue(key, out ninjaTraderInstrument))
+                            throw new InvalidOperationException("No NinjaTrader mapping exists for " + key + ".");
+                    }
+                    chartTickSink.SendLast(ninjaTraderInstrument, tick.Ltp);
                 }
                 catch (Exception ex)
                 {
@@ -861,11 +931,18 @@ namespace NinjaTrader.NinjaScript.AddOns
                 candles.Dispatcher.BeginInvoke(new Action(() => candles.Push(tick)));
             Dispatcher.BeginInvoke(new Action(() =>
             {
-                string key = (tick.Exchange ?? "").ToUpperInvariant() + ":" + (tick.Symbol ?? "").ToUpperInvariant();
                 OpenBullLiveQuote quote;
                 if (!quotesByKey.TryGetValue(key, out quote))
                 {
-                    quote = new OpenBullLiveQuote { Exchange = tick.Exchange, Symbol = tick.Symbol };
+                    string ninjaTraderInstrument = "";
+                    lock (chartMappingLock)
+                        chartInstrumentByKey.TryGetValue(key, out ninjaTraderInstrument);
+                    quote = new OpenBullLiveQuote
+                    {
+                        Exchange = tick.Exchange,
+                        Symbol = tick.Symbol,
+                        NinjaTraderInstrument = ninjaTraderInstrument ?? "",
+                    };
                     quotesByKey[key] = quote;
                     quotes.Add(quote);
                 }
@@ -895,6 +972,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         public string Exchange { get; set; }
         public string Symbol { get; set; }
+        public string NinjaTraderInstrument { get; set; }
         public double Ltp { get { return ltp; } set { ltp = value; Changed("Ltp"); } }
         public string Mode { get { return mode; } set { mode = value; Changed("Mode"); } }
         public DateTime UpdatedLocal { get { return updatedLocal; } set { updatedLocal = value; Changed("UpdatedLocal"); } }

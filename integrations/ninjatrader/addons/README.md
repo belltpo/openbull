@@ -30,13 +30,19 @@ Start OpenBull first. The normal local WebSocket URL is:
 ws://127.0.0.1:8765
 ```
 
-Enter an OpenBull API key and one exact Dhan symbol per line in this format:
+Enter an OpenBull API key and one exact broker symbol per line. When chart
+delivery is enabled, map it to NinjaTrader's exact full chart instrument with
+`=>`:
 
 ```text
-MCX:CRUDEOIL20JUL26FUT
-NSE_INDEX:NIFTY
-NFO:NIFTY28JUL26FUT
+MCX:CRUDEOIL19AUG26FUT => CRUDEOIL19AUG26FUT AUG26
 ```
+
+The left side is sent to OpenBull/Dhan. The right side is passed to
+`NinjaTrader.Client.Last()` and must match the chart's `@INSTRUMENT_FULL`
+value exactly. A mapping is mandatory when **Send ticks to NinjaTrader
+charts** is selected; the AddOn refuses to forward an unresolved symbol so
+NinjaTrader cannot silently auto-create a Stock with the futures name.
 
 `CRUDEOIL_I` is a NinjaTrader-style continuous-symbol name, not a current
 Dhan master-contract symbol. Use the dated MCX Dhan contract shown in the
@@ -48,18 +54,11 @@ the contract expires.
 Before clicking **Connect**, connect NinjaTrader's built-in **External Data
 Feed**. Leave **Send ticks to NinjaTrader charts** selected in the AddOn.
 
-For each symbol, set the matching NinjaTrader Instrument's **External** symbol
-map to the exact Dhan symbol. For example, the AddOn input
-`MCX:CRUDEOIL20JUL26FUT` requires this map:
-
-```text
-External = CRUDEOIL20JUL26FUT
-```
-
-The AddOn then sends live LTP ticks to that map and NinjaTrader builds live
-second/minute bars. This does not make it a native data-vendor connection and
-does not provide historical bars; use the separate historical import process
-for Dhan one-minute backfill.
+The AddOn validates the right-hand NinjaTrader instrument before opening the
+WebSocket and then sends live LTP ticks to that exact contract. NinjaTrader
+builds live second/minute bars. This does not make it a native data-vendor
+connection and does not provide historical bars; use the separate historical
+import process for Dhan one-minute backfill.
 
 ## Popup-free live-only candles
 

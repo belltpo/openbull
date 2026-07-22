@@ -54,6 +54,20 @@ if ($quickOrder.IndexOf('http://127.0.0.1:8000', [StringComparison]::OrdinalIgno
     throw 'Quick Order no longer has its independent local OpenBull HTTP default.'
 }
 
+foreach ($required in @(
+    'EXCHANGE:SYMBOL => NinjaTrader @INSTRUMENT_FULL',
+    'ResolveInstrument(symbol.NinjaTraderInstrument)',
+    'chartTickSink.SendLast(ninjaTraderInstrument, tick.Ltp)',
+    'if (!(window is ControlCenter))'
+)) {
+    if ($liveData.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "Live Data AddOn safety contract is missing '$required'."
+    }
+}
+if ($liveData.IndexOf('chartTickSink.SendLast(tick.Symbol', [StringComparison]::Ordinal) -ge 0) {
+    throw 'Live Data AddOn must never pass a broker symbol directly to NinjaTrader.Client.Last().'
+}
+
 Write-Host 'NinjaTrader integration isolation test passed.'
 Write-Host 'Quick Order: HTTP Futures-Risk API + chart symbol mapper only (port 8000).'
-Write-Host 'Live Data: WebSocket/External Data Feed only; no Quick Order reference.'
+Write-Host 'Live Data: explicit broker-to-NinjaTrader full-instrument mapping; no Quick Order reference.'

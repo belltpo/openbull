@@ -26,10 +26,15 @@ The indicator can be applied separately to multiple charts. Each instance retain
 1. Compile/import the AddOn into NinjaTrader 8 and restart NinjaTrader.
 2. Open Control Center → New → OpenBull Live Data.
 3. Enter the OpenBull WebSocket URL and OpenBull API key.
-4. Enter one exact `EXCHANGE:SYMBOL` per line.
+4. Enter one exact broker subscription per line. For chart delivery, map it as
+   `EXCHANGE:SYMBOL => NinjaTrader @INSTRUMENT_FULL`, for example
+   `MCX:CRUDEOIL19AUG26FUT => CRUDEOIL19AUG26FUT AUG26`.
 5. Connect and verify authenticated status plus updating rows.
 6. To send ticks into charts, enable NinjaTrader's built-in External Data Feed/ATI and select “Send ticks to NinjaTrader charts”.
-7. Create/edit a NinjaTrader instrument with an exact External symbol map matching the instrument name sent through ATI.
+7. Select the exact full futures contract in the chart. The AddOn validates the
+   right-hand mapping before it sends anything through ATI and rejects missing
+   or non-expiring futures mappings instead of letting NinjaTrader auto-create
+   a Stock.
 
 The AddOn is not a native NinjaTrader market-data vendor adapter. The supported bridge relies on the built-in External Data Feed/ATI. It supplies live ticks only; historical bars require an import workflow.
 
@@ -45,7 +50,7 @@ Before release, record:
 - Successful NinjaScript compile without duplicate files/classes.
 - AddOn menu entry appears once and closes without UI-thread errors.
 - ATI enabled and port 36973 reachable when chart injection is used.
-- External Data Feed connected and exact symbol maps configured.
+- External Data Feed connected and explicit `=> @INSTRUMENT_FULL` mappings configured.
 - LTP updates for NSE/NFO/MCX examples during relevant market hours.
 - Two or more charts/Quick Order instances retain independent symbols/settings.
 - Hosted HTTPS/WSS, API-key rotation, disconnect/reconnect, and provider-token expiry behavior.
