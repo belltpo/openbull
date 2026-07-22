@@ -5898,6 +5898,88 @@
         ]
       }
     },
+    "/web/fr/trades/{trade_id}/reconcile": {
+      "post": {
+        "description": "Refresh the recorded quantity from the live broker position book.",
+        "operationId": "reconcile_trade_web_fr_trades__trade_id__reconcile_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trade_id",
+            "required": true,
+            "schema": {
+              "title": "Trade Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reconcile Trade",
+        "tags": [
+          "futures-risk"
+        ]
+      }
+    },
+    "/web/fr/trades/{trade_id}/resume-exit-protection": {
+      "post": {
+        "description": "Verify the broker position before clearing a persistent exit block.",
+        "operationId": "resume_exit_protection_web_fr_trades__trade_id__resume_exit_protection_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trade_id",
+            "required": true,
+            "schema": {
+              "title": "Trade Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resume Exit Protection",
+        "tags": [
+          "futures-risk"
+        ]
+      }
+    },
     "/web/holdings": {
       "get": {
         "description": "Get holdings/portfolio data from the broker.",

@@ -588,3 +588,25 @@ async def emergency_exit(trade_id: int, user: User = Depends(get_current_user)):
     except FrError as e:
         raise HTTPException(status_code=e.status, detail=e.message)
     return {"status": "success", "data": trade}
+
+
+@router.post("/trades/{trade_id}/reconcile")
+async def reconcile_trade(trade_id: int, user: User = Depends(get_current_user)):
+    """Refresh the recorded quantity from the live broker position book."""
+    try:
+        trade = await run_in_threadpool(fr.reconcile_trade, user.id, trade_id)
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"status": "success", "data": trade}
+
+
+@router.post("/trades/{trade_id}/resume-exit-protection")
+async def resume_exit_protection(trade_id: int, user: User = Depends(get_current_user)):
+    """Verify the broker position before clearing a persistent exit block."""
+    try:
+        trade = await run_in_threadpool(
+            lambda: fr.reconcile_trade(user.id, trade_id, force=True, resume=True)
+        )
+    except FrError as e:
+        raise HTTPException(status_code=e.status, detail=e.message)
+    return {"status": "success", "data": trade}

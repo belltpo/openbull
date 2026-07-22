@@ -37,13 +37,20 @@ The card-demo route uses source-defined demo data. It is visual evidence, not an
 6. Modify only permitted future-driven levels. Use partial/full/emergency exit with explicit scope.
 7. Reconcile phase state with Order Book/Trade Book/Positions and the phase event history.
 
+If a position is closed or partially closed directly in the broker terminal, OpenBull
+periodically reconciles the broker quantity. A confirmed zero closes the phase without a
+new order. If an exit is rejected or cannot be confirmed, the card displays **Automatic
+exits paused** and prevents another exit submission. Use **Verify broker & resume** once;
+it refreshes the broker position first, closes an already-flat phase, adjusts an external
+partial close, or resumes protection only when the remaining direction/quantity is safe.
+
 ## Calculations and expected result
 
 Futures values determine level hits. Option entry/current/exit price multiplied by executed/remaining quantities determines option MTM and booked P&L. Therefore a futures target hit does not itself guarantee positive option P&L. Successful closure records exit quantities/prices/events and moves the phase into history.
 
 ## Validation and errors
 
-An underlying may reject a second phase while one is active (409). Missing futures/option LTP blocks market pricing. Invalid token/API key returns 401; provider/session gates return 403; invalid template/levels return 4xx. Rate-limit errors require cooldown, not aggressive retry. Zero P&L must be checked against actual option entry/exit prices and executed quantity.
+An underlying may reject a second phase while one is active (409). Missing futures/option LTP blocks market pricing. Invalid token/API key returns 401; provider/session gates return 403; invalid template/levels return 4xx. A 409 mentioning exit protection means the first exit result requires broker verification; do not repeatedly click Close/Emergency. Rate-limit errors require cooldown, not aggressive retry. Zero P&L must be checked against actual option entry/exit prices and executed quantity.
 
 ## NinjaTrader relationship
 

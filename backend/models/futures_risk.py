@@ -158,6 +158,21 @@ class FrTrade(Base):
     realized_pnl = Column(Float, nullable=False, default=0.0)
     meta = Column(JSONB, nullable=True)
 
+    # --- broker exit safety ---
+    # A persistent state is required because auto-exit runs in a background
+    # thread while manual/emergency exits arrive through HTTP.  It prevents
+    # both paths (and process restarts) from blindly submitting duplicate
+    # orders after a rejection or an uncertain broker response.
+    exit_state = Column(String(20), nullable=False, default="idle")
+    exit_attempt_id = Column(String(36), nullable=True)
+    exit_attempt_reason = Column(String(20), nullable=True)
+    exit_attempted_at = Column(DateTime(timezone=True), nullable=True)
+    exit_failure_count = Column(Integer, nullable=False, default=0)
+    exit_block_reason = Column(Text, nullable=True)
+    last_exit_order_id = Column(String(60), nullable=True)
+    broker_remaining_qty = Column(Integer, nullable=True)
+    broker_reconciled_at = Column(DateTime(timezone=True), nullable=True)
+
     # --- audit actors (who created / last modified this trade) ---
     created_by = Column(Integer, nullable=True)
     modified_by = Column(Integer, nullable=True)
@@ -178,6 +193,7 @@ class FrTrade(Base):
         Index("idx_fr_trade_user_status", "user_id", "status"),
         Index("idx_fr_trade_fut_status", "futures_symbol", "futures_exchange", "status"),
         Index("idx_fr_trade_phase_group", "phase_group", "phase_no"),
+        Index("idx_fr_trade_exit_state", "status", "exit_state"),
     )
 
 

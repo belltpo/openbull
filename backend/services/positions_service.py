@@ -10,6 +10,28 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _broker_error_message(payload: Any) -> str | None:
+    """Recognise common broker error envelopes before mapping them to []."""
+    if not isinstance(payload, dict):
+        return None
+    status = str(payload.get("status") or payload.get("s") or "").lower()
+    explicit_error = (
+        status in {"error", "failed", "failure"}
+        or payload.get("success") is False
+        or bool(payload.get("errorType"))
+        or bool(payload.get("error_type"))
+    )
+    if not explicit_error:
+        return None
+    return str(
+        payload.get("errorMessage")
+        or payload.get("message")
+        or payload.get("remarks")
+        or payload.get("errorType")
+        or "Broker rejected the positions request"
+    )
+
+
 def _format_decimal(value):
     if isinstance(value, (int, float)):
         return round(float(value), 2)
@@ -74,10 +96,11 @@ def get_positions_with_auth(
     try:
         positions_data = broker_funcs["get_positions"](auth_token)
 
-        if isinstance(positions_data, dict) and positions_data.get("status") == "error":
+        broker_error = _broker_error_message(positions_data)
+        if broker_error:
             return (
                 False,
-                {"status": "error", "message": positions_data.get("message", "Error fetching positions")},
+                {"status": "error", "message": broker_error},
                 500,
             )
 

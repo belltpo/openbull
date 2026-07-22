@@ -2,7 +2,7 @@
 
 > Generated from the FastAPI OpenAPI document. Authentication labels are classified from the current route families and must be read with the detailed security guide.
 
-Operations: **166** across **148** paths.
+Operations: **168** across **150** paths.
 
 | Method | Path | Operation | Authentication | Request | Success response | Handler |
 |---|---|---|---|---|---|---|
@@ -111,6 +111,8 @@ Operations: **166** across **148** paths.
 | POST | /web/fr/trades/{trade_id}/exit | Exit Trade | Session cookie | path:trade_id | Untyped JSON object; observed keys: status, data | `backend/routers/futures_risk.py:563` |
 | POST | /web/fr/trades/{trade_id}/partial-exit | Partial Exit | Session cookie | PartialExit | Untyped JSON object; observed keys: status, data | `backend/routers/futures_risk.py:573` |
 | POST | /web/fr/trades/{trade_id}/place | Place Draft | Session cookie | path:trade_id | Untyped JSON object; observed keys: status, data | `backend/routers/futures_risk.py:534` |
+| POST | /web/fr/trades/{trade_id}/reconcile | Reconcile Trade | Session cookie | path:trade_id | Untyped JSON object; observed keys: status, data | `backend/routers/futures_risk.py:593` |
+| POST | /web/fr/trades/{trade_id}/resume-exit-protection | Resume Exit Protection | Session cookie | path:trade_id | Untyped JSON object; observed keys: status, data | `backend/routers/futures_risk.py:603` |
 | GET | /web/holdings | Holdings | Session cookie | No request body | Untyped handler response; inspect linked handler/OpenAPI | `backend/routers/holdings.py:17` |
 | GET | /web/logs | List Api Logs | Session cookie | query:limit, query:before_id, query:method, query:mode, query:status, query:status_class, query:path_contains, query:start, query:end, query:user_id | Untyped JSON object; observed keys: status, count, items, mode | `backend/routers/api_logs.py:96` |
 | GET | /web/logs/export.csv | Export Api Logs | Session cookie | query:method, query:mode, query:status, query:status_class, query:path_contains, query:start, query:end, query:user_id | Untyped JSON object; observed keys: status, mode | `backend/routers/api_logs.py:222` |

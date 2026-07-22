@@ -3,6 +3,7 @@
 export type OptionType = "CE" | "PE";
 export type Side = "BUY" | "SELL";
 export type TradeStatus = "draft" | "active" | "completed" | "stopped" | "cancelled" | "error";
+export type ExitSafetyState = "idle" | "submitting" | "blocked";
 export type TrailingMode = "entry_after_t1" | "prev_target" | "off";
 export type TargetStatus = "pending" | "hit" | "skipped";
 export type StrikeSelectionMethod = "ATM" | "ITM_OTM" | "MANUAL" | "OFFSET";
@@ -64,6 +65,14 @@ export interface FrTrade {
   sl_basis: string;
   status: TradeStatus;
   realized_pnl: number;
+  exit_state?: ExitSafetyState;
+  exit_attempt_reason?: string | null;
+  exit_attempted_at?: string | null;
+  exit_failure_count?: number;
+  exit_block_reason?: string | null;
+  last_exit_order_id?: string | null;
+  broker_remaining_qty?: number | null;
+  broker_reconciled_at?: string | null;
   created_by: number | null;
   modified_by: number | null;
   params: PlaceTradePayload | null;

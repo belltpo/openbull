@@ -190,6 +190,27 @@ def run_startup_migrations() -> None:
             engine, "fr_trade", "idx_fr_trade_phase_group", ["phase_group", "phase_no"]
         )
 
+        # Futures-Risk live exit safety. These are also in the formal Alembic
+        # revision, but startup micro-migrations protect installations whose
+        # tables were created before Alembic was stamped (for example, a fresh
+        # install resumed after an interrupted deployment).
+        _add_column_if_missing(
+            engine, "fr_trade", "exit_state", "VARCHAR(20) NOT NULL DEFAULT 'idle'"
+        )
+        _add_column_if_missing(engine, "fr_trade", "exit_attempt_id", "VARCHAR(36)")
+        _add_column_if_missing(engine, "fr_trade", "exit_attempt_reason", "VARCHAR(20)")
+        _add_column_if_missing(engine, "fr_trade", "exit_attempted_at", "TIMESTAMPTZ")
+        _add_column_if_missing(
+            engine, "fr_trade", "exit_failure_count", "INTEGER NOT NULL DEFAULT 0"
+        )
+        _add_column_if_missing(engine, "fr_trade", "exit_block_reason", "TEXT")
+        _add_column_if_missing(engine, "fr_trade", "last_exit_order_id", "VARCHAR(60)")
+        _add_column_if_missing(engine, "fr_trade", "broker_remaining_qty", "INTEGER")
+        _add_column_if_missing(engine, "fr_trade", "broker_reconciled_at", "TIMESTAMPTZ")
+        _add_index_if_missing(
+            engine, "fr_trade", "idx_fr_trade_exit_state", ["status", "exit_state"]
+        )
+
         # Futures-Risk target templates: preserve the old global target list as
         # the Default template, then scope target seq uniqueness per template.
         _migrate_fr_target_templates(engine)

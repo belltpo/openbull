@@ -4,13 +4,16 @@
  * track, the stop-loss, a lifecycle timeline, and lifecycle actions.
  */
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import {
   Activity,
   ChevronDown,
   Layers,
   Pencil,
   Play,
+  RefreshCw,
+  ShieldAlert,
   Target as TargetIcon,
   Trash2,
   TrendingDown,
@@ -27,7 +30,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { getTrade } from "@/api/futuresRisk";
+import { getTrade, resumeExitProtection } from "@/api/futuresRisk";
 import type { FrTrade } from "@/types/futuresRisk";
 import { PositionTimeline } from "./PositionTimeline";
 import { durationFmt, fmt, livePnl, signed, statusMeta, timeFmt, totalPnl } from "./frFormat";
@@ -271,6 +274,7 @@ export function PositionCard({
 }: Props) {
   const [showLog, setShowLog] = useState(false);
   const [showPreviousDetail, setShowPreviousDetail] = useState(false);
+  const queryClient = useQueryClient();
   const detail = useQuery({
     queryKey: ["fr-trade-detail", trade.mode, trade.id],
     queryFn: () => getTrade(trade.id, trade.mode),
@@ -282,6 +286,20 @@ export function PositionCard({
   const isDraft = trade.status === "draft";
   const isActive = trade.status === "active";
   const isClosed = ["completed", "stopped", "cancelled", "error"].includes(trade.status);
+  const exitBlocked = isActive && trade.exit_state === "blocked";
+  const exitSubmitting = isActive && trade.exit_state === "submitting";
+  const recovery = useMutation({
+    mutationFn: () => resumeExitProtection(trade.id),
+    onSuccess: (updated) => {
+      toast.success(updated.status === "active" ? "Broker verified; exit protection resumed" : "Broker position reconciled");
+      queryClient.invalidateQueries({ queryKey: ["fr-trades"] });
+      queryClient.invalidateQueries({ queryKey: ["fr-trade-detail", trade.mode, trade.id] });
+    },
+    onError: (error: unknown) => {
+      // @ts-expect-error axios response shape
+      toast.error(String(error?.response?.data?.detail ?? "Broker reconciliation failed"));
+    },
+  });
   const previousByDate = useMemo(() => groupTradesByDate(previousTrades), [previousTrades]);
 
   const futDelta = liveFut !== undefined ? liveFut - trade.entry_futures_price : null;
@@ -366,6 +384,28 @@ export function PositionCard({
         <PositionTimeline trade={trade} liveOpt={liveOpt} />
       </div>
 
+      {exitBlocked && (
+        <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-700 dark:text-amber-300">
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">Automatic exits paused after one failed attempt</p>
+              <p className="mt-0.5 break-words opacity-90">{trade.exit_block_reason ?? "Broker result needs verification."}</p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-2 h-7 border-amber-500/40 bg-background/60"
+                disabled={recovery.isPending}
+                onClick={() => recovery.mutate()}
+              >
+                <RefreshCw className={cn("mr-1 h-3.5 w-3.5", recovery.isPending && "animate-spin")} />
+                Verify broker & resume
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         {isDraft && (
@@ -383,13 +423,13 @@ export function PositionCard({
         )}
         {isActive && (
           <>
-            <Button size="sm" variant="outline" onClick={() => onModify(trade)}>
+            <Button size="sm" variant="outline" onClick={() => onModify(trade)} disabled={exitSubmitting || exitBlocked}>
               <Pencil className="mr-1 h-3.5 w-3.5" /> Modify
             </Button>
-            <Button size="sm" onClick={() => onExit(trade)}>
+            <Button size="sm" onClick={() => onExit(trade)} disabled={exitSubmitting || exitBlocked}>
               <TargetIcon className="mr-1 h-3.5 w-3.5" /> Close / Partial
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => onEmergency(trade)} className="text-red-600 hover:bg-red-500/10 hover:text-red-700">
+            <Button size="sm" variant="ghost" onClick={() => onEmergency(trade)} disabled={exitSubmitting || exitBlocked} className="text-red-600 hover:bg-red-500/10 hover:text-red-700">
               <Zap className="mr-1 h-3.5 w-3.5" /> Emergency
             </Button>
           </>

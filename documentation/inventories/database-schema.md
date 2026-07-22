@@ -133,6 +133,15 @@ Indexes: `idx_fr_target_template_default`, `ix_fr_target_template_name`
 | `status` | `VARCHAR(12)` | no | index, default `active` | `—` |
 | `realized_pnl` | `FLOAT` | no | default `0.0` | `—` |
 | `meta` | `JSONB` | yes | — | `—` |
+| `exit_state` | `VARCHAR(20)` | no | default `idle` | `—` |
+| `exit_attempt_id` | `VARCHAR(36)` | yes | — | `—` |
+| `exit_attempt_reason` | `VARCHAR(20)` | yes | — | `—` |
+| `exit_attempted_at` | `DATETIME` | yes | — | `—` |
+| `exit_failure_count` | `INTEGER` | no | default `0` | `—` |
+| `exit_block_reason` | `TEXT` | yes | — | `—` |
+| `last_exit_order_id` | `VARCHAR(60)` | yes | — | `—` |
+| `broker_remaining_qty` | `INTEGER` | yes | — | `—` |
+| `broker_reconciled_at` | `DATETIME` | yes | — | `—` |
 | `created_by` | `INTEGER` | yes | — | `—` |
 | `modified_by` | `INTEGER` | yes | — | `—` |
 | `phase_group` | `VARCHAR(120)` | yes | index | `—` |
@@ -142,7 +151,7 @@ Indexes: `idx_fr_target_template_default`, `ix_fr_target_template_name`
 | `updated_at` | `DATETIME` | no | server default | `—` |
 
 Named constraints: —
-Indexes: `idx_fr_trade_fut_status`, `idx_fr_trade_phase_group`, `idx_fr_trade_user_status`, `ix_fr_trade_phase_group`, `ix_fr_trade_status`, `ix_fr_trade_user_id`
+Indexes: `idx_fr_trade_exit_state`, `idx_fr_trade_fut_status`, `idx_fr_trade_phase_group`, `idx_fr_trade_user_status`, `ix_fr_trade_phase_group`, `ix_fr_trade_status`, `ix_fr_trade_user_id`
 
 ## `login_attempts`
 

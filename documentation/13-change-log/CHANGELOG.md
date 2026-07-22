@@ -1,5 +1,11 @@
 # Documentation Change Log
 
+## 2026-07-22 — Futures-Risk live exit safety
+
+- Documented persistent single-flight exit state, broker-position reconciliation, and the one-failure circuit breaker.
+- Added operator guidance for direct broker-terminal closes and the **Verify broker & resume** control.
+- Added the reconciliation/recovery endpoints and broker-position snapshot cache to the maintained inventories.
+
 ## 2026-07-20 — Initial source-backed documentation baseline
 
 - Created separate maintained `documentation/` tree.

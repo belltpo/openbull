@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
-from backend.futures_risk.execution import dispatch_order, load_broker_context_sync, log_event
+from backend.futures_risk.execution import load_broker_context_sync, log_event
 from backend.futures_risk import service as fr_service
 from backend.models.futures_risk import FrTrade, FrTradeTarget
 from backend.sandbox._db import session_scope
@@ -93,54 +93,6 @@ def _futures_price(symbol: str, exchange: str, ctx: dict | None) -> float | None
 
 
 # ---------------------------------------------------------------------------
-# Exit placement
-# ---------------------------------------------------------------------------
-
-def _place_exit(trade: FrTrade, qty: int, reason: str, ctx: dict | None = None) -> tuple[bool, str | None, str, float | None]:
-    if qty <= 0:
-        return True, None, "nothing to exit", None
-    if trade.mode != "sandbox" and ctx is None:
-        return False, None, "No active broker session", None
-    exit_action = "SELL" if trade.side == "BUY" else "BUY"
-    order_data = {
-        "symbol": trade.option_symbol,
-        "exchange": trade.option_exchange,
-        "action": exit_action,
-        "quantity": str(qty),
-        "pricetype": "MARKET",
-        "product": trade.product,
-        "price": "0",
-        "trigger_price": "0",
-        "strategy": f"FuturesRisk-{reason}",
-    }
-    ok, resp, _status = dispatch_order(
-        trade.mode,
-        trade.user_id,
-        order_data,
-        auth_token=ctx["auth_token"] if ctx else None,
-        broker=ctx["broker"] if ctx else None,
-        config=ctx.get("config") if ctx else None,
-    )
-    if not ok:
-        return False, None, resp.get("message", "exit failed"), None
-
-    order_id = resp.get("orderid")
-    if trade.mode == "sandbox":
-        return True, order_id, "ok", fr_service._extract_order_fill_price(resp)
-    if not order_id:
-        return False, None, "Broker did not return an exit order id", None
-    confirmed, confirm_message, fill_price = fr_service._confirm_entry_order(
-        str(order_id),
-        ctx["auth_token"],
-        ctx["broker"],
-        ctx.get("config"),
-    )
-    if not confirmed:
-        return False, str(order_id), confirm_message or "Broker exit order was not completed", fill_price
-    return True, str(order_id), "ok", fill_price
-
-
-# ---------------------------------------------------------------------------
 # Trailing
 # ---------------------------------------------------------------------------
 
@@ -186,155 +138,153 @@ def _target_hit(direction: int, fut: float, trigger: float) -> bool:
 
 
 def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
-    # Snapshot the trade + targets.
+    """Evaluate one trade through the persistent, single-flight exit path."""
     with session_scope() as db:
-        t = db.get(FrTrade, trade_id)
-        if t is None or t.status != "active":
+        trade = db.get(FrTrade, trade_id)
+        if trade is None or trade.status != "active":
             return
-        user_id = t.user_id
-        fut_symbol, fut_exchange = t.futures_symbol, t.futures_exchange
-        option_symbol, option_exchange = t.option_symbol, t.option_exchange
+        user_id = trade.user_id
+        mode = trade.mode
+        created_at = trade.created_at
+        fut_symbol, fut_exchange = trade.futures_symbol, trade.futures_exchange
+        option_symbol, option_exchange = trade.option_symbol, trade.option_exchange
 
-    # The adapter may be created after application startup (on the first WS
-    # client authentication), so refresh this idempotent request each pass.
     ensure_symbols_streaming([
         {"symbol": fut_symbol, "exchange": fut_exchange},
         {"symbol": option_symbol, "exchange": option_exchange},
     ])
-
     ctx = ctx_cache.get(user_id, "missing")
     if ctx == "missing":
         ctx = load_broker_context_sync(user_id)
         ctx_cache[user_id] = ctx
 
-    fut = _futures_price(fut_symbol, fut_exchange, ctx)
-    if fut is None:
-        return
-
-    auto_exit = fr_service._bool_cfg("auto_exit_enabled", True)
+    if mode == "live" and ctx is not None:
+        created = created_at
+        if created is not None and created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created is None or datetime.now(tz=timezone.utc) - created >= timedelta(seconds=10):
+            try:
+                fr_service.reconcile_trade(user_id, trade_id, ctx=ctx, force=False)
+            except fr_service.FrError:
+                # Passive checks fail closed and silently; an actual exit uses
+                # a forced fresh snapshot and persists any blocking reason.
+                pass
 
     with session_scope() as db:
-        t = db.get(FrTrade, trade_id)
-        if t is None or t.status != "active":
+        trade = db.get(FrTrade, trade_id)
+        if (
+            trade is None
+            or trade.status != "active"
+            or fr_service._exit_state(trade) != "idle"
+        ):
             return
-        all_targets = db.execute(
-            select(FrTradeTarget).where(FrTradeTarget.trade_id == t.id).order_by(FrTradeTarget.seq)
+
+    fut = _futures_price(fut_symbol, fut_exchange, ctx)
+    if fut is None or not fr_service._bool_cfg("auto_exit_enabled", True):
+        return
+
+    sl_qty: int | None = None
+    target_seq: int | None = None
+    target_qty: int | None = None
+    with session_scope() as db:
+        trade = db.get(FrTrade, trade_id)
+        if (
+            trade is None
+            or trade.status != "active"
+            or fr_service._exit_state(trade) != "idle"
+        ):
+            return
+        targets = db.execute(
+            select(FrTradeTarget)
+            .where(FrTradeTarget.trade_id == trade.id)
+            .order_by(FrTradeTarget.seq)
         ).scalars().all()
-
-        # --- Stop-loss: exits everything remaining ---
-        if _sl_hit(t.direction, fut, t.sl_price):
-            qty = t.remaining_qty
-            if not auto_exit:
-                return
-            ok, oid, msg, fill_price = _place_exit(t, qty, "sl", ctx) if qty > 0 else (True, None, "ok", None)
-            if ok:
-                exit_px = fill_price or fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
-                pnl_inc = fr_service._trade_exit_pnl(t, exit_px, qty)
-                t.remaining_qty = 0
-                t.realized_pnl = round((t.realized_pnl or 0.0) + pnl_inc, 2)
-                t.status = "stopped"
-                t.closed_at = datetime.now(tz=timezone.utc)
-                log_event(
-                    db, trade_id=t.id, user_id=user_id, kind="sl_hit", severity="warning",
-                    message=f"Stop-loss hit at futures {fut} (SL {t.sl_price}, basis {t.sl_basis}); exited {qty} @ ~{exit_px} (P&L {pnl_inc:+.2f})",
-                    payload={"futures_price": fut, "exit_order_id": oid, "qty": qty, "exit_option_price": exit_px, "pnl": pnl_inc},
+        if _sl_hit(trade.direction, fut, trade.sl_price):
+            sl_qty = int(trade.remaining_qty or 0)
+        else:
+            for target in targets:
+                if target.status != "pending" or not _target_hit(
+                    trade.direction, fut, target.trigger_price
+                ):
+                    continue
+                final_pending = not any(
+                    row.status == "pending" and row.seq > target.seq for row in targets
                 )
-            else:
-                log_event(
-                    db, trade_id=t.id, user_id=user_id, kind="error", severity="error",
-                    message=f"SL exit failed at futures {fut}: {msg}", payload={"futures_price": fut},
-                )
-            return
-
-        # --- Targets: partial exits in sequence ---
-        fired_any = False
-        for tgt in all_targets:
-            if tgt.status != "pending":
-                continue
-            if not _target_hit(t.direction, fut, tgt.trigger_price):
-                continue
-            if not auto_exit:
-                continue
-            is_final_pending_target = not any(x.status == "pending" and x.seq > tgt.seq for x in all_targets)
-            planned_qty = tgt.exit_qty
-            if is_final_pending_target:
-                planned_qty = max(planned_qty, t.remaining_qty)
-            qty = min(planned_qty, t.remaining_qty)
-            if qty <= 0:
-                hit_option_price = fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
-                tgt.status = "hit"
-                tgt.hit_futures_price = fut
-                tgt.hit_at = datetime.now(tz=timezone.utc)
-                fired_any = True
-                log_event(
-                    db, trade_id=t.id, user_id=user_id, kind="target_hit",
-                    message=(
-                        f"Target {tgt.seq} reached at futures {fut} "
-                        f"(trigger {tgt.trigger_price}); no quantity exited because "
-                        "the configured exit percentage is below one executable lot"
-                    ),
-                    payload={
-                        "futures_price": fut,
-                        "seq": tgt.seq,
-                        "exit_order_id": None,
-                        "qty": 0,
-                        "exit_option_price": hit_option_price,
-                        "pnl": 0.0,
-                    },
-                )
-                prev_sl = t.sl_price
-                _apply_trailing(t, tgt.seq, all_targets)
-                if t.sl_price != prev_sl:
+                planned = max(target.exit_qty, trade.remaining_qty) if final_pending else target.exit_qty
+                qty = min(int(planned or 0), int(trade.remaining_qty or 0))
+                if qty <= 0:
+                    target.status = "hit"
+                    target.hit_futures_price = fut
+                    target.hit_at = datetime.now(tz=timezone.utc)
                     log_event(
-                        db, trade_id=t.id, user_id=user_id, kind="sl_trail",
-                        message=f"Stop-loss trailed to {t.sl_price} ({t.sl_basis}) after target {tgt.seq}",
-                        payload={"sl_price": t.sl_price, "basis": t.sl_basis},
+                        db,
+                        trade_id=trade.id,
+                        user_id=user_id,
+                        kind="target_hit",
+                        message=(
+                            f"Target {target.seq} reached at futures {fut}; no quantity exited because "
+                            "the configured percentage is below one executable lot"
+                        ),
+                        payload={"futures_price": fut, "seq": target.seq, "qty": 0},
                     )
-                continue
+                    previous_sl = trade.sl_price
+                    _apply_trailing(trade, target.seq, targets)
+                    if trade.sl_price != previous_sl:
+                        log_event(
+                            db,
+                            trade_id=trade.id,
+                            user_id=user_id,
+                            kind="sl_trail",
+                            message=f"Stop-loss trailed to {trade.sl_price} ({trade.sl_basis}) after target {target.seq}",
+                            payload={"sl_price": trade.sl_price, "basis": trade.sl_basis},
+                        )
+                    continue
+                target_seq, target_qty = target.seq, qty
+                break
 
-            ok, oid, msg, fill_price = _place_exit(t, qty, f"t{tgt.seq}", ctx)
-            if not ok:
-                log_event(
-                    db, trade_id=t.id, user_id=user_id, kind="error", severity="error",
-                    message=f"Target {tgt.seq} exit failed at futures {fut}: {msg}",
-                    payload={"futures_price": fut, "seq": tgt.seq},
-                )
-                continue
-            exit_px = fill_price or fr_service._option_exit_price(t.option_symbol, t.option_exchange, t.entry_option_price)
-            pnl_inc = fr_service._trade_exit_pnl(t, exit_px, qty)
-            tgt.status = "hit"
-            tgt.hit_futures_price = fut
-            tgt.exit_order_id = oid
-            tgt.hit_at = datetime.now(tz=timezone.utc)
-            t.remaining_qty = max(0, t.remaining_qty - qty)
-            t.realized_pnl = round((t.realized_pnl or 0.0) + pnl_inc, 2)
-            fired_any = True
+    if sl_qty:
+        fr_service.execute_trade_exit(
+            trade_id,
+            user_id=None,
+            requested_qty=sl_qty,
+            reason="sl",
+            ctx=ctx,
+            futures_price=fut,
+        )
+        return
+    if target_seq is None or target_qty is None:
+        return
+    result = fr_service.execute_trade_exit(
+        trade_id,
+        user_id=None,
+        requested_qty=target_qty,
+        reason=f"t{target_seq}",
+        ctx=ctx,
+        futures_price=fut,
+        target_seq=target_seq,
+    )
+    if not result.ok or result.reconciled:
+        return
+    with session_scope() as db:
+        trade = db.get(FrTrade, trade_id)
+        if trade is None:
+            return
+        targets = db.execute(
+            select(FrTradeTarget)
+            .where(FrTradeTarget.trade_id == trade.id)
+            .order_by(FrTradeTarget.seq)
+        ).scalars().all()
+        previous_sl = trade.sl_price
+        _apply_trailing(trade, target_seq, targets)
+        if trade.sl_price != previous_sl:
             log_event(
-                db, trade_id=t.id, user_id=user_id, kind="target_hit",
-                message=f"Target {tgt.seq} hit at futures {fut} (trigger {tgt.trigger_price}); exited {qty} @ ~{exit_px} (P&L {pnl_inc:+.2f})",
-                payload={"futures_price": fut, "seq": tgt.seq, "exit_order_id": oid, "qty": qty, "exit_option_price": exit_px, "pnl": pnl_inc},
+                db,
+                trade_id=trade.id,
+                user_id=trade.user_id,
+                kind="sl_trail",
+                message=f"Stop-loss trailed to {trade.sl_price} ({trade.sl_basis}) after target {target_seq}",
+                payload={"sl_price": trade.sl_price, "basis": trade.sl_basis},
             )
-            prev_sl = t.sl_price
-            _apply_trailing(t, tgt.seq, all_targets)
-            if t.sl_price != prev_sl:
-                log_event(
-                    db, trade_id=t.id, user_id=user_id, kind="sl_trail",
-                    message=f"Stop-loss trailed to {t.sl_price} ({t.sl_basis}) after target {tgt.seq}",
-                    payload={"sl_price": t.sl_price, "basis": t.sl_basis},
-                )
-
-        if t.remaining_qty <= 0 and t.status == "active":
-            t.status = "completed"
-            t.closed_at = datetime.now(tz=timezone.utc)
-            log_event(
-                db, trade_id=t.id, user_id=user_id, kind="completed",
-                message=f"All quantity exited via targets (total P&L {t.realized_pnl:+.2f})",
-                payload={"futures_price": fut, "realized_pnl": t.realized_pnl},
-            )
-        elif fired_any and all(x.status != "pending" for x in all_targets) and t.remaining_qty > 0:
-            # All targets done but a remainder is still open — it now rides the
-            # trailed SL. Nothing else to do this pass.
-            pass
 
 
 # ---------------------------------------------------------------------------

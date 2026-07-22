@@ -20,6 +20,21 @@ Trade options; manage **target / stop-loss / trailing** entirely on the underlyi
 5. The dashboard streams live futures + option LTP over the WS proxy and shows P&L, target
    status, remaining qty, and an auto-exit log per trade.
 
+## Live exit safety and broker reconciliation
+
+- Every SL, target, manual, partial, and emergency exit uses one persistent single-flight
+  coordinator. Only one broker order can be in progress for a trade.
+- Before a live exit, OpenBull reads a fresh broker position. A confirmed zero quantity
+  closes the OpenBull phase without sending another order; API/auth/transport failures are
+  never treated as zero.
+- The background engine reconciles active trades after a short post-entry grace period.
+  Broker snapshots are shared for five seconds so several cards do not flood the provider.
+- One rejected or uncertain exit opens a circuit breaker (`exit_state = blocked`). Automatic
+  exits remain paused until **Verify broker & resume** confirms the live quantity. There is
+  no blind two-second order retry.
+- If the broker quantity is smaller (external partial close), OpenBull reduces its remaining
+  quantity. An opposite-side or larger broker quantity is blocked for operator review.
+
 ## UI
 
 - **Dashboard** — `/tools/futures-risk`: active positions, entry/live futures, targets & SL
@@ -34,7 +49,9 @@ Trade options; manage **target / stop-loss / trailing** entirely on the underlyi
 |---|---|
 | Tables (`fr_*`) | `backend/models/futures_risk.py` |
 | Migration | `alembic/versions/20260611_futures_risk.py` |
+| Exit-safety migration | `alembic/versions/20260722_fr_exit_safety.py` |
 | Service (CRUD, resolve, place-trade) | `backend/futures_risk/service.py` |
+| Broker reconciliation | `backend/futures_risk/reconciliation.py` |
 | Auto-exit engine (poll loop) | `backend/futures_risk/engine.py` |
 | Order dispatch / broker ctx / events | `backend/futures_risk/execution.py` |
 | Seed defaults | `backend/futures_risk/defaults.py` |

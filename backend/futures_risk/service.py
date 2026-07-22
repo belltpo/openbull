@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 import re
 import time
+import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -19,6 +21,12 @@ from sqlalchemy import func, select, text
 
 from backend.futures_risk import defaults as fr_defaults
 from backend.futures_risk.execution import dispatch_order, load_broker_context_sync, log_event
+from backend.futures_risk.reconciliation import (
+    PositionSnapshot,
+    decide_position_reconciliation,
+    get_position_snapshot,
+    invalidate_position_cache,
+)
 from backend.futures_risk.lot_sizes import LOT_SIZE_BY_UNDERLYING, MCX_UNDERLYINGS
 from backend.futures_risk.strike_selection import (
     StrikeSelectionMethod,
@@ -92,6 +100,19 @@ class FrError(Exception):
         super().__init__(message)
         self.message = message
         self.status = status
+
+
+@dataclass(frozen=True)
+class ExitExecutionResult:
+    ok: bool
+    message: str
+    order_id: str | None = None
+    exited_qty: int = 0
+    remaining_qty: int = 0
+    fill_price: float | None = None
+    pnl: float = 0.0
+    reconciled: bool = False
+    blocked: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1741,6 +1762,14 @@ def _trade_to_dict(t: FrTrade) -> dict[str, Any]:
         "sl_basis": t.sl_basis,
         "status": t.status,
         "realized_pnl": t.realized_pnl,
+        "exit_state": t.exit_state or "idle",
+        "exit_attempt_reason": t.exit_attempt_reason,
+        "exit_attempted_at": _utc_iso(t.exit_attempted_at),
+        "exit_failure_count": int(t.exit_failure_count or 0),
+        "exit_block_reason": t.exit_block_reason,
+        "last_exit_order_id": t.last_exit_order_id,
+        "broker_remaining_qty": t.broker_remaining_qty,
+        "broker_reconciled_at": _utc_iso(t.broker_reconciled_at),
         "created_by": t.created_by,
         "modified_by": t.modified_by,
         "params": (t.meta or {}).get("params"),
@@ -2033,12 +2062,12 @@ def list_phases(user_id: int, underlying: str | None = None, mode: str | None = 
             terminal = db.execute(
                 select(FrTradeEvent.kind).where(
                     FrTradeEvent.trade_id == t.id,
-                    FrTradeEvent.kind.in_(("sl_hit", "completed", "emergency_exit")),
+                    FrTradeEvent.kind.in_(("sl_hit", "completed", "emergency_exit", "broker_reconciled")),
                 ).order_by(FrTradeEvent.ts.desc()).limit(1)
             ).scalar()
             exit_kind = (
                 "auto" if terminal in ("sl_hit",) else
-                "manual" if terminal in ("completed", "emergency_exit") else
+                "manual" if terminal in ("completed", "emergency_exit", "broker_reconciled") else
                 ("open" if t.status in ("active", "draft") else "auto")
             )
             out.append({
@@ -2081,6 +2110,517 @@ def list_phases(user_id: int, underlying: str | None = None, mode: str | None = 
         return out
 
 
+_EXIT_STALE_AFTER = timedelta(seconds=60)
+
+
+def _exit_state(t: FrTrade) -> str:
+    return str(t.exit_state or "idle").lower()
+
+
+def _claim_exit_attempt(
+    trade_id: int,
+    *,
+    user_id: int | None,
+    reason: str,
+) -> tuple[FrTrade, str]:
+    """Atomically reserve one trade for exactly one broker submission."""
+    attempt_id = str(uuid.uuid4())
+    now = datetime.now(tz=timezone.utc)
+    stale_message: str | None = None
+    claimed_trade: FrTrade | None = None
+    with session_scope() as db:
+        t = db.execute(
+            select(FrTrade).where(FrTrade.id == trade_id).with_for_update()
+        ).scalar_one_or_none()
+        if t is None or (user_id is not None and t.user_id != user_id):
+            raise FrError("Trade not found", 404)
+        if t.status != "active":
+            raise FrError(f"Trade is {t.status}, not active", 409)
+        if int(t.remaining_qty or 0) <= 0:
+            raise FrError("Trade has no remaining quantity", 409)
+        state = _exit_state(t)
+        if state == "blocked":
+            detail = t.exit_block_reason or "a previous exit could not be safely confirmed"
+            raise FrError(f"Exit protection is blocked: {detail}. Reconcile with the broker before retrying.", 409)
+        if state == "submitting":
+            attempted = t.exit_attempted_at
+            if attempted is not None and attempted.tzinfo is None:
+                attempted = attempted.replace(tzinfo=timezone.utc)
+            if attempted is not None and now - attempted <= _EXIT_STALE_AFTER:
+                raise FrError("An exit order is already being processed for this trade", 409)
+            # A process may have died after sending the previous order.  Never
+            # guess that it was not submitted; require broker reconciliation.
+            t.exit_state = "blocked"
+            t.exit_failure_count = int(t.exit_failure_count or 0) + 1
+            t.exit_block_reason = "A previous exit attempt was interrupted before its broker result was confirmed"
+            log_event(
+                db,
+                trade_id=t.id,
+                user_id=t.user_id,
+                kind="exit_blocked",
+                severity="error",
+                message=t.exit_block_reason,
+                payload={"previous_attempt_id": t.exit_attempt_id},
+            )
+            stale_message = t.exit_block_reason
+        else:
+            t.exit_state = "submitting"
+            t.exit_attempt_id = attempt_id
+            t.exit_attempt_reason = reason
+            t.exit_attempted_at = now
+            t.exit_block_reason = None
+            claimed_trade = t
+    if stale_message:
+        raise FrError(f"Exit protection is blocked: {stale_message}", 409)
+    assert claimed_trade is not None
+    return claimed_trade, attempt_id
+
+
+def _set_exit_blocked(
+    trade_id: int,
+    attempt_id: str,
+    message: str,
+    *,
+    order_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    with session_scope() as db:
+        t = db.execute(
+            select(FrTrade).where(FrTrade.id == trade_id).with_for_update()
+        ).scalar_one_or_none()
+        if t is None or t.exit_attempt_id != attempt_id:
+            return
+        t.exit_state = "blocked"
+        t.exit_failure_count = int(t.exit_failure_count or 0) + 1
+        t.exit_block_reason = message[:2000]
+        if order_id:
+            t.last_exit_order_id = order_id
+        event_payload = {"attempt_id": attempt_id, "exit_order_id": order_id}
+        if payload:
+            event_payload.update(payload)
+        log_event(
+            db,
+            trade_id=t.id,
+            user_id=t.user_id,
+            kind="exit_blocked",
+            severity="error",
+            message=f"Automatic exits paused after one failed attempt: {message}",
+            payload=event_payload,
+        )
+
+
+def _apply_position_snapshot(
+    trade_id: int,
+    snapshot: PositionSnapshot,
+    *,
+    attempt_id: str | None = None,
+    clear_block: bool = False,
+) -> tuple[str, int, str | None]:
+    """Persist a trusted broker quantity.
+
+    Returns ``(action, remaining, message)`` where action is unchanged,
+    adjusted, closed, blocked, or error.
+    """
+    if not snapshot.ok:
+        return "error", -1, snapshot.message or "Broker positions could not be verified"
+    if not snapshot.supported:
+        return "unchanged", -1, None
+    assert snapshot.quantity is not None
+    with session_scope() as db:
+        t = db.execute(
+            select(FrTrade).where(FrTrade.id == trade_id).with_for_update()
+        ).scalar_one_or_none()
+        if t is None:
+            return "error", -1, "Trade not found"
+        if attempt_id is not None and t.exit_attempt_id != attempt_id:
+            return "error", int(t.remaining_qty or 0), "Exit attempt ownership changed"
+        if t.status != "active":
+            return "closed", int(t.remaining_qty or 0), None
+
+        signed_qty = int(snapshot.quantity)
+        decision = decide_position_reconciliation(t.remaining_qty, t.side, signed_qty)
+        broker_qty = decision.broker_quantity
+        t.broker_remaining_qty = broker_qty
+        t.broker_reconciled_at = datetime.now(tz=timezone.utc)
+
+        if decision.action == "closed":
+            old_remaining = int(t.remaining_qty or 0)
+            t.remaining_qty = 0
+            t.status = "completed"
+            t.closed_at = datetime.now(tz=timezone.utc)
+            t.exit_state = "idle"
+            t.exit_attempt_id = None
+            t.exit_attempt_reason = None
+            t.exit_block_reason = None
+            pending = db.execute(
+                select(FrTradeTarget).where(
+                    FrTradeTarget.trade_id == t.id,
+                    FrTradeTarget.status == "pending",
+                )
+            ).scalars().all()
+            for target in pending:
+                target.status = "skipped"
+            log_event(
+                db,
+                trade_id=t.id,
+                user_id=t.user_id,
+                kind="broker_reconciled",
+                severity="warning",
+                message=(
+                    f"Broker position is zero; OpenBull closed the trade without placing another order "
+                    f"({old_remaining} recorded qty reconciled)"
+                ),
+                payload={
+                    "old_remaining_qty": old_remaining,
+                    "broker_remaining_qty": 0,
+                    "broker_pnl": snapshot.broker_pnl,
+                },
+            )
+            return "closed", 0, None
+
+        recorded = int(t.remaining_qty or 0)
+        if decision.action == "blocked":
+            message = decision.message or "Broker position conflicts with the OpenBull trade"
+            t.exit_state = "blocked"
+            t.exit_failure_count = int(t.exit_failure_count or 0) + 1
+            t.exit_block_reason = message
+            log_event(
+                db, trade_id=t.id, user_id=t.user_id, kind="exit_blocked", severity="error",
+                message=message,
+                payload={
+                    "broker_signed_qty": signed_qty,
+                    "broker_remaining_qty": broker_qty,
+                    "recorded_remaining_qty": recorded,
+                },
+            )
+            return "blocked", recorded, message
+
+        action = decision.action
+        if action == "adjusted":
+            t.remaining_qty = broker_qty
+            action = "adjusted"
+            log_event(
+                db,
+                trade_id=t.id,
+                user_id=t.user_id,
+                kind="broker_reconciled",
+                severity="warning",
+                message=f"OpenBull remaining quantity reconciled from {recorded} to broker quantity {broker_qty}",
+                payload={
+                    "old_remaining_qty": recorded,
+                    "broker_remaining_qty": broker_qty,
+                    "broker_pnl": snapshot.broker_pnl,
+                },
+            )
+        if clear_block:
+            t.exit_state = "idle"
+            t.exit_attempt_id = None
+            t.exit_attempt_reason = None
+            t.exit_block_reason = None
+            log_event(
+                db,
+                trade_id=t.id,
+                user_id=t.user_id,
+                kind="exit_resumed",
+                message=f"Exit protection resumed after broker verification ({broker_qty} qty open)",
+                payload={"broker_remaining_qty": broker_qty},
+            )
+        return action, broker_qty, None
+
+
+def reconcile_trade(
+    user_id: int,
+    trade_id: int,
+    *,
+    ctx: dict[str, Any] | None = None,
+    force: bool = True,
+    resume: bool = False,
+) -> dict[str, Any]:
+    """Synchronise one active live trade with the broker position book."""
+    stale_attempt_id: str | None = None
+    with session_scope() as db:
+        t = db.get(FrTrade, trade_id)
+        if t is None or t.user_id != user_id:
+            raise FrError("Trade not found", 404)
+        if t.mode == "sandbox":
+            if resume:
+                t.exit_state = "idle"
+                t.exit_attempt_id = None
+                t.exit_attempt_reason = None
+                t.exit_block_reason = None
+            return get_trade(user_id, trade_id) or {}
+        if t.status != "active":
+            return get_trade(user_id, trade_id) or {}
+        if _exit_state(t) == "submitting" and not resume:
+            attempted = t.exit_attempted_at
+            if attempted is not None and attempted.tzinfo is None:
+                attempted = attempted.replace(tzinfo=timezone.utc)
+            if attempted is not None and datetime.now(tz=timezone.utc) - attempted <= _EXIT_STALE_AFTER:
+                return get_trade(user_id, trade_id) or {}
+            stale_attempt_id = t.exit_attempt_id
+        trade = t
+    broker_ctx = ctx or load_broker_context_sync(user_id)
+    snapshot = get_position_snapshot(trade, broker_ctx, force=force)
+    if not snapshot.supported:
+        if resume:
+            raise FrError("Safe broker reconciliation is not supported for this broker", 409)
+        return get_trade(user_id, trade_id) or {}
+    if not snapshot.ok:
+        if stale_attempt_id:
+            _set_exit_blocked(
+                trade_id,
+                stale_attempt_id,
+                f"Interrupted exit could not be reconciled: {snapshot.message}",
+            )
+        raise FrError(f"Broker position could not be verified: {snapshot.message}", 503)
+    action, _, message = _apply_position_snapshot(
+        trade_id,
+        snapshot,
+        attempt_id=stale_attempt_id,
+        clear_block=resume,
+    )
+    if stale_attempt_id and action != "closed":
+        _set_exit_blocked(
+            trade_id,
+            stale_attempt_id,
+            "A previous exit was interrupted; broker quantity was checked and explicit operator resume is required",
+        )
+    if action == "blocked" or message:
+        raise FrError(message or "Broker reconciliation blocked the trade", 409)
+    return get_trade(user_id, trade_id) or {}
+
+
+def execute_trade_exit(
+    trade_id: int,
+    *,
+    user_id: int | None,
+    requested_qty: int | None,
+    reason: str,
+    ctx: dict[str, Any] | None = None,
+    futures_price: float | None = None,
+    target_seq: int | None = None,
+) -> ExitExecutionResult:
+    """Single safe order path for automatic and user-initiated exits."""
+    trade, attempt_id = _claim_exit_attempt(trade_id, user_id=user_id, reason=reason)
+    broker_ctx = ctx
+    if trade.mode != "sandbox":
+        broker_ctx = broker_ctx or load_broker_context_sync(trade.user_id)
+        if broker_ctx is None:
+            message = "No active broker session"
+            _set_exit_blocked(trade_id, attempt_id, message)
+            return ExitExecutionResult(False, message, blocked=True)
+        snapshot = get_position_snapshot(trade, broker_ctx, force=True)
+        if snapshot.supported:
+            if not snapshot.ok:
+                message = f"Broker position could not be verified: {snapshot.message}"
+                _set_exit_blocked(trade_id, attempt_id, message)
+                return ExitExecutionResult(False, message, blocked=True)
+            action, reconciled_qty, message = _apply_position_snapshot(
+                trade_id, snapshot, attempt_id=attempt_id
+            )
+            if action == "closed":
+                return ExitExecutionResult(
+                    True,
+                    "Broker position was already closed; OpenBull was reconciled without a new order",
+                    remaining_qty=0,
+                    reconciled=True,
+                )
+            if action in {"blocked", "error"}:
+                if action == "error":
+                    _set_exit_blocked(trade_id, attempt_id, message or "Broker reconciliation failed")
+                return ExitExecutionResult(
+                    False,
+                    message or "Broker reconciliation blocked the exit",
+                    remaining_qty=max(0, reconciled_qty),
+                    blocked=True,
+                )
+
+    with session_scope() as db:
+        current = db.get(FrTrade, trade_id)
+        if current is None or current.status != "active" or current.exit_attempt_id != attempt_id:
+            return ExitExecutionResult(False, "Trade changed while the exit was being prepared", blocked=True)
+        remaining = int(current.remaining_qty or 0)
+        qty = remaining if requested_qty is None else min(max(0, int(requested_qty)), remaining)
+        if qty <= 0:
+            current.exit_state = "idle"
+            current.exit_attempt_id = None
+            current.exit_attempt_reason = None
+            return ExitExecutionResult(True, "Nothing to exit", remaining_qty=remaining)
+        order_data = {
+            "symbol": current.option_symbol,
+            "exchange": current.option_exchange,
+            "action": "SELL" if current.side == "BUY" else "BUY",
+            "quantity": str(qty),
+            "pricetype": "MARKET",
+            "product": current.product,
+            "price": "0",
+            "trigger_price": "0",
+            "strategy": f"FuturesRisk-{reason}",
+        }
+
+    ok, resp, status_code = dispatch_order(
+        trade.mode,
+        trade.user_id,
+        order_data,
+        auth_token=broker_ctx["auth_token"] if broker_ctx else None,
+        broker=broker_ctx["broker"] if broker_ctx else None,
+        config=broker_ctx.get("config") if broker_ctx else None,
+    )
+    order_id = str(resp.get("orderid")) if isinstance(resp, dict) and resp.get("orderid") else None
+    fill_price = _extract_order_fill_price(resp) if isinstance(resp, dict) else None
+    failure_message: str | None = None
+    if not ok:
+        failure_message = resp.get("message", "Exit order failed") if isinstance(resp, dict) else "Exit order failed"
+    elif trade.mode != "sandbox":
+        if not order_id:
+            failure_message = "Broker did not return an exit order id"
+        else:
+            confirmed, confirm_message, confirmed_price = _confirm_entry_order(
+                order_id,
+                broker_ctx["auth_token"],
+                broker_ctx["broker"],
+                broker_ctx.get("config"),
+            )
+            fill_price = confirmed_price or fill_price
+            if not confirmed:
+                failure_message = confirm_message or "Broker exit order was not completed"
+
+    if failure_message:
+        # A rejection such as Dhan DH-1111 often means the position was closed
+        # directly at the broker.  Verify once, then either reconcile to zero
+        # or open the persistent circuit breaker.  Never submit a second order.
+        if broker_ctx and trade.mode != "sandbox":
+            invalidate_position_cache(broker_ctx["broker"], broker_ctx["auth_token"])
+            after = get_position_snapshot(trade, broker_ctx, force=True)
+            if after.supported and after.ok:
+                action, remaining_after, reconcile_message = _apply_position_snapshot(
+                    trade_id, after, attempt_id=attempt_id
+                )
+                if action == "closed":
+                    return ExitExecutionResult(
+                        True,
+                        "Broker position is zero; OpenBull reconciled the external close",
+                        order_id=order_id,
+                        remaining_qty=0,
+                        reconciled=True,
+                    )
+                if reconcile_message:
+                    failure_message = f"{failure_message}; {reconcile_message}"
+        _set_exit_blocked(
+            trade_id,
+            attempt_id,
+            failure_message,
+            order_id=order_id,
+            payload={"broker_http_status": status_code, "reason": reason, "futures_price": futures_price},
+        )
+        return ExitExecutionResult(
+            False,
+            failure_message,
+            order_id=order_id,
+            remaining_qty=remaining,
+            fill_price=fill_price,
+            blocked=True,
+        )
+
+    if broker_ctx and trade.mode != "sandbox":
+        invalidate_position_cache(broker_ctx["broker"], broker_ctx["auth_token"])
+
+    with session_scope() as db:
+        t = db.execute(
+            select(FrTrade).where(FrTrade.id == trade_id).with_for_update()
+        ).scalar_one_or_none()
+        if t is None or t.exit_attempt_id != attempt_id:
+            # Do not overwrite a newer attempt owner.  Its reconciliation pass
+            # will see the broker quantity change before any submission.
+            return ExitExecutionResult(False, "Exit requires broker reconciliation", order_id=order_id, blocked=True)
+        exit_px = fill_price or _option_exit_price(t.option_symbol, t.option_exchange, fallback=t.entry_option_price)
+        pnl_inc = _trade_exit_pnl(t, exit_px, qty)
+        t.remaining_qty = max(0, int(t.remaining_qty or 0) - qty)
+        t.realized_pnl = round(float(t.realized_pnl or 0.0) + pnl_inc, 2)
+        t.last_exit_order_id = order_id
+        t.exit_state = "idle"
+        t.exit_attempt_id = None
+        t.exit_attempt_reason = None
+        t.exit_block_reason = None
+        t.modified_by = user_id or t.modified_by
+
+        if target_seq is not None:
+            target = db.execute(
+                select(FrTradeTarget).where(
+                    FrTradeTarget.trade_id == t.id,
+                    FrTradeTarget.seq == target_seq,
+                )
+            ).scalar_one_or_none()
+            if target is not None:
+                target.status = "hit"
+                target.hit_futures_price = futures_price
+                target.exit_order_id = order_id
+                target.hit_at = datetime.now(tz=timezone.utc)
+
+        closed = t.remaining_qty <= 0
+        if reason == "sl":
+            t.status = "stopped"
+            t.closed_at = datetime.now(tz=timezone.utc)
+            kind, severity = "sl_hit", "warning"
+            message = (
+                f"Stop-loss hit at futures {futures_price} (SL {t.sl_price}, basis {t.sl_basis}); "
+                f"exited {qty} @ ~{exit_px} (P&L {pnl_inc:+.2f})"
+            )
+        elif target_seq is not None:
+            if closed:
+                t.status = "completed"
+                t.closed_at = datetime.now(tz=timezone.utc)
+            kind, severity = "target_hit", "info"
+            message = (
+                f"Target {target_seq} hit at futures {futures_price}; exited {qty} @ ~{exit_px} "
+                f"(P&L {pnl_inc:+.2f})"
+            )
+        elif reason == "emergency":
+            if closed:
+                t.status = "completed"
+                t.closed_at = datetime.now(tz=timezone.utc)
+            kind, severity = "emergency_exit", "warning"
+            message = f"EMERGENCY exit of {qty} qty {t.option_symbol} @ ~{exit_px} (P&L {pnl_inc:+.2f})"
+        elif closed:
+            t.status = "completed"
+            t.closed_at = datetime.now(tz=timezone.utc)
+            kind, severity = "completed", "info"
+            message = f"Manual full exit of {qty} qty {t.option_symbol} @ ~{exit_px} (P&L {pnl_inc:+.2f})"
+        else:
+            kind, severity = "partial_exit", "info"
+            message = (
+                f"Manual partial exit of {qty} qty {t.option_symbol} @ ~{exit_px} "
+                f"(P&L {pnl_inc:+.2f}; {t.remaining_qty} left)"
+            )
+        log_event(
+            db,
+            trade_id=t.id,
+            user_id=t.user_id,
+            kind=kind,
+            severity=severity,
+            message=message,
+            payload={
+                "attempt_id": attempt_id,
+                "exit_order_id": order_id,
+                "qty": qty,
+                "remaining": t.remaining_qty,
+                "futures_price": futures_price,
+                "exit_option_price": exit_px,
+                "pnl": pnl_inc,
+                "target_seq": target_seq,
+            },
+        )
+        return ExitExecutionResult(
+            True,
+            message,
+            order_id=order_id,
+            exited_qty=qty,
+            remaining_qty=int(t.remaining_qty or 0),
+            fill_price=exit_px,
+            pnl=pnl_inc,
+        )
+
+
 def manual_exit(
     user_id: int,
     trade_id: int,
@@ -2101,10 +2641,7 @@ def manual_exit(
             raise FrError("Trade not found", 404)
         if t.status != "active":
             raise FrError(f"Trade is {t.status}, not active", 409)
-        remaining = t.remaining_qty
-        mode, side = t.mode, t.side
-        option_symbol, option_exchange, product = t.option_symbol, t.option_exchange, t.product
-        entry_opt = t.entry_option_price
+        remaining = int(t.remaining_qty or 0)
 
     if emergency or qty is None:
         exit_qty = remaining
@@ -2113,74 +2650,14 @@ def manual_exit(
         if exit_qty == 0:
             raise FrError("qty must be between 1 and the remaining quantity", 400)
 
-    exit_order_id = None
-    exit_fill_price: float | None = None
-    if exit_qty > 0:
-        exit_action = "SELL" if side == "BUY" else "BUY"
-        order_data = {
-            "symbol": option_symbol,
-            "exchange": option_exchange,
-            "action": exit_action,
-            "quantity": str(exit_qty),
-            "pricetype": "MARKET",
-            "product": product,
-            "price": "0",
-            "trigger_price": "0",
-            "strategy": "FuturesRisk-exit",
-        }
-        ctx = load_broker_context_sync(user_id) if mode != "sandbox" else None
-        if mode != "sandbox" and not ctx:
-            raise FrError("No active broker session", 403)
-        ok, resp, status = dispatch_order(
-            mode,
-            user_id,
-            order_data,
-            auth_token=ctx["auth_token"] if ctx else None,
-            broker=ctx["broker"] if ctx else None,
-            config=ctx.get("config") if ctx else None,
-        )
-        if not ok:
-            raise FrError(resp.get("message", "Exit order failed"), status)
-        exit_order_id = resp.get("orderid")
-        if mode == "sandbox":
-            exit_fill_price = _extract_order_fill_price(resp)
-        else:
-            if not exit_order_id:
-                raise FrError("Broker did not return an exit order id", 502)
-            confirmed, confirm_message, fill_price = _confirm_entry_order(
-                str(exit_order_id),
-                ctx["auth_token"],
-                ctx["broker"],
-                ctx.get("config"),
-            )
-            if not confirmed:
-                raise FrError(confirm_message or "Broker exit order was not completed", 409)
-            if fill_price is not None:
-                exit_fill_price = fill_price
-
-    exit_px = exit_fill_price or _option_exit_price(option_symbol, option_exchange, fallback=entry_opt)
-    with session_scope() as db:
-        t = db.get(FrTrade, trade_id)
-        pnl_inc = _trade_exit_pnl(t, exit_px, exit_qty)
-        t.remaining_qty = max(0, t.remaining_qty - exit_qty)
-        t.realized_pnl = round((t.realized_pnl or 0.0) + pnl_inc, 2)
-        t.modified_by = user_id
-        closed = t.remaining_qty <= 0
-        if closed:
-            t.status = "completed"
-            t.closed_at = datetime.now(tz=timezone.utc)
-        if emergency:
-            kind, msg = "emergency_exit", f"EMERGENCY exit of {exit_qty} qty {option_symbol} @ ~{exit_px} (P&L {pnl_inc:+.2f})"
-            sev = "warning"
-        elif closed:
-            kind, msg, sev = "completed", f"Manual full exit of {exit_qty} qty {option_symbol} @ ~{exit_px} (P&L {pnl_inc:+.2f})", "info"
-        else:
-            kind, msg, sev = "partial_exit", f"Manual partial exit of {exit_qty} qty {option_symbol} @ ~{exit_px} (P&L {pnl_inc:+.2f}; {t.remaining_qty} left)", "info"
-        log_event(
-            db, trade_id=t.id, user_id=user_id, kind=kind, severity=sev,
-            message=msg,
-            payload={"exit_order_id": exit_order_id, "qty": exit_qty, "remaining": t.remaining_qty, "exit_option_price": exit_px, "pnl": pnl_inc},
-        )
+    result = execute_trade_exit(
+        trade_id,
+        user_id=user_id,
+        requested_qty=exit_qty,
+        reason="emergency" if emergency else "manual",
+    )
+    if not result.ok:
+        raise FrError(result.message, 409 if result.blocked else 502)
     return get_trade(user_id, trade_id) or {}
 
 

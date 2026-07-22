@@ -225,6 +225,14 @@ export async function emergencyExit(id: number): Promise<FrTrade> {
   const r = await api.post<Wrapped<FrTrade>>(`/web/fr/trades/${id}/emergency-exit`);
   return r.data.data;
 }
+export async function reconcileTrade(id: number): Promise<FrTrade> {
+  const r = await api.post<Wrapped<FrTrade>>(`/web/fr/trades/${id}/reconcile`);
+  return r.data.data;
+}
+export async function resumeExitProtection(id: number): Promise<FrTrade> {
+  const r = await api.post<Wrapped<FrTrade>>(`/web/fr/trades/${id}/resume-exit-protection`);
+  return r.data.data;
+}
 export async function deleteTrade(id: number): Promise<void> {
   await api.delete(`/web/fr/trades/${id}`);
 }
