@@ -113,6 +113,7 @@ class ExitExecutionResult:
     pnl: float = 0.0
     reconciled: bool = False
     blocked: bool = False
+    retryable: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -2142,6 +2143,8 @@ def _claim_exit_attempt(
         if state == "blocked":
             detail = t.exit_block_reason or "a previous exit could not be safely confirmed"
             raise FrError(f"Exit protection is blocked: {detail}. Reconcile with the broker before retrying.", 409)
+        if state in {"retry_wait", "retry_exhausted"}:
+            raise FrError("A confirmed non-executed exit is waiting for its safe retry window", 409)
         if state == "submitting":
             attempted = t.exit_attempted_at
             if attempted is not None and attempted.tzinfo is None:
@@ -2207,6 +2210,209 @@ def _set_exit_blocked(
             message=f"Automatic exits paused after one failed attempt: {message}",
             payload=event_payload,
         )
+
+
+def _set_exit_retry_wait(
+    trade_id: int,
+    attempt_id: str,
+    message: str,
+    *,
+    order_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Persist a broker-confirmed non-execution without losing RL recovery.
+
+    ``blocked`` is reserved for ambiguous submissions where retrying could
+    duplicate a fill.  ``retry_wait`` means the broker positively rejected the
+    request (or no request was sent), so a bounded retry is safe after position
+    verification.
+    """
+    with session_scope() as db:
+        t = db.execute(
+            select(FrTrade).where(FrTrade.id == trade_id).with_for_update()
+        ).scalar_one_or_none()
+        if t is None or t.exit_attempt_id != attempt_id:
+            return
+        t.exit_state = "retry_wait"
+        t.exit_failure_count = int(t.exit_failure_count or 0) + 1
+        t.exit_block_reason = message[:2000]
+        if order_id:
+            t.last_exit_order_id = order_id
+        event_payload = {"attempt_id": attempt_id, "exit_order_id": order_id}
+        if payload:
+            event_payload.update(payload)
+        log_event(
+            db,
+            trade_id=t.id,
+            user_id=t.user_id,
+            kind="exit_retry_wait",
+            severity="warning",
+            message=f"Exit was not executed; safe retry is waiting: {message}",
+            payload=event_payload,
+        )
+
+
+def _confirmed_non_execution(
+    *,
+    order_id: str | None,
+    failure_message: str,
+    broker_http_status: int | None,
+) -> bool:
+    """Return True only when retrying cannot duplicate a broker fill."""
+    message = str(failure_message or "").lower()
+    if order_id and any(
+        marker in message
+        for marker in (" was rejected", " was cancelled", " was canceled", " was failed")
+    ):
+        return True
+    # A request rejected before an order id exists was not accepted by the
+    # broker. Authentication and rate-limit failures are safe to retry too,
+    # once their external condition has recovered.
+    return not order_id and int(broker_http_status or 0) in {
+        400, 401, 403, 404, 409, 422, 429,
+    }
+
+
+def _defer_exit_retry(trade_id: int, message: str) -> None:
+    """Move the retry window forward after a failed verification call."""
+    with session_scope() as db:
+        t = db.get(FrTrade, trade_id)
+        if t is None or _exit_state(t) != "retry_wait":
+            return
+        t.exit_attempted_at = datetime.now(tz=timezone.utc)
+        t.exit_block_reason = message[:2000]
+
+
+def prepare_automatic_exit(
+    trade_id: int,
+    *,
+    reason: str,
+    ctx: dict[str, Any] | None,
+) -> bool:
+    """Make a non-idle automatic exit eligible without risking duplication.
+
+    A different, higher-priority RL reason may immediately supersede a target
+    attempt that was positively rejected. Ambiguous ``blocked`` submissions
+    remain blocked unless their broker order is now confirmed rejected.
+    """
+    with session_scope() as db:
+        t = db.get(FrTrade, trade_id)
+        if t is None or t.status != "active":
+            return False
+        state = _exit_state(t)
+        if state == "idle":
+            return True
+        if state == "submitting":
+            return False
+        mode = t.mode
+        user_id = t.user_id
+        previous_reason = str(t.exit_attempt_reason or "")
+        failures = int(t.exit_failure_count or 0)
+        attempted_at = t.exit_attempted_at
+        last_order_id = t.last_exit_order_id
+        trade = t
+
+    broker_ctx = ctx
+    if state == "blocked":
+        # Compatibility recovery for trades blocked by the first safety
+        # release: only a broker-confirmed rejected/cancelled order is safe to
+        # resume automatically.
+        if mode == "sandbox" or not last_order_id:
+            return False
+        broker_ctx = broker_ctx or load_broker_context_sync(user_id)
+        if broker_ctx is None:
+            return False
+        status, _, _ = _broker_order_status(
+            last_order_id,
+            broker_ctx["auth_token"],
+            broker_ctx["broker"],
+            broker_ctx.get("config"),
+        )
+        if status not in _ENTRY_FAILURE_STATUSES:
+            return False
+
+    # RL and explicit operator exits may supersede a lower-priority confirmed
+    # non-execution. They still pass through a fresh broker-position check.
+    priority_changed = (
+        reason in {"sl", "manual", "emergency"}
+        and reason != previous_reason
+    )
+    if state == "retry_exhausted" and not priority_changed:
+        return False
+    if state == "retry_wait" and not priority_changed:
+        try:
+            cooldown = max(1.0, float(get_config_value("exit_retry_cooldown_sec", "10")))
+        except (TypeError, ValueError):
+            cooldown = 10.0
+        attempted = attempted_at
+        if attempted is not None and attempted.tzinfo is None:
+            attempted = attempted.replace(tzinfo=timezone.utc)
+        if attempted is not None and datetime.now(tz=timezone.utc) - attempted < timedelta(seconds=cooldown):
+            return False
+        try:
+            max_attempts = max(1, int(float(get_config_value("exit_retry_max_attempts", "3"))))
+        except (TypeError, ValueError):
+            max_attempts = 3
+        if failures >= max_attempts:
+            with session_scope() as db:
+                current = db.get(FrTrade, trade_id)
+                if current is not None and _exit_state(current) == "retry_wait":
+                    # Keep this distinct from an ambiguous broker submission.
+                    # The same trigger is exhausted, while a later risk-limit
+                    # trigger may still safely supersede it after verification.
+                    current.exit_state = "retry_exhausted"
+                    current.exit_block_reason = (
+                        f"{current.exit_block_reason or 'Exit was rejected'}; "
+                        f"automatic retry limit ({max_attempts}) reached"
+                    )[:2000]
+                    log_event(
+                        db,
+                        trade_id=current.id,
+                        user_id=current.user_id,
+                        kind="exit_retry_limit",
+                        severity="error",
+                        message=current.exit_block_reason,
+                        payload={"reason": reason, "failure_count": failures},
+                    )
+            return False
+
+    if mode == "sandbox":
+        with session_scope() as db:
+            current = db.get(FrTrade, trade_id)
+            if current is None or current.status != "active":
+                return False
+            current.exit_state = "idle"
+            current.exit_attempt_id = None
+            current.exit_attempt_reason = None
+            current.exit_block_reason = None
+            if priority_changed:
+                current.exit_failure_count = 0
+        return True
+
+    broker_ctx = broker_ctx or load_broker_context_sync(user_id)
+    if broker_ctx is None:
+        _defer_exit_retry(trade_id, "No active broker session")
+        return False
+    snapshot = get_position_snapshot(trade, broker_ctx, force=True)
+    if not snapshot.supported or not snapshot.ok:
+        _defer_exit_retry(
+            trade_id,
+            snapshot.message or "Broker position could not be verified before retry",
+        )
+        return False
+    action, _, message = _apply_position_snapshot(
+        trade_id,
+        snapshot,
+        clear_block=True,
+    )
+    if action in {"closed", "blocked", "error"} or message:
+        return False
+    if priority_changed:
+        with session_scope() as db:
+            current = db.get(FrTrade, trade_id)
+            if current is not None and current.status == "active":
+                current.exit_failure_count = 0
+    return True
 
 
 def _apply_position_snapshot(
@@ -2407,14 +2613,26 @@ def execute_trade_exit(
         broker_ctx = broker_ctx or load_broker_context_sync(trade.user_id)
         if broker_ctx is None:
             message = "No active broker session"
-            _set_exit_blocked(trade_id, attempt_id, message)
-            return ExitExecutionResult(False, message, blocked=True)
+            _set_exit_retry_wait(
+                trade_id,
+                attempt_id,
+                message,
+                payload={"reason": reason, "futures_price": futures_price},
+            )
+            return ExitExecutionResult(False, message, retryable=True)
         snapshot = get_position_snapshot(trade, broker_ctx, force=True)
         if snapshot.supported:
             if not snapshot.ok:
                 message = f"Broker position could not be verified: {snapshot.message}"
-                _set_exit_blocked(trade_id, attempt_id, message)
-                return ExitExecutionResult(False, message, blocked=True)
+                # No order has been submitted yet, so a later verified retry
+                # cannot duplicate a fill.
+                _set_exit_retry_wait(
+                    trade_id,
+                    attempt_id,
+                    message,
+                    payload={"reason": reason, "futures_price": futures_price},
+                )
+                return ExitExecutionResult(False, message, retryable=True)
             action, reconciled_qty, message = _apply_position_snapshot(
                 trade_id, snapshot, attempt_id=attempt_id
             )
@@ -2427,12 +2645,18 @@ def execute_trade_exit(
                 )
             if action in {"blocked", "error"}:
                 if action == "error":
-                    _set_exit_blocked(trade_id, attempt_id, message or "Broker reconciliation failed")
+                    _set_exit_retry_wait(
+                        trade_id,
+                        attempt_id,
+                        message or "Broker reconciliation failed before order submission",
+                        payload={"reason": reason, "futures_price": futures_price},
+                    )
                 return ExitExecutionResult(
                     False,
                     message or "Broker reconciliation blocked the exit",
                     remaining_qty=max(0, reconciled_qty),
-                    blocked=True,
+                    blocked=action == "blocked",
+                    retryable=action == "error",
                 )
 
     with session_scope() as db:
@@ -2506,7 +2730,13 @@ def execute_trade_exit(
                     )
                 if reconcile_message:
                     failure_message = f"{failure_message}; {reconcile_message}"
-        _set_exit_blocked(
+        retryable = _confirmed_non_execution(
+            order_id=order_id,
+            failure_message=failure_message,
+            broker_http_status=status_code,
+        )
+        state_writer = _set_exit_retry_wait if retryable else _set_exit_blocked
+        state_writer(
             trade_id,
             attempt_id,
             failure_message,
@@ -2519,7 +2749,8 @@ def execute_trade_exit(
             order_id=order_id,
             remaining_qty=remaining,
             fill_price=fill_price,
-            blocked=True,
+            blocked=not retryable,
+            retryable=retryable,
         )
 
     if broker_ctx and trade.mode != "sandbox":
@@ -2542,6 +2773,7 @@ def execute_trade_exit(
         t.exit_attempt_id = None
         t.exit_attempt_reason = None
         t.exit_block_reason = None
+        t.exit_failure_count = 0
         t.modified_by = user_id or t.modified_by
 
         if target_seq is not None:
@@ -2650,11 +2882,18 @@ def manual_exit(
         if exit_qty == 0:
             raise FrError("qty must be between 1 and the remaining quantity", 400)
 
+    reason = "emergency" if emergency else "manual"
+    if not prepare_automatic_exit(trade_id, reason=reason, ctx=None):
+        raise FrError(
+            "Exit protection is waiting for broker verification; use Verify broker & resume if it remains paused",
+            409,
+        )
+
     result = execute_trade_exit(
         trade_id,
         user_id=user_id,
         requested_qty=exit_qty,
-        reason="emergency" if emergency else "manual",
+        reason=reason,
     )
     if not result.ok:
         raise FrError(result.message, 409 if result.blocked else 502)

@@ -39,10 +39,11 @@ The card-demo route uses source-defined demo data. It is visual evidence, not an
 
 If a position is closed or partially closed directly in the broker terminal, OpenBull
 periodically reconciles the broker quantity. A confirmed zero closes the phase without a
-new order. If an exit is rejected or cannot be confirmed, the card displays **Automatic
-exits paused** and prevents another exit submission. Use **Verify broker & resume** once;
-it refreshes the broker position first, closes an already-flat phase, adjusts an external
-partial close, or resumes protection only when the remaining direction/quantity is safe.
+new order. A broker-confirmed rejection is retried with a bounded cooldown after a fresh
+position check; the crossed target stays latched while waiting. If the retry limit is reached,
+or an exit result is uncertain, the card shows the applicable warning. Use **Verify broker &
+resume** once; it refreshes the broker position first, closes an already-flat phase, adjusts an
+external partial close, or resumes protection only when the direction/quantity is safe.
 
 ## Calculations and expected result
 

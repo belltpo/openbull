@@ -288,6 +288,8 @@ export function PositionCard({
   const isClosed = ["completed", "stopped", "cancelled", "error"].includes(trade.status);
   const exitBlocked = isActive && trade.exit_state === "blocked";
   const exitSubmitting = isActive && trade.exit_state === "submitting";
+  const exitRetrying = isActive && trade.exit_state === "retry_wait";
+  const exitRetryExhausted = isActive && trade.exit_state === "retry_exhausted";
   const recovery = useMutation({
     mutationFn: () => resumeExitProtection(trade.id),
     onSuccess: (updated) => {
@@ -401,6 +403,34 @@ export function PositionCard({
                 <RefreshCw className={cn("mr-1 h-3.5 w-3.5", recovery.isPending && "animate-spin")} />
                 Verify broker & resume
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(exitRetrying || exitRetryExhausted) && (
+        <div className="mt-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs text-amber-700 dark:text-amber-300">
+          <div className="flex items-start gap-2">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">
+                {exitRetryExhausted ? "Automatic exit retry limit reached" : "Broker rejected the exit; safe retry pending"}
+              </p>
+              <p className="mt-0.5 break-words opacity-90">
+                {trade.exit_block_reason ?? "OpenBull will verify the broker position before another order is submitted."}
+              </p>
+              {exitRetryExhausted && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 h-7 border-amber-500/40 bg-background/60"
+                  disabled={recovery.isPending}
+                  onClick={() => recovery.mutate()}
+                >
+                  <RefreshCw className={cn("mr-1 h-3.5 w-3.5", recovery.isPending && "animate-spin")} />
+                  Verify broker &amp; resume
+                </Button>
+              )}
             </div>
           </div>
         </div>

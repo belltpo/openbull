@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
@@ -22,7 +23,7 @@ from backend.futures_risk.execution import load_broker_context_sync, log_event
 from backend.futures_risk import service as fr_service
 from backend.models.futures_risk import FrTrade, FrTradeTarget
 from backend.sandbox._db import session_scope
-from backend.services.market_data_cache import get_ltp_value
+from backend.services.market_data_cache import get_market_data_cache, process_market_data
 from backend.services.quotes_service import get_quotes_with_auth
 
 logger = logging.getLogger(__name__)
@@ -75,10 +76,24 @@ def ensure_symbols_streaming(symbols: list[dict[str, str]]) -> None:
 # ---------------------------------------------------------------------------
 
 def _futures_price(symbol: str, exchange: str, ctx: dict | None) -> float | None:
-    """Cache-first futures LTP with a broker-quote fallback."""
-    val = get_ltp_value(symbol, exchange)
-    if val and val > 0:
-        return float(val)
+    """Return only a fresh futures LTP, falling back to one broker quote.
+
+    A positive value is not sufficient for risk management: a disconnected
+    stream leaves its last value in memory. Target/RL decisions must never be
+    made from that indefinitely stale value.
+    """
+    try:
+        max_age = max(1.0, float(fr_service.get_config_value("max_tick_age_sec", "5")))
+    except (TypeError, ValueError):
+        max_age = 5.0
+    try:
+        entry = get_market_data_cache().get_all(symbol, exchange)
+        last_update = float(entry.get("last_update") or 0)
+        val = float((entry.get("ltp") or {}).get("value") or 0)
+        if val > 0 and last_update > 0 and time.time() - last_update <= max_age:
+            return val
+    except (TypeError, ValueError):
+        pass
     if ctx is None:
         return None
     try:
@@ -86,7 +101,16 @@ def _futures_price(symbol: str, exchange: str, ctx: dict | None) -> float | None
         if ok:
             ltp = q.get("data", {}).get("ltp")
             if ltp and float(ltp) > 0:
-                return float(ltp)
+                value = float(ltp)
+                # Share the fresh fallback with the UI, websocket clients and
+                # the next engine pass instead of creating parallel prices.
+                process_market_data({
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "mode": 1,
+                    "data": {"ltp": value, "timestamp": time.time(), "volume": 0},
+                })
+                return value
     except Exception:
         logger.debug("futures quote fallback failed for %s", symbol, exc_info=True)
     return None
@@ -172,11 +196,7 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
 
     with session_scope() as db:
         trade = db.get(FrTrade, trade_id)
-        if (
-            trade is None
-            or trade.status != "active"
-            or fr_service._exit_state(trade) != "idle"
-        ):
+        if trade is None or trade.status != "active":
             return
 
     fut = _futures_price(fut_symbol, fut_exchange, ctx)
@@ -188,23 +208,26 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
     target_qty: int | None = None
     with session_scope() as db:
         trade = db.get(FrTrade, trade_id)
-        if (
-            trade is None
-            or trade.status != "active"
-            or fr_service._exit_state(trade) != "idle"
-        ):
+        if trade is None or trade.status != "active":
             return
         targets = db.execute(
             select(FrTradeTarget)
             .where(FrTradeTarget.trade_id == trade.id)
             .order_by(FrTradeTarget.seq)
         ).scalars().all()
+        latched_reason = (
+            str(trade.exit_attempt_reason or "")
+            if str(trade.exit_state or "idle").lower() in {"retry_wait", "retry_exhausted"}
+            else ""
+        )
         if _sl_hit(trade.direction, fut, trade.sl_price):
             sl_qty = int(trade.remaining_qty or 0)
         else:
             for target in targets:
-                if target.status != "pending" or not _target_hit(
-                    trade.direction, fut, target.trigger_price
+                retry_latched = latched_reason == f"t{target.seq}"
+                if target.status != "pending" or (
+                    not retry_latched
+                    and not _target_hit(trade.direction, fut, target.trigger_price)
                 ):
                     continue
                 final_pending = not any(
@@ -243,26 +266,38 @@ def _process_trade(trade_id: int, ctx_cache: dict[int, dict | None]) -> None:
                 break
 
     if sl_qty:
-        fr_service.execute_trade_exit(
-            trade_id,
-            user_id=None,
-            requested_qty=sl_qty,
-            reason="sl",
-            ctx=ctx,
-            futures_price=fut,
-        )
+        if not fr_service.prepare_automatic_exit(trade_id, reason="sl", ctx=ctx):
+            return
+        try:
+            fr_service.execute_trade_exit(
+                trade_id,
+                user_id=None,
+                requested_qty=sl_qty,
+                reason="sl",
+                ctx=ctx,
+                futures_price=fut,
+            )
+        except fr_service.FrError as exc:
+            logger.warning("Futures-Risk RL exit deferred for trade %s: %s", trade_id, exc.message)
         return
     if target_seq is None or target_qty is None:
         return
-    result = fr_service.execute_trade_exit(
-        trade_id,
-        user_id=None,
-        requested_qty=target_qty,
-        reason=f"t{target_seq}",
-        ctx=ctx,
-        futures_price=fut,
-        target_seq=target_seq,
-    )
+    reason = f"t{target_seq}"
+    if not fr_service.prepare_automatic_exit(trade_id, reason=reason, ctx=ctx):
+        return
+    try:
+        result = fr_service.execute_trade_exit(
+            trade_id,
+            user_id=None,
+            requested_qty=target_qty,
+            reason=reason,
+            ctx=ctx,
+            futures_price=fut,
+            target_seq=target_seq,
+        )
+    except fr_service.FrError as exc:
+        logger.warning("Futures-Risk target exit deferred for trade %s: %s", trade_id, exc.message)
+        return
     if not result.ok or result.reconciled:
         return
     with session_scope() as db:

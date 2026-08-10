@@ -142,17 +142,36 @@ def dhan_position_from_rows(
 ) -> PositionSnapshot:
     """Return a strict, signed Dhan position match from a validated row list."""
     from backend.broker.dhan.mapping.transform_data import map_exchange_type, map_product_type
-    from backend.broker.upstox.mapping.order_data import get_brsymbol_from_cache
+    from backend.broker.upstox.mapping.order_data import (
+        get_brsymbol_from_cache,
+        get_token_from_cache,
+    )
 
-    broker_symbol = get_brsymbol_from_cache(symbol, exchange) or symbol
-    broker_exchange = map_exchange_type(exchange)
-    broker_product = map_product_type(product)
+    def _normalise(value: Any) -> str:
+        return str(value or "").strip().upper()
+
+    def _token(value: Any) -> str:
+        # The shared cache can carry a broker-token suffix. Dhan positions use
+        # only the securityId at the start of that composite value.
+        return _normalise(value).split("::::", 1)[0]
+
+    broker_symbol = get_brsymbol_from_cache(symbol, exchange)
+    symbol_candidates = {_normalise(symbol), _normalise(broker_symbol)} - {""}
+    expected_token = _token(get_token_from_cache(symbol, exchange))
+    broker_exchange = _normalise(map_exchange_type(exchange))
+    broker_product = _normalise(map_product_type(product))
+    saw_authoritative_token = False
     for row in rows:
-        if (
-            str(row.get("tradingSymbol") or "").upper() == str(broker_symbol).upper()
-            and str(row.get("exchangeSegment") or "").upper() == str(broker_exchange).upper()
-            and str(row.get("productType") or "").upper() == str(broker_product).upper()
-        ):
+        if _normalise(row.get("exchangeSegment")) != broker_exchange:
+            continue
+        if _normalise(row.get("productType")) != broker_product:
+            continue
+        row_symbol = _normalise(row.get("tradingSymbol"))
+        row_token = _token(row.get("securityId"))
+        saw_authoritative_token = saw_authoritative_token or bool(row_token)
+        symbol_match = bool(row_symbol and row_symbol in symbol_candidates)
+        token_match = bool(expected_token and row_token and row_token == expected_token)
+        if symbol_match or token_match:
             try:
                 quantity = int(float(row.get("netQty") or 0))
             except (TypeError, ValueError):
@@ -162,6 +181,21 @@ def dhan_position_from_rows(
             except (TypeError, ValueError):
                 broker_pnl = None
             return PositionSnapshot(True, True, quantity=quantity, broker_pnl=broker_pnl)
+
+    if rows and not (expected_token and saw_authoritative_token):
+        # A non-empty raw Dhan book with no reliable identifier mapping is not
+        # proof that this contract is closed. Only a broker book containing
+        # security IDs plus our expected security ID can prove an authoritative
+        # absence. Treat every other mapping miss as unknown instead of
+        # silently converting a symbol-cache problem into a zero position.
+        return PositionSnapshot(
+            True,
+            False,
+            message=(
+                f"Dhan position for {exchange}:{symbol} could not be matched safely; "
+                "refresh the master contract before automatic reconciliation"
+            ),
+        )
     return PositionSnapshot(True, True, quantity=0, broker_pnl=0.0)
 
 

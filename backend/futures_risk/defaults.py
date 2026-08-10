@@ -20,6 +20,21 @@ CONFIG_DEFAULTS: dict[str, tuple[str, str, bool]] = {
         True,
     ),
     "poll_interval_sec": ("2", "Futures-price evaluation interval in seconds", True),
+    "max_tick_age_sec": (
+        "5",
+        "Maximum cached futures-tick age before a broker quote refresh is required",
+        True,
+    ),
+    "exit_retry_cooldown_sec": (
+        "10",
+        "Delay before retrying an exit that the broker positively confirmed was not executed",
+        True,
+    ),
+    "exit_retry_max_attempts": (
+        "3",
+        "Maximum confirmed non-execution retries per target or risk-limit exit",
+        True,
+    ),
 }
 
 # (seq, points, exit_pct)

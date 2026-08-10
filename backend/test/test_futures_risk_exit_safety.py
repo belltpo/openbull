@@ -62,6 +62,60 @@ class BrokerPositionParsingTests(TestCase):
         self.assertEqual(snapshot.quantity, 65)
         self.assertEqual(snapshot.broker_pnl, 16.0)
 
+    def test_dhan_security_id_matches_when_display_symbol_differs(self):
+        rows = [{
+            "securityId": "12345",
+            "tradingSymbol": "BROKER-DISPLAY-NAME",
+            "exchangeSegment": "NSE_FNO",
+            "productType": "INTRADAY",
+            "netQty": "65",
+        }]
+        with (
+            patch(
+                "backend.broker.upstox.mapping.order_data.get_brsymbol_from_cache",
+                return_value=None,
+            ),
+            patch(
+                "backend.broker.upstox.mapping.order_data.get_token_from_cache",
+                return_value="12345::::ignored",
+            ),
+        ):
+            snapshot = reconciliation.dhan_position_from_rows(
+                rows,
+                symbol="NIFTY21JUL2624000CE",
+                exchange="NFO",
+                product="MIS",
+            )
+        self.assertTrue(snapshot.ok)
+        self.assertEqual(snapshot.quantity, 65)
+
+    def test_nonempty_unmappable_dhan_book_is_not_treated_as_zero(self):
+        rows = [{
+            "securityId": "98765",
+            "tradingSymbol": "UNKNOWN",
+            "exchangeSegment": "NSE_FNO",
+            "productType": "INTRADAY",
+            "netQty": "65",
+        }]
+        with (
+            patch(
+                "backend.broker.upstox.mapping.order_data.get_brsymbol_from_cache",
+                return_value=None,
+            ),
+            patch(
+                "backend.broker.upstox.mapping.order_data.get_token_from_cache",
+                return_value=None,
+            ),
+        ):
+            snapshot = reconciliation.dhan_position_from_rows(
+                rows,
+                symbol="NIFTY21JUL2624000CE",
+                exchange="NFO",
+                product="MIS",
+            )
+        self.assertFalse(snapshot.ok)
+        self.assertIsNone(snapshot.quantity)
+
     def test_valid_empty_dhan_positions_is_confirmed_zero(self):
         with patch(
             "backend.broker.upstox.mapping.order_data.get_brsymbol_from_cache",
@@ -121,7 +175,7 @@ class ExitCoordinatorTests(TestCase):
         self.assertEqual(result.remaining_qty, 0)
         dispatch.assert_not_called()
 
-    def test_one_rejection_opens_circuit_breaker_without_retry(self):
+    def test_confirmed_rejection_enters_bounded_retry_wait(self):
         trade = _trade()
         unsupported = reconciliation.PositionSnapshot(False, True)
         db = SimpleNamespace(get=Mock(return_value=trade))
@@ -139,6 +193,40 @@ class ExitCoordinatorTests(TestCase):
                 "dispatch_order",
                 return_value=(False, {"message": "Broker order was rejected"}, 409),
             ) as dispatch,
+            patch.object(service, "_set_exit_retry_wait") as retry_wait,
+        ):
+            result = service.execute_trade_exit(
+                24,
+                user_id=None,
+                requested_qty=65,
+                reason="sl",
+                ctx={"broker": "test", "auth_token": "token", "config": {}},
+                futures_price=24171.0,
+            )
+        self.assertFalse(result.ok)
+        self.assertTrue(result.retryable)
+        self.assertFalse(result.blocked)
+        dispatch.assert_called_once()
+        retry_wait.assert_called_once()
+
+    def test_ambiguous_server_failure_still_opens_circuit_breaker(self):
+        trade = _trade()
+        unsupported = reconciliation.PositionSnapshot(False, True)
+        db = SimpleNamespace(get=Mock(return_value=trade))
+
+        @contextmanager
+        def fake_session_scope():
+            yield db
+
+        with (
+            patch.object(service, "_claim_exit_attempt", return_value=(trade, "attempt-1")),
+            patch.object(service, "get_position_snapshot", return_value=unsupported),
+            patch.object(service, "session_scope", side_effect=fake_session_scope),
+            patch.object(
+                service,
+                "dispatch_order",
+                return_value=(False, {"message": "Broker response was interrupted"}, 500),
+            ),
             patch.object(service, "_set_exit_blocked") as block,
         ):
             result = service.execute_trade_exit(
@@ -151,7 +239,7 @@ class ExitCoordinatorTests(TestCase):
             )
         self.assertFalse(result.ok)
         self.assertTrue(result.blocked)
-        dispatch.assert_called_once()
+        self.assertFalse(result.retryable)
         block.assert_called_once()
 
 

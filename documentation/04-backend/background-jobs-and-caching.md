@@ -10,7 +10,7 @@
 | Sandbox execution engine | Market tick plus polling fallback | Sandbox orders/trades/positions/funds | Continues only for sandbox records; logs fill errors |
 | Sandbox scheduler | Time-based loop | Square-off, settlement, resets | Persists last-run bookkeeping and retries later ticks |
 | Sandbox MTM updater | Periodic | Open positions/funds/P&L | Uses latest tick/quote fallback |
-| Futures-risk auto-exit | Periodic/tick-driven engine | `fr_trade`, targets/events/orders | Reconciles broker quantity, applies target/SL/trailing through a persistent single-flight exit, and blocks after one uncertain/rejected order |
+| Futures-risk auto-exit | Periodic/tick-driven engine | `fr_trade`, targets/events/orders | Reconciles broker quantity, applies target/SL/trailing through a persistent single-flight exit, retries only broker-confirmed non-execution with bounded backoff, and hard-blocks ambiguous outcomes |
 | Strategy recovery | Startup | Active runs/checkpoints | Restores active strategy state before scheduler starts |
 | Strategy tick processor/feed | MarketDataCache subscriber | Runs/orders/events/checkpoints | Queue isolates tick ingestion from processing |
 | Strategy checkpoint | Periodic (default source interval is five seconds) | `sm_strategy_checkpoint` and run state | Logs failed passes and retries next interval |

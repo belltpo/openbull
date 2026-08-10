@@ -3,7 +3,7 @@
 export type OptionType = "CE" | "PE";
 export type Side = "BUY" | "SELL";
 export type TradeStatus = "draft" | "active" | "completed" | "stopped" | "cancelled" | "error";
-export type ExitSafetyState = "idle" | "submitting" | "blocked";
+export type ExitSafetyState = "idle" | "submitting" | "retry_wait" | "retry_exhausted" | "blocked";
 export type TrailingMode = "entry_after_t1" | "prev_target" | "off";
 export type TargetStatus = "pending" | "hit" | "skipped";
 export type StrikeSelectionMethod = "ATM" | "ITM_OTM" | "MANUAL" | "OFFSET";

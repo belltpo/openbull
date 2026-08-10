@@ -29,9 +29,14 @@ Trade options; manage **target / stop-loss / trailing** entirely on the underlyi
   never treated as zero.
 - The background engine reconciles active trades after a short post-entry grace period.
   Broker snapshots are shared for five seconds so several cards do not flood the provider.
-- One rejected or uncertain exit opens a circuit breaker (`exit_state = blocked`). Automatic
-  exits remain paused until **Verify broker & resume** confirms the live quantity. There is
-  no blind two-second order retry.
+- A broker-confirmed rejection/non-submission enters `retry_wait`: the crossed level remains
+  latched and OpenBull retries at most three times, ten seconds apart, after a fresh position
+  verification. An exhausted target remains supersedable by the higher-priority risk limit.
+- An uncertain submission enters the hard circuit breaker (`exit_state = blocked`). Automatic
+  exits remain paused until **Verify broker & resume** confirms the live quantity. Ambiguous
+  outcomes are never retried blindly.
+- Target/RL evaluation accepts cached futures ticks for at most five seconds. A stale stream
+  triggers one broker quote fallback and shares the refreshed price with the cache/UI.
 - If the broker quantity is smaller (external partial close), OpenBull reduces its remaining
   quantity. An opposite-side or larger broker quantity is blocked for operator review.
 
