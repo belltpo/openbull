@@ -1,8 +1,11 @@
 # Release Process
 
-## Current-state warning
+## Current release state
 
-The repository has no checked-in CI workflow and no automated release/tag pipeline. Backend version `0.1.0`, frontend version `0.0.0`, health version, and documentation history are not currently driven from one version source.
+OpenBull `1.0.0` aligns the backend project, frontend package, FastAPI metadata,
+health response, and generated OpenAPI version. The repository still has no
+checked-in CI workflow or automated release/tag pipeline, so maintainers must
+keep these release references synchronized manually.
 
 ## Required manual release procedure
 

@@ -1,6 +1,6 @@
 {
   "generator": "documentation/tools/generate_reference.py",
-  "git_commit": "d32cb26c9a510ac7ab9139cd997ba024564d432b",
-  "git_describe": "d32cb26-dirty",
-  "source_commit_time": "2026-07-22T18:01:14+05:30"
+  "git_commit": "d81b329fa7e995fd5445f9216255393eb494c40f",
+  "git_describe": "d81b329-dirty",
+  "source_commit_time": "2026-08-10T15:31:50+05:30"
 }

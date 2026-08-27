@@ -200,7 +200,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="OpenBull",
     description="Options Trading Platform for Indian Brokers",
-    version="0.1.0",
+    version="1.0.0",
     lifespan=lifespan,
 )
 
@@ -338,4 +338,4 @@ app.include_router(futures_risk_router)
 # Health check
 @app.get("/health")
 async def health():
-    return {"status": "ok", "app": "OpenBull", "version": "0.1.0"}
+    return {"status": "ok", "app": "OpenBull", "version": "1.0.0"}

@@ -1,5 +1,14 @@
 # Documentation Change Log
 
+## 2026-08-27 — OpenBull 1.0.0
+
+- Established `1.0.0` as the first tagged OpenBull product release.
+- Aligned backend, frontend, FastAPI, health, and generated OpenAPI version metadata.
+- Recorded the manual release and validation procedure for future releases.
+- Release validation: 46 backend unit tests, documentation validation, NinjaTrader
+  isolation/mapping checks, and the frontend production build passed. Frontend
+  lint retains the documented pre-existing baseline of 42 errors and 12 warnings.
+
 ## 2026-07-22 — Futures-Risk live exit safety
 
 - Documented persistent single-flight exit state, broker-position reconciliation, and the one-failure circuit breaker.
@@ -21,4 +30,6 @@
 
 ## Product version history status
 
-The repository has no Git release tags at this baseline. `backend.main` exposes application version `0.1.0`, while `frontend/package.json` uses package version `0.0.0`; neither is treated here as a published product release. Until maintainers introduce signed/tagged releases, Git commit IDs and dates are the only verifiable version identifiers. See [Version baseline](version-baseline.md).
+The July documentation baseline predates tagged releases and remains recorded in
+[Version baseline](version-baseline.md). OpenBull `1.0.0` is the first product
+release to align backend, frontend, health, and OpenAPI version metadata.

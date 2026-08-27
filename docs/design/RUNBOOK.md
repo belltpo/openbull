@@ -59,7 +59,7 @@ curl http://127.0.0.1:8000/health
 ```
 
 ```json
-{"status": "ok", "app": "OpenBull", "version": "0.1.0"}
+{"status": "ok", "app": "OpenBull", "version": "1.0.0"}
 ```
 
 This is a liveness probe — it doesn't check downstream dependencies. For deeper checks:
