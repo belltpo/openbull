@@ -6,6 +6,7 @@ Dual-entry pattern: get_holdings_with_auth() + get_holdings()
 import importlib
 import logging
 from typing import Any
+from backend.utils.plugin_loader import validate_broker_name
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ def _format_statistics(stats):
 def _import_broker_modules(broker_name: str) -> dict[str, Any] | None:
     """Dynamically import broker-specific holdings modules."""
     try:
+        broker_name = validate_broker_name(broker_name)
         api_module = importlib.import_module(f"backend.broker.{broker_name}.api.order_api")
         mapping_module = importlib.import_module(f"backend.broker.{broker_name}.mapping.order_data")
         return {

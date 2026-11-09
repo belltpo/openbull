@@ -4,6 +4,12 @@ Verify Redis caching is correctly wired into OpenBull.
 Run from the openbull project root:
     uv run python backend/test/test_redis_cache.py
 
+This is a manual integration script, NOT a pytest suite: it needs a live
+Redis, and the checks share state in order (the restart check reads a key an
+earlier one wrote). The functions are named ``check_*`` rather than ``test_*``
+precisely so pytest does not collect and run them out of order against a
+Redis that may not be there.
+
 The script does not start the FastAPI server. It exercises the cache helpers
 directly and inspects Redis so you can see:
   1. Values are stored under the ``openbull:`` namespace
@@ -48,7 +54,7 @@ def header(text: str) -> None:
     print(f"\n{'=' * 60}\n{text}\n{'=' * 60}")
 
 
-async def test_connection() -> None:
+async def check_connection() -> None:
     header("1. Redis connection check")
     client = get_redis()
     pong = await client.ping()
@@ -58,7 +64,7 @@ async def test_connection() -> None:
     print(f"Uptime: {info.get('uptime_in_seconds')}s")
 
 
-async def test_api_key_cache() -> None:
+async def check_api_key_cache() -> None:
     header("2. API key positive cache (SET + GET + TTL)")
     fake_key = "test-api-key-abc123"
     key_hash = hashlib.sha256(fake_key.encode()).hexdigest()
@@ -78,7 +84,7 @@ async def test_api_key_cache() -> None:
     print("OK")
 
 
-async def test_invalid_key_cache() -> None:
+async def check_invalid_key_cache() -> None:
     header("3. API key negative cache (rejects bad keys fast)")
     fake_key = "definitely-not-a-real-key"
     key_hash = hashlib.sha256(fake_key.encode()).hexdigest()
@@ -93,7 +99,7 @@ async def test_invalid_key_cache() -> None:
     print("OK")
 
 
-async def test_broker_context_cache() -> None:
+async def check_broker_context_cache() -> None:
     header("4. Broker context cache (session-scoped)")
     user_id = 9999
     payload = {
@@ -112,7 +118,7 @@ async def test_broker_context_cache() -> None:
     print("OK")
 
 
-async def test_api_context_cache() -> None:
+async def check_api_context_cache() -> None:
     header("5. External API context cache (shared HTTP + WS)")
     user_id = 9999
     payload = {
@@ -131,7 +137,7 @@ async def test_api_context_cache() -> None:
     print("OK")
 
 
-async def test_ttl_countdown() -> None:
+async def check_ttl_countdown() -> None:
     header("6. TTL countdown (wait 2s)")
     cache_key = "test:countdown"
     await cache_set_json(cache_key, "x", 10)
@@ -144,7 +150,7 @@ async def test_ttl_countdown() -> None:
     print("OK — TTL ticks down in real time")
 
 
-async def test_restart_survival() -> None:
+async def check_restart_survival() -> None:
     header("7. Restart survival (simulate process restart)")
     user_id = 9999
     cache_key = _key_broker_ctx(user_id)
@@ -162,7 +168,7 @@ async def test_restart_survival() -> None:
     print("OK — Redis retains data across app restarts (TTLs continue to tick)")
 
 
-async def test_inspect_namespace() -> None:
+async def check_inspect_namespace() -> None:
     header("8. All OpenBull keys currently in Redis")
     client = get_redis()
     keys = []
@@ -175,7 +181,7 @@ async def test_inspect_namespace() -> None:
     print(f"Total: {len(keys)} key(s)")
 
 
-async def test_invalidation() -> None:
+async def check_invalidation() -> None:
     header("9. Invalidation clears caches")
     await invalidate_user_cache(9999)
     for k in (_key_broker_ctx(9999), _key_api_ctx(9999)):
@@ -208,15 +214,15 @@ async def cleanup() -> None:
 
 async def main() -> None:
     try:
-        await test_connection()
-        await test_api_key_cache()
-        await test_invalid_key_cache()
-        await test_broker_context_cache()
-        await test_api_context_cache()
-        await test_ttl_countdown()
-        await test_restart_survival()
-        await test_inspect_namespace()
-        await test_invalidation()
+        await check_connection()
+        await check_api_key_cache()
+        await check_invalid_key_cache()
+        await check_broker_context_cache()
+        await check_api_context_cache()
+        await check_ttl_countdown()
+        await check_restart_survival()
+        await check_inspect_namespace()
+        await check_invalidation()
         print("\nAll Redis cache tests passed.")
     finally:
         await cleanup()

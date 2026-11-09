@@ -22,7 +22,6 @@ import Positions from "@/pages/Positions";
 import Holdings from "@/pages/Holdings";
 import Search from "@/pages/Search";
 import WebSocketTest from "@/pages/WebSocketTest";
-import Logs from "@/pages/Logs";
 import Sandbox from "@/pages/Sandbox";
 import SandboxMyPnL from "@/pages/SandboxMyPnL";
 import Tools from "@/pages/Tools";
@@ -52,6 +51,11 @@ const StrategyWizard = lazy(() => import("@/pages/strategy/Wizard"));
 const StrategyDetail = lazy(() => import("@/pages/strategy/Detail"));
 const StrategyEdit = lazy(() => import("@/pages/strategy/Edit"));
 const Playground = lazy(() => import("@/pages/Playground"));
+// Logs was the only static importer of @/components/ui/json-editor, which
+// pulls in CodeMirror (~132 kB gzipped). A static import put that in the
+// entry preload set, so every first paint downloaded a JSON editor nobody
+// had asked for yet. Lazy + idle-preloaded below, like the tool pages.
+const Logs = lazy(() => import("@/pages/Logs"));
 
 function ToolFallback() {
   return null;
@@ -90,7 +94,7 @@ function RoutePreloader() {
         import("@/pages/tools/StraddleChart"), import("@/pages/tools/GEXDashboard"),
         import("@/pages/tools/StrategyBuilder"), import("@/pages/tools/StrategyPortfolio"),
         import("@/pages/tools/StraddlesStrangleChain"), import("@/pages/strategy/Edit"),
-        import("@/pages/Playground"),
+        import("@/pages/Playground"), import("@/pages/Logs"),
       ]);
     };
 
@@ -248,7 +252,9 @@ function App() {
                   path="/logs"
                   element={
                     <ProtectedRoute>
-                      <Logs />
+                      <Suspense fallback={<ToolFallback />}>
+                        <Logs />
+                      </Suspense>
                     </ProtectedRoute>
                   }
                 />

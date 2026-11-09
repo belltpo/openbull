@@ -21,6 +21,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import urllib.parse
 from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -28,6 +29,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from backend.utils.api_log_writer import enqueue as enqueue_log
+from backend.utils.client_ip import client_ip as resolve_client_ip
 from backend.utils.request_context import request_id_var
 
 logger = logging.getLogger(__name__)
@@ -116,21 +118,35 @@ def _summarise_body(raw: bytes, content_type: str | None) -> str | None:
         except Exception:
             payload = raw[:MAX_BODY_BYTES].decode("utf-8", errors="replace")
         return payload[:MAX_BODY_BYTES]
-    if "text/" in ct or "application/x-www-form-urlencoded" in ct:
+    if "application/x-www-form-urlencoded" in ct:
+        # Redact here too. This branch used to store the raw body, so an
+        # `apikey=...` / `password=...` sent form-encoded landed in the
+        # api_logs table in cleartext while the JSON branch redacted it.
+        try:
+            pairs = urllib.parse.parse_qsl(
+                raw[:MAX_BODY_BYTES].decode("utf-8", errors="replace"),
+                keep_blank_values=True,
+            )
+            return urllib.parse.urlencode(
+                [
+                    (k, "[REDACTED]" if k.lower() in SENSITIVE_KEYS else v)
+                    for k, v in pairs
+                ]
+            )[:MAX_BODY_BYTES]
+        except Exception:
+            return "[unparseable form body]"
+    if "text/" in ct:
         return raw[:MAX_BODY_BYTES].decode("utf-8", errors="replace")
     # Binary — record size only, never the bytes
     return f"[binary {len(raw)} bytes, content-type={ct or 'unknown'}]"
 
 
 def _client_ip(request: Request) -> str | None:
-    fwd = request.headers.get("x-forwarded-for")
-    if fwd:
-        return fwd.split(",", 1)[0].strip()[:64]
-    real = request.headers.get("x-real-ip")
-    if real:
-        return real.strip()[:64]
-    client = request.client
-    return client.host[:64] if client else None
+    # Forwarded headers are only honoured when the peer is a configured
+    # trusted proxy — see backend.utils.client_ip. Previously the leftmost
+    # X-Forwarded-For entry was trusted unconditionally, so the IP recorded
+    # against every logged trade could be set by the caller.
+    return resolve_client_ip(request)
 
 
 # ---- Middleware ------------------------------------------------------------

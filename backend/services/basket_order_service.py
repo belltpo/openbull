@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from backend.utils.constants import (
+from backend.utils.plugin_loader import validate_broker_name
     VALID_ACTIONS,
     VALID_EXCHANGES,
     VALID_PRICE_TYPES,
@@ -24,6 +25,7 @@ BATCH_DELAY_SEC = 1.0
 
 def _import_broker_order_module(broker_name: str):
     try:
+        broker_name = validate_broker_name(broker_name)
         return importlib.import_module(f"backend.broker.{broker_name}.api.order_api")
     except ImportError as error:
         logger.error("Error importing broker order module '%s': %s", broker_name, error)

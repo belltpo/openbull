@@ -34,8 +34,24 @@ export default function Setup() {
       return;
     }
 
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+    // Keep in sync with SetupRequest.validate_password in
+    // backend/schemas/auth.py — the client check is only there to give a
+    // better message than a 422; the backend remains the authority.
+    if (password.length < 12) {
+      setError("Password must be at least 12 characters.");
+      return;
+    }
+
+    const classes = [
+      /[a-z]/.test(password),
+      /[A-Z]/.test(password),
+      /[0-9]/.test(password),
+      /[^A-Za-z0-9]/.test(password),
+    ].filter(Boolean).length;
+    if (classes < 3) {
+      setError(
+        "Password must include at least three of: lowercase, uppercase, digit, symbol."
+      );
       return;
     }
 

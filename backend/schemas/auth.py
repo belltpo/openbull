@@ -19,8 +19,28 @@ class SetupRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters")
+        # Applies to the single admin account created at setup (and to
+        # password changes). Length does most of the work; the character-class
+        # check rules out the trivially weak 8-char cases. Deliberately not
+        # stricter than this — composition rules past a point push people to
+        # predictable substitutions.
+        if len(v) < 12:
+            raise ValueError("Password must be at least 12 characters")
+        if len(v) > 128:
+            raise ValueError("Password must be at most 128 characters")
+        classes = sum(
+            (
+                any(c.islower() for c in v),
+                any(c.isupper() for c in v),
+                any(c.isdigit() for c in v),
+                any(not c.isalnum() for c in v),
+            )
+        )
+        if classes < 3:
+            raise ValueError(
+                "Password must include at least three of: lowercase, "
+                "uppercase, digit, symbol"
+            )
         return v
 
 

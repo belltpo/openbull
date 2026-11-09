@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, Mock, patch
 
+from backend import dependencies
 from backend.websocket_proxy import auth
 
 
@@ -51,6 +52,7 @@ class WebSocketBrokerContextTests(IsolatedAsyncioTestCase):
             extra_config={"client_id": "1109010608"},
         )
         session = _Session([
+            # 1. the single ApiKey row the indexed api_key_lookup resolves to
             _Result([SimpleNamespace(user_id=7, api_key_hash="hash")]),
             _Result([SimpleNamespace(broker_name="dhan", access_token="encrypted-token")]),
             _Result([config]),
@@ -60,7 +62,10 @@ class WebSocketBrokerContextTests(IsolatedAsyncioTestCase):
             patch.object(auth, "cache_get_json", new=AsyncMock(return_value=None)),
             patch.object(auth, "cache_set_json", new=AsyncMock()),
             patch.object(auth, "async_session", return_value=_SessionContext(session)),
-            patch.object(auth, "verify_api_key", return_value=True),
+            # API-key verification moved into backend.dependencies so the HTTP
+            # and WebSocket paths share one implementation (and so both get
+            # the indexed api_key_lookup fast-reject).
+            patch.object(dependencies, "verify_api_key", return_value=True),
             patch.object(auth, "decrypt_value", side_effect=lambda value: f"plain:{value}"),
         ):
             user_id, token, broker, broker_config = await auth.verify_api_key_standalone(api_key)

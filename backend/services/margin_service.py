@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from backend.utils.constants import (
+from backend.utils.plugin_loader import validate_broker_name
     VALID_ACTIONS,
     VALID_EXCHANGES,
     VALID_PRICE_TYPES,
@@ -22,6 +23,7 @@ MAX_POSITIONS = 50
 def _import_broker_margin_module(broker_name: str):
     """Dynamically import the broker-specific margin API module."""
     try:
+        broker_name = validate_broker_name(broker_name)
         module_path = f"backend.broker.{broker_name}.api.margin_api"
         return importlib.import_module(module_path)
     except ImportError as error:

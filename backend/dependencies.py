@@ -1,5 +1,5 @@
-import hashlib
 import logging
+import time
 from typing import AsyncGenerator
 
 from fastapi import Request, HTTPException, Depends
@@ -11,11 +11,17 @@ from backend.models.user import User
 from backend.models.auth import BrokerAuth, ApiKey
 from backend.models.audit import ActiveSession
 from backend.models.broker_config import BrokerConfig
-from backend.security import decode_access_token, verify_api_key, decrypt_value
+from backend.security import (
+    api_key_lookup,
+    decode_access_token,
+    decrypt_value,
+    verify_api_key,
+)
 from backend.utils.redis_client import (
     cache_delete,
     cache_delete_pattern,
     cache_get_json,
+    cache_incr,
     cache_set_json,
 )
 
@@ -24,6 +30,9 @@ logger = logging.getLogger(__name__)
 # -- Cache TTLs (seconds) --
 API_KEY_TTL = 900         # 15 min
 INVALID_KEY_TTL = 300     # 5 min
+# Cap on how many distinct rejected API keys get negative-cached per minute,
+# so anonymous traffic cannot grow Redis memory without bound.
+MAX_INVALID_KEYS_CACHED_PER_MIN = 256
 BROKER_CTX_TTL = 3600     # 1 hour
 API_CTX_TTL = 3600        # 1 hour
 
@@ -37,11 +46,60 @@ def _key_api_invalid(key_hash: str) -> str:
 
 
 def _key_broker_ctx(user_id: int) -> str:
-    return f"broker_ctx:{user_id}"
+    # v3: the cached payload holds Fernet *ciphertext* rather than decrypted
+    # credentials. The version bump guarantees an entry written by an older
+    # build is never read back and mistaken for ciphertext.
+    return f"broker_ctx:v3:{user_id}"
+
+
+def _encrypted_ctx_payload(broker_name: str, broker_auth, broker_cfg) -> dict:
+    """Build the cache payload, keeping every secret in its encrypted form.
+
+    Redis has no password and no TLS in the shipped configuration, and its
+    RDB snapshot sits on disk, so caching decrypted broker tokens and
+    api_secrets put live brokerage credentials in cleartext outside the
+    database. We cache exactly what the database stores — ciphertext — and
+    decrypt per use. Fernet decryption is microseconds; the cache still saves
+    the DB round-trips it was added for.
+    """
+    return {
+        "broker_name": broker_name,
+        "auth_token_enc": broker_auth.access_token,
+        "config_enc": (
+            {
+                "api_key_enc": broker_cfg.api_key,
+                "api_secret_enc": broker_cfg.api_secret,
+                "redirect_url": broker_cfg.redirect_url,
+                "client_id": (broker_cfg.extra_config or {}).get("client_id"),
+            }
+            if broker_cfg
+            else None
+        ),
+    }
+
+
+def _decrypt_ctx_payload(cached: dict) -> tuple[str, str, dict]:
+    """Inverse of :func:`_encrypted_ctx_payload`. Raises if a value is stale."""
+    auth_token = decrypt_value(cached["auth_token_enc"])
+    cfg_enc = cached.get("config_enc")
+    config: dict = {}
+    if cfg_enc:
+        config = {
+            "api_key": decrypt_value(cfg_enc["api_key_enc"]),
+            "api_secret": decrypt_value(cfg_enc["api_secret_enc"]),
+            "redirect_url": cfg_enc.get("redirect_url"),
+            # client_id (e.g. Dhan) — required in order payloads for some brokers.
+            "client_id": cfg_enc.get("client_id"),
+        }
+    return auth_token, cached["broker_name"], config
 
 
 def _key_api_ctx(user_id: int) -> str:
-    return f"api_ctx:{user_id}"
+    # v3 for the same reason as _key_broker_ctx: the payload is ciphertext
+    # now. Kept identical to backend.websocket_proxy.auth so the HTTP and
+    # WebSocket paths genuinely share one entry (they had drifted apart —
+    # this module used "api_ctx:" while the proxy used "api_ctx:v2:").
+    return f"api_ctx:v3:{user_id}"
 
 
 async def invalidate_all_caches() -> None:
@@ -121,15 +179,22 @@ async def get_broker_context(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> BrokerContext:
-    # Try Redis first — stores decrypted broker_name, auth_token, config
+    # Try Redis first. The cached payload holds ciphertext only; decrypt here.
     cached = await cache_get_json(_key_broker_ctx(user.id))
     if cached:
-        return BrokerContext(
-            user=user,
-            auth_token=cached["auth_token"],
-            broker_name=cached["broker_name"],
-            broker_config=cached["broker_config"],
-        )
+        try:
+            auth_token, cached_broker, config = _decrypt_ctx_payload(cached)
+            return BrokerContext(
+                user=user,
+                auth_token=auth_token,
+                broker_name=cached_broker,
+                broker_config=config,
+            )
+        except Exception:
+            # Unreadable/stale entry (key rotation, format drift) — fall
+            # through to the database rather than failing the request.
+            logger.warning("broker ctx cache entry unusable for user %s; refreshing", user.id)
+            await cache_delete(_key_broker_ctx(user.id))
 
     broker_name = getattr(user, "_broker", None)
 
@@ -183,11 +248,71 @@ async def get_broker_context(
 
     await cache_set_json(
         _key_broker_ctx(user.id),
-        {"broker_name": broker_name, "auth_token": auth_token, "broker_config": config},
+        _encrypted_ctx_payload(broker_name, broker_auth, broker_cfg),
         BROKER_CTX_TTL,
     )
 
     return BrokerContext(user=user, auth_token=auth_token, broker_name=broker_name, broker_config=config)
+
+
+async def _resolve_api_key_user_id(
+    db: AsyncSession, provided_key: str, key_hash: str
+) -> int | None:
+    """Resolve an API key to a user id, Argon2-verifying at most one row.
+
+    The indexed ``api_key_lookup`` fingerprint narrows to a single candidate,
+    so a bogus key costs one SELECT rather than an Argon2 verification per
+    stored key. Argon2 still decides whether the key is actually valid, so a
+    forged fingerprint buys nothing.
+
+    Rows whose ``api_key_lookup`` is NULL (pre-upgrade, or undecryptable at
+    backfill time) are still handled by the original full-scan path, so the
+    change cannot lock anyone out.
+    """
+    result = await db.execute(
+        select(ApiKey).where(ApiKey.api_key_lookup == key_hash)
+    )
+    candidate = result.scalar_one_or_none()
+    if candidate is not None:
+        if verify_api_key(provided_key, candidate.api_key_hash):
+            return candidate.user_id
+        # Fingerprint matched but Argon2 did not: treat as invalid rather
+        # than falling through to the scan.
+        return None
+
+    # Legacy fallback: only rows that have no fingerprint yet.
+    result = await db.execute(
+        select(ApiKey).where(ApiKey.api_key_lookup.is_(None))
+    )
+    for ak in result.scalars().all():
+        if verify_api_key(provided_key, ak.api_key_hash):
+            # Opportunistically fill the fingerprint so the next request
+            # takes the indexed path.
+            ak.api_key_lookup = key_hash
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+            return ak.user_id
+    return None
+
+
+async def _remember_invalid_key(key_hash: str) -> None:
+    """Negative-cache a rejected key, with a bound on how many we remember.
+
+    The old code wrote one Redis entry per rejected key with no cap, so an
+    unauthenticated caller could grow Redis memory by sending endless random
+    keys. A counter keyed per minute caps how many distinct bad keys get
+    remembered; past the cap we simply skip caching (correctness is
+    unaffected — the next attempt just re-checks the database).
+    """
+    try:
+        bucket = f"api_key:invalid:count:{int(time.time() // 60)}"
+        seen = await cache_incr(bucket, ttl=INVALID_KEY_TTL)
+        if seen is None or seen <= MAX_INVALID_KEYS_CACHED_PER_MIN:
+            await cache_set_json(_key_api_invalid(key_hash), 1, INVALID_KEY_TTL)
+    except Exception:
+        logger.debug("negative api-key cache write failed", exc_info=True)
 
 
 async def get_api_user_id(
@@ -208,7 +333,7 @@ async def get_api_user_id(
     if not provided_key:
         raise HTTPException(status_code=401, detail="API key required")
 
-    key_hash = hashlib.sha256(provided_key.encode()).hexdigest()
+    key_hash = api_key_lookup(provided_key)
 
     # Fast reject from negative cache
     if await cache_get_json(_key_api_invalid(key_hash)) is not None:
@@ -218,19 +343,11 @@ async def get_api_user_id(
     user_id = await cache_get_json(_key_api_valid(key_hash))
 
     if user_id is None:
-        # Expensive: verify against all stored keys
-        result = await db.execute(select(ApiKey))
-        api_keys = result.scalars().all()
-
-        for ak in api_keys:
-            if verify_api_key(provided_key, ak.api_key_hash):
-                user_id = ak.user_id
-                await cache_set_json(_key_api_valid(key_hash), user_id, API_KEY_TTL)
-                break
-
+        user_id = await _resolve_api_key_user_id(db, provided_key, key_hash)
         if user_id is None:
-            await cache_set_json(_key_api_invalid(key_hash), 1, INVALID_KEY_TTL)
+            await _remember_invalid_key(key_hash)
             raise HTTPException(status_code=401, detail="Invalid API key")
+        await cache_set_json(_key_api_valid(key_hash), user_id, API_KEY_TTL)
 
     # Tell ApiLogMiddleware this request is authenticated (external API call).
     request.state.user_id = user_id
@@ -247,15 +364,16 @@ async def get_api_user(
     """
     user_id = await get_api_user_id(request, db)
 
-    # Try full api-context cache (saves 2 more DB hits + 3 decrypts)
+    # Try full api-context cache (saves 2 more DB hits). Secrets are stored
+    # encrypted; decrypt on read — see _encrypted_ctx_payload.
     cached_ctx = await cache_get_json(_key_api_ctx(user_id))
     if cached_ctx:
-        return (
-            user_id,
-            cached_ctx["auth_token"],
-            cached_ctx["broker_name"],
-            cached_ctx["broker_config"],
-        )
+        try:
+            auth_token, broker_name, config = _decrypt_ctx_payload(cached_ctx)
+            return (user_id, auth_token, broker_name, config)
+        except Exception:
+            logger.warning("api ctx cache entry unusable for user %s; refreshing", user_id)
+            await cache_delete(_key_api_ctx(user_id))
 
     # Get broker auth
     result = await db.execute(
@@ -290,7 +408,7 @@ async def get_api_user(
 
     await cache_set_json(
         _key_api_ctx(user_id),
-        {"auth_token": auth_token, "broker_name": broker_name, "broker_config": config},
+        _encrypted_ctx_payload(broker_name, broker_auth, broker_cfg),
         API_CTX_TTL,
     )
 

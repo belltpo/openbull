@@ -23,14 +23,22 @@ import logging
 from fastapi import APIRouter, Path, Request
 from fastapi.responses import JSONResponse
 
+from backend.limiter import limiter
 from backend.strategy.webhook_handler import handle_webhook
+from backend.utils.client_ip import client_ip as resolve_client_ip
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhook/strategy", tags=["strategy-webhook"])
 
 
+# Per-IP limit in front of the handler. The handler's own limiter is
+# per-strategy and therefore only engages *after* a token resolves, so an
+# unknown token previously cost an unlimited number of DB reads and
+# sm_webhook_event inserts. TradingView fires a handful of alerts a minute,
+# so 60/min per source is well clear of legitimate traffic.
 @router.post("/{webhook_token}")
+@limiter.limit("60 per minute")
 async def receive_webhook(
     request: Request,
     webhook_token: str = Path(..., min_length=10, max_length=128),
@@ -43,11 +51,12 @@ async def receive_webhook(
     error message.
     """
     raw_body = await request.body()
-    client_ip = request.client.host if request.client else None
-    # Honor X-Forwarded-For when behind a reverse proxy (leftmost = origin)
-    fwd = request.headers.get("X-Forwarded-For")
-    if fwd:
-        client_ip = fwd.split(",")[0].strip() or client_ip
+    # X-Forwarded-For is only honoured when the peer is a configured trusted
+    # proxy, and the rightmost (proxy-appended) entry wins. Taking the
+    # leftmost entry unconditionally — as this did — let any caller spoof the
+    # source address and so bypass the per-strategy webhook IP allow-list,
+    # since nginx *appends* to a client-supplied XFF rather than replacing it.
+    client_ip = resolve_client_ip(request)
     user_agent = request.headers.get("User-Agent")
 
     outcome = await handle_webhook(

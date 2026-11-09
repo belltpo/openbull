@@ -6,6 +6,7 @@ Dual-entry pattern: get_funds_with_auth() + get_funds()
 import importlib
 import logging
 from typing import Any
+from backend.utils.plugin_loader import validate_broker_name
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,7 @@ logger = logging.getLogger(__name__)
 def _import_broker_module(broker_name: str):
     """Dynamically import the broker-specific funds module."""
     try:
+        broker_name = validate_broker_name(broker_name)
         module_path = f"backend.broker.{broker_name}.api.funds"
         return importlib.import_module(module_path)
     except ImportError as error:

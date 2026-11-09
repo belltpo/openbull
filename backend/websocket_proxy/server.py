@@ -59,6 +59,10 @@ _adapter_monitor_task: asyncio.Task | None = None
 
 LTP_THROTTLE_SEC = 0.05  # 50ms
 MAX_WS_CONNECTIONS = 10
+# Failed `authenticate` frames allowed per connection before it is closed.
+# Generous enough for a client retrying after a key rotation, small enough
+# that a socket cannot be used as a free API-key-checking oracle.
+MAX_WS_AUTH_ATTEMPTS = 5
 MAX_MESSAGE_SIZE = 65536  # 64KB
 MAX_SYMBOLS_PER_SUBSCRIBE = 1000
 
@@ -350,6 +354,12 @@ async def _handle_client(ws: websockets.WebSocketServerProtocol) -> None:
     logger.info("Client %s connected (%d total)", client_id[:8], len(_clients))
 
     broker_name: str | None = None
+    # Failed authenticate attempts on this connection. MAX_WS_CONNECTIONS
+    # bounded how many sockets could be open, but nothing bounded how many
+    # auth frames a single socket could send — so one connection could drive
+    # unlimited API-key checks against an unauthenticated, publicly proxied
+    # endpoint. Cap the attempts and drop the socket when it is exceeded.
+    auth_failures = 0
 
     try:
         async for raw in ws:
@@ -366,17 +376,25 @@ async def _handle_client(ws: websockets.WebSocketServerProtocol) -> None:
 
             # -- authenticate --
             if action == "authenticate":
+                if client_id not in _authenticated_clients and auth_failures >= MAX_WS_AUTH_ATTEMPTS:
+                    await _send_json(ws, _ack({"type": "auth", "status": "error", "message": "Too many authentication attempts"}, request_id))
+                    await ws.close(code=1008, reason="too many auth attempts")
+                    return
+
                 api_key = msg.get("api_key")
                 if not api_key:
+                    auth_failures += 1
                     await _send_json(ws, _ack({"type": "auth", "status": "error", "message": "api_key required"}, request_id))
                     continue
 
                 try:
                     user_id, auth_token, bname, config = await verify_api_key_standalone(api_key)
                 except ValueError:
+                    auth_failures += 1
                     await _send_json(ws, _ack({"type": "auth", "status": "error", "message": "Authentication failed"}, request_id))
                     continue
 
+                auth_failures = 0
                 broker_name = bname
                 _authenticated_clients.add(client_id)
 

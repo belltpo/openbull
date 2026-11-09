@@ -299,8 +299,34 @@ if ! command -v redis-server &>/dev/null; then
     log_info "Installing Redis..."
     apt-get install -y redis-server
 fi
+
+# Require a password on Redis. The cache holds broker session context; even
+# though the app now caches ciphertext rather than decrypted credentials,
+# an unauthenticated Redis on the box is a free read/write of session and
+# rate-limit state for any local process. Preserve an existing password on
+# re-install so running sessions are not invalidated.
+REDIS_CONF="/etc/redis/redis.conf"
+REDIS_PASSWORD=""
+if [ -f "$REDIS_CONF" ]; then
+    REDIS_PASSWORD="$(grep -E '^[[:space:]]*requirepass[[:space:]]+' "$REDIS_CONF" \
+        | tail -1 | awk '{print $2}')"
+    if [ -z "$REDIS_PASSWORD" ]; then
+        REDIS_PASSWORD="$(generate_secret)"
+        cp "$REDIS_CONF" "${REDIS_CONF}.bak.$TIMESTAMP"
+        # Replace a commented-out directive if present, else append.
+        if grep -qE '^[[:space:]]*#[[:space:]]*requirepass' "$REDIS_CONF"; then
+            sed -i "0,/^[[:space:]]*#[[:space:]]*requirepass.*/s||requirepass $REDIS_PASSWORD|" "$REDIS_CONF"
+        else
+            printf '\n# Added by OpenBull installer\nrequirepass %s\n' "$REDIS_PASSWORD" >> "$REDIS_CONF"
+        fi
+        log_info "Redis requirepass configured"
+    else
+        log_info "Redis already has requirepass; preserving it"
+    fi
+fi
+
 systemctl enable redis-server >/dev/null 2>&1 || true
-systemctl start redis-server
+systemctl restart redis-server
 
 # Nginx
 if ! command -v nginx &>/dev/null; then
@@ -418,6 +444,15 @@ fi
 
 DATABASE_URL="postgresql+asyncpg://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME"
 
+# Only embed credentials in REDIS_URL if we actually set a password —
+# "redis://:@host" would send an empty AUTH and fail the connection.
+if [ -n "${REDIS_PASSWORD:-}" ]; then
+    REDIS_URL_VALUE="redis://:${REDIS_PASSWORD}@127.0.0.1:6379/0"
+else
+    REDIS_URL_VALUE="redis://127.0.0.1:6379/0"
+    log_warn "Redis has no requirepass — REDIS_URL left without credentials"
+fi
+
 cat > "$APP_ROOT/.env" <<ENVEOF
 # ============================================================
 # OpenBull Configuration - $DOMAIN
@@ -466,6 +501,20 @@ ORDER_RATE_LIMIT = "10 per second"
 
 # ---- Session ----
 SESSION_EXPIRY_TIME = "03:00"
+# This install terminates TLS at nginx with certbot and redirects :80 -> :443,
+# so the session cookie must carry the Secure flag. Previously nothing wrote
+# COOKIE_SECURE at all and the code defaulted it to false, which shipped a
+# production session cookie that a plain-HTTP request would still send.
+COOKIE_SECURE = "true"
+
+# ---- Reverse proxy / host hardening ----
+# Only this box's nginx may set X-Forwarded-For / X-Real-IP. Needed because
+# nginx APPENDS to a client-supplied XFF ($proxy_add_x_forwarded_for), so
+# without a trust boundary the leftmost entry is attacker-controlled and the
+# webhook IP allow-list could be bypassed with one header.
+TRUSTED_PROXY_IPS = "127.0.0.1,::1"
+# Host header allow-list (Starlette does not validate Host on its own).
+ALLOWED_HOSTS = "$DOMAIN,www.$DOMAIN"
 
 # ---- WebSocket Proxy ----
 WEBSOCKET_HOST = "127.0.0.1"
@@ -475,7 +524,8 @@ ZMQ_HOST = "127.0.0.1"
 ZMQ_PORT = 5555
 
 # ---- Redis ----
-REDIS_URL = "redis://127.0.0.1:6379/0"
+# Password comes from /etc/redis/redis.conf requirepass (see the Redis step).
+REDIS_URL = "$REDIS_URL_VALUE"
 
 # ---- WebSocket Connection Pooling ----
 MAX_SYMBOLS_PER_WEBSOCKET = 1000
@@ -486,10 +536,11 @@ ENVEOF
 chmod 640 "$APP_ROOT/.env"
 log_info ".env written to $APP_ROOT/.env"
 
-# Sync the alembic.ini to use the same DB (sync driver)
-SYNC_DB_URL="postgresql://$DB_USER:$DB_PASSWORD@$DB_HOST:$DB_PORT/$DB_NAME"
-sed -i "s|^sqlalchemy.url = .*|sqlalchemy.url = $SYNC_DB_URL|" "$APP_ROOT/alembic.ini"
-log_info "alembic.ini updated with DB URL"
+# alembic.ini is NOT rewritten with the DB URL any more. alembic/env.py now
+# reads DATABASE_URL from .env (mode 640) instead of the ini, so writing the
+# credential here only put a second plaintext copy on disk in a file that is
+# tracked in git upstream.
+log_info "alembic uses DATABASE_URL from .env (alembic.ini left as placeholder)"
 
 # Frontend production env
 cat > "$FRONTEND_DIR/.env.production" <<FEOF

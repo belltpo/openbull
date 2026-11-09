@@ -128,6 +128,49 @@ def _migrate_fr_target_templates(engine: Engine) -> None:
         )
 
 
+def _backfill_api_key_lookup(engine: Engine) -> None:
+    """Fill api_keys.api_key_lookup for rows created before the column existed.
+
+    The plaintext key is recoverable from the Fernet-encrypted copy the row
+    already stores, so no user action and no key rotation is needed. Rows
+    that fail to decrypt (e.g. ENCRYPTION_PEPPER was rotated) are left NULL
+    and simply fall back to the legacy full-scan verification path.
+    """
+    insp = inspect(engine)
+    if "api_keys" not in insp.get_table_names():
+        return
+    if "api_key_lookup" not in {c["name"] for c in insp.get_columns("api_keys")}:
+        return
+
+    from backend.security import api_key_lookup, decrypt_value
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT id, api_key_encrypted FROM api_keys "
+                "WHERE api_key_lookup IS NULL"
+            )
+        ).fetchall()
+        filled = 0
+        for row in rows:
+            try:
+                plaintext = decrypt_value(row.api_key_encrypted)
+            except Exception:
+                logger.warning(
+                    "api_keys.id=%s could not be decrypted; leaving "
+                    "api_key_lookup NULL (falls back to full-scan verify)",
+                    row.id,
+                )
+                continue
+            conn.execute(
+                text("UPDATE api_keys SET api_key_lookup = :lk WHERE id = :id"),
+                {"lk": api_key_lookup(plaintext), "id": row.id},
+            )
+            filled += 1
+    if filled:
+        logger.info("Schema migration: backfilled api_key_lookup for %d row(s)", filled)
+
+
 def run_startup_migrations() -> None:
     """Apply every pending in-place migration. Called from the app lifespan."""
     engine = create_engine(get_settings().sync_database_url, future=True)
@@ -214,6 +257,15 @@ def run_startup_migrations() -> None:
         # Futures-Risk target templates: preserve the old global target list as
         # the Default template, then scope target seq uniqueness per template.
         _migrate_fr_target_templates(engine)
+
+        # Security: indexed API-key fingerprint so an unauthenticated request
+        # with a bogus key is rejected by a SELECT instead of an Argon2
+        # verification. Nullable + backfilled, so nothing breaks mid-upgrade.
+        _add_column_if_missing(engine, "api_keys", "api_key_lookup", "VARCHAR(64)")
+        _add_index_if_missing(
+            engine, "api_keys", "ix_api_keys_api_key_lookup", ["api_key_lookup"]
+        )
+        _backfill_api_key_lookup(engine)
     except Exception:
         logger.exception("Startup schema migration failed")
     finally:

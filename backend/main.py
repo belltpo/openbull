@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
@@ -12,6 +13,7 @@ from backend.exceptions import OpenBullException, openbull_exception_handler
 from backend.limiter import limiter
 from backend.middleware import RequestLoggingMiddleware
 from backend.middleware_api_log import ApiLogMiddleware
+from backend.middleware_rate_limit import ApiRateLimitMiddleware
 from backend.utils.api_log_writer import init_writer as init_api_log_writer, get_writer as get_api_log_writer
 from backend.utils.logging import get_logger, setup_logging
 from backend.utils.plugin_loader import load_all_plugins
@@ -208,6 +210,13 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_exception_handler(OpenBullException, openbull_exception_handler)
 
+# Host header allow-list. Starlette reconstructs request.url from the Host
+# header without validating it (CVE-2026-48710 / CVE-2026-54282), so a forged
+# Host can be reflected into absolute URLs. ALLOWED_HOSTS empty keeps the
+# previous behaviour for local dev; production installs set it to the domain.
+if settings.allowed_host_list:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_host_list)
+
 # CORS
 app.add_middleware(
     CORSMiddleware,
@@ -227,13 +236,27 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
-    # CSP
+    # HSTS — only meaningful (and only correct) over TLS, which is also when
+    # cookie_secure is on. Sending it on plain-HTTP dev would pin 127.0.0.1
+    # to https in the developer's browser.
+    if settings.cookie_secure:
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=63072000; includeSubDomains"
+        )
+    # CSP. 'unsafe-inline' is dropped from script-src: Vite emits hashed
+    # external scripts only, so nothing in the built SPA needs it, and
+    # keeping it there negated most of the CSP's XSS value. style-src keeps
+    # it because Tailwind/Base UI set inline styles at runtime.
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: https:; "
+        "font-src 'self' data:; "
         "connect-src 'self' wss: ws:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "form-action 'self'; "
         "frame-ancestors 'none'"
     )
     return response
@@ -244,6 +267,11 @@ async def add_security_headers(request: Request, call_next):
 # before ApiLogMiddleware reads it, and the access-log line still covers
 # the full request lifecycle.
 app.add_middleware(ApiLogMiddleware)
+
+# Rate limiting for /api/v1 (API_RATE_LIMIT / ORDER_RATE_LIMIT). Added here so
+# it runs *before* ApiLogMiddleware clones request bodies and before the
+# API-key dependency performs an Argon2 verification.
+app.add_middleware(ApiRateLimitMiddleware)
 
 # Request-id + access log. Added last so it is the outermost wrapper —
 # the request_id contextvar is set before any other middleware runs,

@@ -35,9 +35,10 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.config import get_settings
 from backend.database import async_session
 from backend.models.strategy_module import (
     SmStrategy,
@@ -304,7 +305,53 @@ async def _record_event(
     db.add(row)
     await db.commit()
     await db.refresh(row)
+    await _trim_webhook_events(db)
     return row
+
+
+# Only check the row count every Nth insert — the COUNT is cheap but there is
+# no reason to pay it on every webhook.
+_TRIM_CHECK_EVERY = 500
+_insert_counter = 0
+
+
+async def _trim_webhook_events(db: AsyncSession) -> None:
+    """Keep sm_webhook_event bounded.
+
+    This endpoint is unauthenticated by design (the URL token is the
+    credential) and records a row for *rejections* too, including unknown
+    tokens. api_logs and error_logs already had row caps; this table did not,
+    so anonymous traffic could grow it until the disk filled.
+    """
+    global _insert_counter
+    _insert_counter += 1
+    if _insert_counter % _TRIM_CHECK_EVERY != 1:
+        return
+
+    max_rows = get_settings().webhook_event_max_rows
+    if max_rows <= 0:
+        return
+    try:
+        total = await db.scalar(select(func.count()).select_from(SmWebhookEvent))
+        if not total or total <= max_rows:
+            return
+        # Delete oldest-first down to the cap.
+        cutoff = await db.scalar(
+            select(SmWebhookEvent.id)
+            .order_by(SmWebhookEvent.id.desc())
+            .offset(max_rows - 1)
+            .limit(1)
+        )
+        if cutoff is None:
+            return
+        await db.execute(delete(SmWebhookEvent).where(SmWebhookEvent.id < cutoff))
+        await db.commit()
+        logger.info(
+            "sm_webhook_event trimmed to %d rows (was %d)", max_rows, total
+        )
+    except Exception:
+        await db.rollback()
+        logger.warning("sm_webhook_event trim failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

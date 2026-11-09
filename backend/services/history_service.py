@@ -6,6 +6,7 @@ import importlib
 import logging
 from datetime import datetime
 from typing import Any
+from backend.utils.plugin_loader import validate_broker_name
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,7 @@ def get_history_with_auth(
 ) -> tuple[bool, dict[str, Any], int]:
     """Get historical OHLCV candles."""
     try:
+        broker = validate_broker_name(broker)
         data_module = importlib.import_module(f"backend.broker.{broker}.api.data")
     except ImportError:
         return False, {"status": "error", "message": "Broker module not found"}, 404

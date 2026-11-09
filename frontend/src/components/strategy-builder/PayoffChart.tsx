@@ -410,7 +410,12 @@ export function PayoffChart({
       {
         x: xs,
         y: expiryY,
-        type: "scattergl",
+        // "scatter", not "scattergl": Plot.tsx loads
+        // plotly.js-cartesian-dist-min, which registers no scattergl
+        // trace, so a scattergl trace was silently dropped
+        // ("Unrecognized trace type") and this curve never drew.
+        // 200 points needs no WebGL.
+        type: "scatter",
         mode: "lines",
         name: "At Expiry",
         line: { color: colors.expiry, width: 2 },
@@ -427,7 +432,9 @@ export function PayoffChart({
       out.push({
         x: xs,
         y: t0Y,
-        type: "scattergl",
+        // See the At Expiry trace: scattergl is not in the cartesian
+        // bundle.
+        type: "scatter",
         mode: "lines",
         name: "T+0",
         line: { color: colors.t0, width: 1.5, dash: "dash" },

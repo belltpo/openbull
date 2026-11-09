@@ -26,6 +26,12 @@ class ApiKey(Base):
 
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
-    api_key_hash = Column(Text, nullable=False)  # Argon2
+    api_key_hash = Column(Text, nullable=False)  # Argon2 — authoritative check
     api_key_encrypted = Column(Text, nullable=False)  # Fernet
+    # Indexed SHA-256 fingerprint used to find the candidate row cheaply, so
+    # a bogus key costs one indexed SELECT instead of an Argon2 verification
+    # (~64 MB + tens of ms). Nullable so existing rows keep working; it is
+    # backfilled from api_key_encrypted by the startup migration.
+    # See backend.security.api_key_lookup for why plain SHA-256 is correct.
+    api_key_lookup = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

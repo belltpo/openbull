@@ -38,6 +38,7 @@ from backend.models.broker_config import BrokerConfig
 from backend.sandbox._db import session_scope
 from backend.security import decrypt_value
 from backend.services.market_data_cache import get_market_data_cache
+from backend.utils.plugin_loader import validate_broker_name
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,7 @@ def _broker_quote_ltp(user_id: int, symbol: str, exchange: str) -> Optional[floa
     broker_name, auth_token, config = resolved
 
     try:
+        broker_name = validate_broker_name(broker_name)
         data_module = importlib.import_module(f"backend.broker.{broker_name}.api.data")
     except ImportError:
         logger.debug("quote_helper: broker module %s not available", broker_name)

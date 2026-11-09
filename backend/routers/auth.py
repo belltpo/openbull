@@ -34,7 +34,11 @@ _TIMING_DUMMY_HASH = hash_password(secrets.token_hex(16))
 
 
 @router.get("/check-setup")
-async def check_setup(db: AsyncSession = Depends(get_db)):
+@limiter.limit("30 per minute")
+async def check_setup(request: Request, db: AsyncSession = Depends(get_db)):
+    # Unauthenticated by necessity — the SPA has to know whether to show the
+    # setup screen. Rate-limited so it cannot be used as a free oracle, and
+    # it reveals only whether setup is pending, never any account detail.
     result = await db.execute(select(func.count()).select_from(User))
     user_count = result.scalar()
     return {"needs_setup": user_count == 0}

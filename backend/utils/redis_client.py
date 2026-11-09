@@ -138,6 +138,26 @@ async def cache_set_json(key: str, value: Any, ttl_seconds: int) -> bool:
         return False
 
 
+async def cache_incr(key: str, ttl: int = 60) -> int | None:
+    """INCR a counter key, setting its TTL on first use.
+
+    Returns the new value, or None when Redis is unavailable so callers can
+    treat "unknown" distinctly from a real count.
+    """
+    if _is_down():
+        return None
+    try:
+        client = get_redis()
+        value = await client.incr(_k(key))
+        if value == 1 and ttl > 0:
+            await client.expire(_k(key), ttl)
+        _ok()
+        return int(value)
+    except Exception as e:
+        _trip(e)
+        return None
+
+
 async def cache_delete(*keys: str) -> int:
     """Delete one or more cache keys. Returns the number of keys removed."""
     if not keys or _is_down():

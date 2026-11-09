@@ -142,7 +142,9 @@ collect_common_inputs() {
   DB_PORT="$(prompt_default "PostgreSQL port" "5432")"
   DB_NAME="$(prompt_default "PostgreSQL database" "openbull")"
   DB_USER="$(prompt_default "PostgreSQL user" "postgres")"
-  DB_PASSWORD="$(prompt_default "PostgreSQL password" "123456")"
+  # No default: a prompt that pre-fills a guessable password is a real
+  # credential the moment someone presses Enter. Generate one instead.
+  DB_PASSWORD="$(prompt_default "PostgreSQL password" "$(openssl rand -hex 16 2>/dev/null || date +%s%N | sha256sum | cut -c1-32)")"
 
   RUN_DEPS="no"
   RUN_MIGRATIONS="no"
